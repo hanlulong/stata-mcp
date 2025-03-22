@@ -63,7 +63,7 @@ If you prefer to install manually:
    - Select "Install from VSIX..."
    - Navigate to and select the downloaded .vsix file
 3. For Cursor:
-   - Run this command in a terminal: `cursor --install-extension path/to/stata-mcp-0.0.1.vsix`
+   - Run this command in a terminal: `cursor --install-extension path/to/stata-mcp-0.0.2.vsix`
 
 ## Cursor MCP Configuration
 
@@ -127,3 +127,8 @@ The extension creates a local MCP server that connects your editor to Stata, ena
 ## License
 
 MIT
+
+## Credits
+
+Created by Lu Han
+Published by DeepEcon 

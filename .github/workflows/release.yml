@@ -1,9 +1,10 @@
+# This is a release workflow file
+
 name: Release Extension Package
 
 on:
   push:
-    branches:
-      - master
+    branches: [ master ]
     tags:
       - 'v*'
   workflow_dispatch:
@@ -13,8 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Check out repository
-      uses: actions/checkout@v3
+    - uses: actions/checkout@v3
       
     - name: Upload VSIX Package
       uses: actions/upload-artifact@v3
