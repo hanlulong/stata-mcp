@@ -1,34 +1,39 @@
-.vscode/*
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/extensions.json
-*.vsix
-.DS_Store
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-*.log
-
-# Node.js
+# Node.js dependencies
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Python virtual environment
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
 # Build outputs
-out/
 dist/
+out/
 *.tsbuildinfo
 
+# Developer files
+.vscode-test/
+scripts/
+src/
+webpack.config.js
+tsconfig.json
+.eslintrc.json
+
 # Temporary files
-tmp/ 
+tmp/
+.DS_Store
+workflow_logs.zip
+github_logs.txt
+*.log
+
+# Keep these files
+# .gitignore
+# README.md
+# LICENSE
+# images/
+# *.vsix
+# .github/workflows/release.yml 

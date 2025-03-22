@@ -14,48 +14,31 @@ This extension provides Stata integration for Visual Studio Code and Cursor IDE 
 
 - Stata installed on your machine (Stata 14 or higher recommended)
 - Python 3.11 or higher
-- The `fastapi-mcp` package will be automatically installed if needed
-- For Cursor integration: Cursor IDE with MCP support
 
 ## Installation
 
-Install this extension from the VS Code Marketplace or by searching for "Stata MCP" in the Extensions view.
+### Manual Installation (Recommended)
 
-For Cursor users:
-1. Download the .vsix file from the latest release
-2. Install with: `cursor --install-extension stata-mcp-0.0.1.vsix`
-
-## Testing on Different Platforms
-
-If you want to test this extension on different platforms before publishing:
-
-1. Clone the repository and install dependencies:
-   ```bash
-   git clone https://github.com/yourusername/stata-mcp.git
-   cd stata-mcp
-   npm install
-   ```
-
-2. Run the platform compatibility test:
-   ```bash
-   npm run test:platform
-   ```
-
-3. Run the functional tests (requires Stata):
-   ```bash
-   npm run test:extension
-   ```
-
-4. Package the extension:
-   ```bash
-   npm run package
-   ```
-
-5. Install the extension manually in VS Code:
-   - In VS Code, go to Extensions view
+1. Download the `.vsix` file from the [Releases](https://github.com/hanlulong/stata-mcp/releases) page
+2. Install in VS Code:
+   - Open VS Code
+   - Go to Extensions view (Ctrl+Shift+X or Cmd+Shift+X)
    - Click on the "..." menu in the top-right of the Extensions view
    - Select "Install from VSIX..."
-   - Navigate to and select the .vsix file created in the previous step
+   - Navigate to and select the downloaded .vsix file
+
+3. Install in Cursor:
+   - Open a terminal or command prompt
+   - Run: `cursor --install-extension path/to/stata-mcp.vsix`
+   - Restart Cursor after installation
+
+### VS Code Marketplace (Coming Soon)
+
+The extension will be available in the VS Code Marketplace, where you can search for "Stata MCP".
+
+### Cursor Extension Store (Coming Soon)
+
+The extension will be available in the Cursor Extension Store, where you can search for "Stata MCP".
 
 ## Features
 
@@ -101,19 +84,6 @@ Access extension settings through VS Code settings:
 - **Always Use Webview**: Use webview for output instead of output channel
 - **Auto Configure MCP**: Automatically configure MCP for AI assistants
 
-## Virtual Environment
-
-The extension uses a virtual environment with Python 3.11 to run the MCP server. This ensures compatibility and isolation from your system Python installation. The virtual environment is automatically created and configured when you install the extension.
-
-If you need to manually set up the virtual environment:
-
-```bash
-cd <extension-folder>
-python3.11 -m venv .venv
-.venv/bin/pip install fastapi uvicorn pydantic mcp
-.venv/bin/pip install git+https://github.com/tadata-org/fastapi_mcp.git
-```
-
 ## How to Use
 
 1. Install the extension
@@ -135,13 +105,6 @@ If the MCP server doesn't start:
 2. Verify the Stata path in settings
 3. Check if port 4000 is already in use (you can change the port in settings)
 4. Look at the Stata Output channel in VS Code for error messages
-
-### Virtual Environment Issues
-
-If there are issues with the virtual environment:
-1. Delete the `.venv` directory in the extension folder
-2. Run `npm run postinstall` to recreate the virtual environment
-3. Restart VS Code
 
 ### Connection Issues
 
