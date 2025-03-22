@@ -116,12 +116,6 @@ The extension creates a local MCP server that connects your editor to Stata, ena
 2. **Context Awareness**: AI assistants understand your Stata data and commands
 3. **Enhanced Productivity**: Get intelligent code suggestions and documentation
 
-## Additional Documentation
-
-- [Troubleshooting](https://github.com/hanlulong/stata-mcp/blob/main/TROUBLESHOOTING.md)
-- [Command Line Usage](https://github.com/hanlulong/stata-mcp/blob/main/CLI_USAGE.md)
-- [Contributing](https://github.com/hanlulong/stata-mcp/blob/main/CONTRIBUTING.md)
-
 ## License
 
 MIT
