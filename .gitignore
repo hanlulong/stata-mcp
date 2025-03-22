@@ -1,0 +1,53 @@
+# Node.js dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python virtual environment
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Build outputs
+dist/
+out/
+*.tsbuildinfo
+
+# Developer files
+.vscode-test/
+scripts/
+src/
+webpack.config.js
+tsconfig.json
+.eslintrc.json
+
+# Temporary files
+tmp/
+.DS_Store
+workflow_logs.zip
+github_logs.txt
+*.log
+
+# Keep these files
+# .gitignore
+# README.md
+# LICENSE
+# images/
+# *.vsix
+# .github/workflows/release.yml
+
+# Ignore everything
+*
+
+# Except these files
+!.gitignore
+!README.md
+!LICENSE
+!images/
+!images/**
+!*.vsix
+!.github/
+!.github/workflows/
+!.github/workflows/release.yml 
