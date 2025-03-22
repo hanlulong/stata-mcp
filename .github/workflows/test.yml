@@ -1,0 +1,105 @@
+name: Extension Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test-platform:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Use Node.js 18.x
+      uses: actions/setup-node@v3
+      with:
+        node-version: 18.x
+        cache: 'npm'
+        
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      run: |
+        npm ci
+        
+    - name: Run platform tests
+      run: npm run test:platform
+      
+  test-mcp-server:
+    runs-on: ubuntu-latest
+    needs: test-platform
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Use Node.js 18.x
+      uses: actions/setup-node@v3
+      with:
+        node-version: 18.x
+        cache: 'npm'
+        
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      run: |
+        npm ci
+        python -m pip install fastapi uvicorn pydantic mcp sse-starlette httpx-sse
+        
+    - name: Install Stata (mock for CI)
+      run: |
+        mkdir -p /tmp/stata
+        echo '#!/bin/bash' > /tmp/stata/stata
+        echo 'echo "Stata mock for CI"' >> /tmp/stata/stata
+        echo 'echo $*' >> /tmp/stata/stata
+        chmod +x /tmp/stata/stata
+        echo "STATA_PATH=/tmp/stata" >> $GITHUB_ENV
+        
+    - name: Start MCP server in background
+      run: |
+        python stata_mcp_server.py --port 4000 --stata-path /tmp/stata &
+        sleep 3
+        
+    - name: Test MCP server
+      run: npm run test:mcp-server
+      
+  build-package:
+    runs-on: ubuntu-latest
+    needs: [test-platform, test-mcp-server]
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Use Node.js 18.x
+      uses: actions/setup-node@v3
+      with:
+        node-version: 18.x
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Install vsce
+      run: npm install -g @vscode/vsce
+      
+    - name: Package Extension
+      run: npm run package
+      
+    - name: Upload VSIX package
+      uses: actions/upload-artifact@v3
+      with:
+        name: stata-mcp-extension
+        path: "*.vsix" 
