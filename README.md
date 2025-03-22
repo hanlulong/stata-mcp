@@ -1,7 +1,5 @@
 # Stata MCP Extension for VS Code and Cursor
 
-![Stata MCP Extension](images/logo.png)
-
 [![VS Code Marketplace](https://img.shields.io/badge/VS%20Code-Marketplace-blue)](https://marketplace.visualstudio.com/items?itemName=DeepEcon.stata-mcp)
 [![GitHub license](https://img.shields.io/github/license/hanlulong/stata-mcp)](https://github.com/hanlulong/stata-mcp/blob/main/LICENSE)
 
