@@ -3,7 +3,7 @@
 	"displayName": "Stata MCP",
 	"description": "Stata integration for VS Code using Model Control Protocol",
 	"publisher": "DeepEcon",
-	"version": "0.0.2",
+	"version": "0.0.6",
 	"engines": {
 		"vscode": "^1.75.0"
 	},
@@ -135,6 +135,11 @@
 					"type": "boolean",
 					"default": false,
 					"description": "Show detailed debug information in output panel"
+				},
+				"stata-vscode.pythonPath": {
+					"type": "string",
+					"default": "",
+					"description": "Path to Python interpreter. If not set, the extension will try to use the system Python or Anaconda base environment."
 				}
 			}
 		},
