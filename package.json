@@ -135,11 +135,6 @@
 					"type": "boolean",
 					"default": false,
 					"description": "Show detailed debug information in output panel"
-				},
-				"stata-vscode.pythonPath": {
-					"type": "string",
-					"default": "",
-					"description": "Path to Python interpreter. If not set, the extension will try to use the system Python or Anaconda base environment."
 				}
 			}
 		},
@@ -176,12 +171,18 @@
 		"test:platform": "node ./scripts/test-platform.js",
 		"test:extension": "node ./scripts/test-extension.js",
 		"test:mcp-server": "node ./scripts/test-mcp-server.js",
+		"test:python": "node ./scripts/test-python-detection.js",
+		"test:python:simple": "node ./scripts/test-python-detection-simple.js",
+		"test:python:no311": "node ./scripts/test-no-python311.js",
+		"test:python:version": "node ./scripts/test-python-version-check.js",
+		"test:python:older": "node ./scripts/test-older-python.js",
 		"test": "npm run test:platform && npm run test:extension && npm run test:mcp-server",
 		"clear-port": "node ./scripts/clear-port.js",
 		"start-server": "npm run clear-port && npm run start-mcp-server"
 	},
 	"dependencies": {
-		"axios": "^1.8.4"
+		"axios": "^1.8.4",
+		"tar": "^6.2.0"
 	},
 	"devDependencies": {
 		"@types/glob": "^7.2.0",
