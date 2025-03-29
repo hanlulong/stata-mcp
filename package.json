@@ -3,7 +3,7 @@
 	"displayName": "Stata MCP",
 	"description": "Stata integration for VS Code using Model Control Protocol",
 	"publisher": "DeepEcon",
-	"version": "0.0.9",
+	"version": "0.1.0",
 	"engines": {
 		"vscode": "^1.75.0"
 	},
@@ -140,6 +140,16 @@
 					"type": "boolean",
 					"default": false,
 					"description": "Show detailed debug information in output panel"
+				},
+				"stata-vscode.forcePort": {
+					"type": "boolean",
+					"default": false,
+					"description": "Force the MCP server to use the specified port even if it's already in use"
+				},
+				"stata-vscode.useUvForPython": {
+					"type": "boolean",
+					"default": true,
+					"description": "Use uv for Python environment management (recommended)"
 				}
 			}
 		},
@@ -169,20 +179,19 @@
 		]
 	},
 	"scripts": {
-		"start-mcp-server": "node ./scripts/start-server.js",
-		"postinstall": "node ./scripts/post-install.js",
+		"start-mcp-server": "node ./scripts/start-server.js --port 4000 --force-port",
+		"postinstall": "node ./scripts/check-python.js",
 		"webpack": "webpack --config webpack.config.js",
+		"watch": "webpack --watch",
 		"package": "npm run webpack && vsce package --allow-star-activation",
+		"compile": "npm run webpack",
 		"test:platform": "node ./scripts/test-platform.js",
 		"test:extension": "node ./scripts/test-extension.js",
 		"test:mcp-server": "node ./scripts/test-mcp-server.js",
 		"test:python": "node ./scripts/test-python-detection.js",
 		"test:python:simple": "node ./scripts/test-python-detection-simple.js",
-		"test:python:no311": "node ./scripts/test-no-python311.js",
-		"test:python:version": "node ./scripts/test-python-version-check.js",
-		"test:python:older": "node ./scripts/test-older-python.js",
-		"test:python:install": "node ./scripts/test-python-installation.js",
-		"test:python:env": "node ./scripts/install-local-python.js --test-mode",
+		"test:install:uv": "node ./scripts/check-python.js",
+		"test:uv": "uv --version",
 		"test": "npm run test:platform && npm run test:extension && npm run test:mcp-server",
 		"clear-port": "node ./scripts/clear-port.js",
 		"start-server": "npm run clear-port && npm run start-mcp-server"
