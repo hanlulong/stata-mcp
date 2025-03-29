@@ -61,9 +61,20 @@ If you prefer to install manually:
    - Select "Install from VSIX..."
    - Navigate to and select the downloaded .vsix file
 3. For Cursor:
-   - Run this command in a terminal: `cursor --install-extension path/to/stata-mcp-0.0.2.vsix`
+   - Run this command in a terminal: `cursor --install-extension path/to/stata-mcp-0.0.6.vsix`
 
 > **Note:** The first time the extension is installed or run may take some time as dependencies need to be added. Please be patient and wait for it to finish. This process should normally take less than 2 minutes.
+
+## Extension Settings
+
+You can customize the extension behavior through VS Code settings:
+
+- `stata-vscode.stataPath`: Path to Stata installation directory
+- `stata-vscode.pythonPath`: Path to Python interpreter (new in v0.0.6). If not set, the extension will try to use the system Python or Anaconda base environment
+- `stata-vscode.mcpServerHost`: Host for MCP server (default: localhost)
+- `stata-vscode.mcpServerPort`: Port for the MCP server (default: 4000)
+- `stata-vscode.autoStartServer`: Automatically start MCP server when extension activates (default: true)
+- `stata-vscode.debugMode`: Show detailed debug information in output panel (default: false)
 
 ## Cursor MCP Configuration
 
