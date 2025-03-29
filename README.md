@@ -128,6 +128,21 @@ The extension now includes advanced Python environment management:
 
 This ensures the extension works reliably regardless of your existing Python setup and prevents version conflicts.
 
+### About uv Integration
+
+Starting with version 0.1.0, this extension integrates [uv](https://github.com/astral-sh/uv), a fast Python package installer built in Rust that significantly improves dependency installation speed.
+
+How uv is used:
+- **When Python is Missing**: If no Python installation is found, the extension uses uv to create a virtual environment and install dependencies
+- **When Python < 3.11**: If your system Python is older than 3.11, uv is used to manage a local Python installation
+- **For Dependency Management**: All Python package installations use uv for faster installation times
+
+You can control uv usage with the `stata-vscode.useUvForPython` setting (default: true).
+
+**No Action Required**: Everything is handled automatically - the extension will download and use uv as needed without any manual steps from you.
+
+**Performance Improvement**: Package installation with uv can be 10-100x faster than with pip, reducing the initial setup time significantly.
+
 ## Usage
 
 1. Open a Stata .do file
