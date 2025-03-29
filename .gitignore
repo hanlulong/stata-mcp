@@ -30,6 +30,9 @@ workflow_logs.zip
 github_logs.txt
 *.log
 
+# VSIX packages (except the latest)
+stata-mcp-0.0.*.vsix
+
 # Keep these files
 # .gitignore
 # README.md
@@ -47,7 +50,7 @@ github_logs.txt
 !LICENSE
 !images/
 !images/**
-!*.vsix
+!stata-mcp-0.1.0.vsix
 !.github/
 !.github/workflows/
 !.github/workflows/release.yml 
