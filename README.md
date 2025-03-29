@@ -61,7 +61,7 @@ If you prefer to install manually:
    - Select "Install from VSIX..."
    - Navigate to and select the downloaded .vsix file
 3. For Cursor:
-   - Run this command in a terminal: `cursor --install-extension path/to/stata-mcp-0.0.6.vsix`
+   - Run this command in a terminal: `cursor --install-extension path/to/stata-mcp-0.0.7.vsix`
 
 > **Note:** The first time the extension is installed or run may take some time as dependencies need to be added. Please be patient and wait for it to finish. This process should normally take less than 2 minutes.
 
@@ -70,7 +70,7 @@ If you prefer to install manually:
 You can customize the extension behavior through VS Code settings:
 
 - `stata-vscode.stataPath`: Path to Stata installation directory
-- `stata-vscode.pythonPath`: Path to Python interpreter (new in v0.0.6). If not set, the extension will try to use the system Python or Anaconda base environment
+- `stata-vscode.pythonPath`: Path to Python interpreter (new in v0.0.7). If not set, the extension will try to use the system Python or Anaconda base environment
 - `stata-vscode.mcpServerHost`: Host for MCP server (default: localhost)
 - `stata-vscode.mcpServerPort`: Port for the MCP server (default: 4000)
 - `stata-vscode.autoStartServer`: Automatically start MCP server when extension activates (default: true)
@@ -111,7 +111,19 @@ This configuration allows Cursor's AI to communicate with the Stata MCP server t
 ## Requirements
 
 - Stata installed on your machine (Stata 14 or higher recommended)
-- Python 3.11 or higher (automatically managed by the extension)
+- Python 3.11 or higher (automatically installed locally if your existing Python version is < 3.11)
+
+## Python Environment Management
+
+The extension now includes advanced Python environment management:
+
+- **Version Check**: Checks if Python 3.11+ is available on your system
+- **Smart Installation**: Installs Python 3.11 locally only when your existing Python version is < 3.11
+- **Isolated Environment**: Uses a local installation that won't conflict with any existing Python installations
+- **Dependency Management**: Sets up a virtual environment with all required packages
+- **Cross-Platform Support**: Works on Windows, macOS, and Linux with platform-specific optimizations
+
+This ensures the extension works reliably regardless of your existing Python setup and prevents version conflicts.
 
 ## Usage
 
