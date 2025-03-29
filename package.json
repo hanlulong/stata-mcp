@@ -3,7 +3,7 @@
 	"displayName": "Stata MCP",
 	"description": "Stata integration for VS Code using Model Control Protocol",
 	"publisher": "DeepEcon",
-	"version": "0.0.8",
+	"version": "0.0.9",
 	"engines": {
 		"vscode": "^1.75.0"
 	},
@@ -101,6 +101,11 @@
 					"default": "",
 					"description": "Path to Stata installation directory"
 				},
+				"stata-vscode.pythonPath": {
+					"type": "string",
+					"default": "",
+					"description": "Path to Python interpreter. If not set, the extension will try to use the system Python or Anaconda base environment."
+				},
 				"stata-vscode.mcpServerHost": {
 					"type": "string",
 					"default": "localhost",
@@ -176,11 +181,14 @@
 		"test:python:no311": "node ./scripts/test-no-python311.js",
 		"test:python:version": "node ./scripts/test-python-version-check.js",
 		"test:python:older": "node ./scripts/test-older-python.js",
+		"test:python:install": "node ./scripts/test-python-installation.js",
+		"test:python:env": "node ./scripts/install-local-python.js --test-mode",
 		"test": "npm run test:platform && npm run test:extension && npm run test:mcp-server",
 		"clear-port": "node ./scripts/clear-port.js",
 		"start-server": "npm run clear-port && npm run start-mcp-server"
 	},
 	"dependencies": {
+		"adm-zip": "^0.5.16",
 		"axios": "^1.8.4"
 	},
 	"devDependencies": {

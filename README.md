@@ -61,7 +61,7 @@ If you prefer to install manually:
    - Select "Install from VSIX..."
    - Navigate to and select the downloaded .vsix file
 3. For Cursor:
-   - Run this command in a terminal: `cursor --install-extension path/to/stata-mcp-0.0.8.vsix`
+   - Run this command in a terminal: `cursor --install-extension path/to/stata-mcp-0.0.9.vsix`
 
 > **Note:** The first time the extension is installed or run may take some time as dependencies need to be added. Please be patient and wait for it to finish. This process should normally take less than 2 minutes.
 
