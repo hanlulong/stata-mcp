@@ -1,9 +1,9 @@
 {
 	"name": "stata-mcp",
 	"displayName": "Stata MCP",
-	"description": "Stata integration for VS Code using Model Control Protocol",
+	"description": "Stata integration for VS Code using Model Context Protocol",
 	"publisher": "DeepEcon",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"engines": {
 		"vscode": "^1.75.0"
 	},
