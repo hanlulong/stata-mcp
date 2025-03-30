@@ -31,7 +31,8 @@ github_logs.txt
 *.log
 
 # VSIX packages (except the latest)
-stata-mcp-0.0.*.vsix
+stata-mcp-*.vsix
+!stata-mcp-0.1.1.vsix
 
 # Keep these files
 # .gitignore
