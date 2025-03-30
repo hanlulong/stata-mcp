@@ -61,7 +61,7 @@ If you prefer to install manually:
    - Select "Install from VSIX..."
    - Navigate to and select the downloaded .vsix file
 3. For Cursor:
-   - Run this command in a terminal: `cursor --install-extension path/to/stata-mcp-0.1.2.vsix`
+   - Run this command in a terminal: `cursor --install-extension path/to/stata-mcp-0.1.3.vsix`
 
 > **Note:** The first time the extension is installed or run may take some time as dependencies need to be added. Please be patient and wait for it to finish. This process should normally take less than 2 minutes.
 
@@ -130,7 +130,7 @@ This ensures the extension works reliably regardless of your existing Python set
 
 ### About uv Integration
 
-Starting with version 0.1.2, this extension integrates [uv](https://github.com/astral-sh/uv), a fast Python package installer built in Rust that significantly improves dependency installation speed.
+Starting with version 0.1.3, this extension integrates [uv](https://github.com/astral-sh/uv), a fast Python package installer built in Rust that significantly improves dependency installation speed.
 
 How uv is used:
 - **When Python is Missing**: If no Python installation is found, the extension uses uv to create a virtual environment and install dependencies
