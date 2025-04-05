@@ -3,7 +3,7 @@
 	"displayName": "Stata MCP",
 	"description": "Stata integration for VS Code using Model Context Protocol",
 	"publisher": "DeepEcon",
-	"version": "0.1.3",
+	"version": "0.1.4",
 	"engines": {
 		"vscode": "^1.75.0"
 	},
