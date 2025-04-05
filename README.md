@@ -20,6 +20,10 @@ This extension provides Stata integration for Visual Studio Code and Cursor IDE 
 - **Automatic Stata Detection**: Automatically finds your Stata installation
 - **Real-time Output**: See Stata results instantly in your editor
 
+> **Looking for other Stata integrations?**
+> - Use Stata with Notepad++ and Sublime Text 3? See: [Tech_Integrate_Stata_R_with_Editors](https://github.com/sook-tusk/Tech_Integrate_Stata_R_with_Editors)
+> - Use Stata MCP in Claude or Cline? See: [stata-mcp](https://github.com/SepineTam/stata-mcp)
+
 ## Installation Options
 
 ### Option 1: VS Code Marketplace
