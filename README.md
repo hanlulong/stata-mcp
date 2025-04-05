@@ -258,7 +258,7 @@ When opening an issue on GitHub, please provide:
 - Any relevant log files or screenshots
 - The content of your MCP configuration file if applicable
 
-This detailed information will help us identify and fix the issue more quickly. You can open issues at: [GitHub Issues](https://github.com/llong2195/stata-mcp/issues)
+This detailed information will help us identify and fix the issue more quickly. You can open issues at: [GitHub Issues](https://github.com/hanlulong/stata-mcp/issues)
 
 ## License
 
