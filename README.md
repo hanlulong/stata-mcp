@@ -159,15 +159,6 @@ The extension creates a local MCP server that connects your editor to Stata, ena
 2. **Context Awareness**: AI assistants understand your Stata data and commands
 3. **Enhanced Productivity**: Get intelligent code suggestions and documentation
 
-## License
-
-MIT
-
-## Credits
-
-Created by Lu Han
-Published by DeepEcon 
-
 ## Troubleshooting
 
 If you encounter issues with the extension, follow these steps to perform a clean reinstallation:
@@ -257,9 +248,23 @@ If you encounter issues with the extension, follow these steps to perform a clea
   3. Make sure you have Python 3.11 or later installed
   4. Check if your antivirus software is blocking Python or UV executables
 
-If problems persist after trying these steps, please [open an issue](https://github.com/llong2195/stata-mcp/issues) with:
+When opening an issue on GitHub, please provide:
+- The complete error message from the Output panel (View -> Output -> Stata-MCP)
 - Your operating system and version
 - VS Code/Cursor version
 - Python version (`python --version`)
 - UV version (`uv --version`)
-- The error messages from the Output panel 
+- Steps to reproduce the issue
+- Any relevant log files or screenshots
+- The content of your MCP configuration file if applicable
+
+This detailed information will help us identify and fix the issue more quickly. You can open issues at: [GitHub Issues](https://github.com/llong2195/stata-mcp/issues)
+
+## License
+
+MIT
+
+## Credits
+
+Created by Lu Han
+Published by DeepEcon 
