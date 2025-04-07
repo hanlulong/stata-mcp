@@ -66,7 +66,7 @@ If you prefer to install manually:
    - Select "Install from VSIX..."
    - Navigate to and select the downloaded .vsix file
 3. For Cursor:
-   - Run this command in a terminal: `cursor --install-extension path/to/stata-mcp-0.1.4.vsix`
+   - Run this command in a terminal: `cursor --install-extension path/to/stata-mcp-0.1.5.vsix`
 
 > **Note:** The first time the extension is installed or run may take some time as dependencies need to be added. Please be patient and wait for it to finish. This process should normally take less than 2 minutes.
 
@@ -168,7 +168,44 @@ The extension creates a local MCP server that connects your editor to Stata, ena
 
 If you encounter issues with the extension, follow these steps to perform a clean reinstallation:
 
-### Windows
+### Common Installation Issues
+
+#### UV-Related Errors
+
+If you see errors related to `uv` during installation, such as "UV not found" or "Failed to install dependencies using UV":
+
+1. Try installing UV manually:
+
+   **Windows:**
+   ```powershell
+   # Open PowerShell as Administrator and run:
+   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+   ```
+
+   **macOS/Linux:**
+   ```bash
+   # Using curl:
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+
+   # Or using wget:
+   wget -qO- https://astral.sh/uv/install.sh | sh
+   ```
+
+2. Make sure UV is in your PATH:
+   - Windows: Add `%USERPROFILE%\.uv\bin` to your PATH
+   - macOS/Linux: Add `~/.uv/bin` to your PATH
+
+3. Restart your editor and try installing the extension again
+
+4. If you continue to have issues, you can temporarily disable UV by:
+   - Go to Settings
+   - Search for "Stata MCP"
+   - Uncheck "Use UV for Python" option
+   - Reinstall the extension
+
+### Complete Reinstallation Process
+
+#### Windows
 
 1. Close all VS Code/Cursor windows
 2. Open Task Manager (Ctrl+Shift+Esc):
