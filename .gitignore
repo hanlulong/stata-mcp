@@ -55,3 +55,4 @@ stata-mcp-*.vsix
 !.github/
 !.github/workflows/
 !.github/workflows/release.yml 
+!example.ipynb
