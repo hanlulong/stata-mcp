@@ -23,6 +23,7 @@ This extension provides Stata integration for Visual Studio Code and Cursor IDE 
 > **Looking for other Stata integrations?**
 > - Use Stata with Notepad++ and Sublime Text 3? See [here](https://github.com/sook-tusk/Tech_Integrate_Stata_R_with_Editors)
 > - Use Stata MCP in Claude or Cline? See [here](https://github.com/SepineTam/stata-mcp)
+> - Use Stata via Jupyter? See [here](https://github.com/hanlulong/stata-mcp/blob/main/examples/jupyter.ipynb)
 
 ## Installation Options
 
