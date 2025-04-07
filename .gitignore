@@ -56,4 +56,4 @@ stata-mcp-*.vsix
 !.github/workflows/
 !.github/workflows/release.yml
 !examples/
-!examples/** 
+!examples/**
