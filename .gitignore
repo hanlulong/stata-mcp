@@ -47,6 +47,7 @@ stata-mcp-*.vsix
 
 # Except these files
 !.gitignore
+!.gitattributes
 !README.md
 !LICENSE
 !images/
