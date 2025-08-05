@@ -42,7 +42,7 @@ stata_setup.config("C:/Program Files/Stata17", "mp")
 ```
 
 然后您可以看到以下窗口：
-![pystata-example-window](images/pystata.png)
+![pystata-example-window](../images/pystata.png)
 
 ### Jupyter Lab
 如果您更喜欢 Jupyter Lab 而不是 VScode，请使用以下用法。
@@ -55,10 +55,10 @@ jupyter lab --notebook-dir="your/project/path"
 ```
 
 然后您可以在浏览器中看到窗口：
-![Jupyter Lab in Brower](images/jupyterlab.png)
+![Jupyter Lab in Brower](../images/jupyterlab.png)
 
 您可以直接选择 Notebook-Stata 来使用 Stata 内核，看起来像这样：
-![Jupyter Stata Use](images/JupyterLabExample.png)
+![Jupyter Stata Use](../images/JupyterLabExample.png)
 
 ## 魔法命令（在 Vscode 上，或在 Jupyter lab 中使用 python 内核）
 这部分基于[这里](#vscode-config)的结构
@@ -79,7 +79,7 @@ reg price mpg rep78 trunk weight length
 
 
 ## 使用示例（使用 python 内核）
-- [示例](examples/jupyter.ipynb) 
+- [示例](../examples/jupyter.ipynb) 
 
 
 ## 警告！
