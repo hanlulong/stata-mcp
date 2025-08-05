@@ -33,4 +33,4 @@ cursor --install-extension path/to/stata-mcp-0.2.5.vsix
 
 ## 文档
 
-完整文档可在 [README.md](https://github.com/hanlulong/stata-mcp/blob/main/README.md) 文件中找到。
+完整文档可在 [README.zh-CN.md](https://github.com/hanlulong/stata-mcp/blob/main/README.zh-CN.md) 文件中找到。

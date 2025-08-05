@@ -39,7 +39,7 @@
 > **寻找其他 Stata 集成？**
 > - 使用 Stata 与 Notepad++ 和 Sublime Text 3？请看[这里](https://github.com/sook-tusk/Tech_Integrate_Stata_R_with_Editors)
 > - 在 Claude Desktop 中使用 Stata MCP 而不安装此扩展？请看[这里](https://github.com/SepineTam/stata-mcp)
-> - 通过 Jupyter 使用 Stata？请看[这里](https://github.com/hanlulong/stata-mcp/blob/main/docs/jupyter-stata.md)
+> - 通过 Jupyter 使用 Stata？请看[这里](https://github.com/hanlulong/stata-mcp/blob/main/docs/jupyter-stata.zh-CN.md)
 
 ## 系统要求
 
