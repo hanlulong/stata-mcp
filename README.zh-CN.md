@@ -1,5 +1,7 @@
 # Stata MCP 扩展 for VS Code 和 Cursor
 
+[![en](https://img.shields.io/badge/lang-English-red.svg)](./README.md)
+[![cn](https://img.shields.io/badge/语言-中文-yellow.svg)](./README.zh-CN.md)
 [![VS Code Marketplace](https://img.shields.io/badge/VS%20Code-Marketplace-blue)](https://marketplace.visualstudio.com/items?itemName=DeepEcon.stata-mcp)
 ![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/i/deepecon.stata-mcp.svg)
 ![GitHub all releases](https://img.shields.io/github/downloads/hanlulong/stata-mcp/total.svg)
