@@ -413,7 +413,9 @@ def run_stata_command(command: str, clear_history=False):
         try:
             # Create a temp file to capture output
             with tempfile.NamedTemporaryFile(
+
                 suffix='.do', delete=False, mode='w', encoding='utf-8'
+
             ) as f:
                 # Write the command to the file
                 f.write(f"capture log close _all\n")
@@ -723,7 +725,9 @@ def run_stata_file(file_path: str, timeout=600):
             
             # Save the modified content to a temporary file
             with tempfile.NamedTemporaryFile(
+
                 suffix='.do', delete=False, mode='w', encoding='utf-8'
+
             ) as temp_do:
                 # First close any existing log files
                 temp_do.write(f"capture log close _all\n")
