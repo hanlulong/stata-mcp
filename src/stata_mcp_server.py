@@ -412,7 +412,9 @@ def run_stata_command(command: str, clear_history=False):
         # Run the command via pystata
         try:
             # Create a temp file to capture output
-            with tempfile.NamedTemporaryFile(suffix='.do', delete=False, mode='w') as f:
+            with tempfile.NamedTemporaryFile(
+                suffix='.do', delete=False, mode='w', encoding='utf-8', newline='\n'
+            ) as f:
                 # Write the command to the file
                 f.write(f"capture log close _all\n")
                 f.write(f"log using \"{f.name}.log\", replace text\n")
@@ -720,7 +722,9 @@ def run_stata_file(file_path: str, timeout=600):
             logging.info(f"Found and commented out {log_commands_found} log commands in the do file")
             
             # Save the modified content to a temporary file
-            with tempfile.NamedTemporaryFile(suffix='.do', delete=False, mode='w') as temp_do:
+            with tempfile.NamedTemporaryFile(
+                suffix='.do', delete=False, mode='w', encoding='utf-8', newline='\n'
+            ) as temp_do:
                 # First close any existing log files
                 temp_do.write(f"capture log close _all\n")
                 # Then add our own log command
