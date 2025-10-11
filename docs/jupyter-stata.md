@@ -42,7 +42,7 @@ stata_setup.config("C:/Program Files/Stata17", "mp")
 ```
 
 Then you can see the follow window:
-![pystata-example-window](images/pystata.png)
+![pystata-example-window](../images/pystata.png)
 
 ### Jupyter Lab
 If you like Jupyter Lab rather than VScode, use the follow usage.
@@ -55,10 +55,10 @@ jupyter lab --notebook-dir="your/project/path"
 ```
 
 Then you can see the window on your brower:
-![Jupyter Lab in Brower](images/jupyterlab.png)
+![Jupyter Lab in Brower](../images/jupyterlab.png)
 
 You can choose Notebook-Stata directly for use Stata Kernel, which is look like:
-![Jupyter Stata Use](images/JupyterLabExample.png)
+![Jupyter Stata Use](../images/JupyterLabExample.png)
 
 ## Magic Command(on Vscode, or jupyter lab with python kernel)
 The part is under the structure of [here](#vscode-config)
@@ -79,7 +79,7 @@ By the way, if you use the python kenrel, you can use not only stata, but also p
 
 
 ## An example usage (with python kernel)
-- [example](examples/jupyter.ipynb) 
+- [example](../examples/jupyter.ipynb) 
 
 
 ## Wraning!
