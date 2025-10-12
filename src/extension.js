@@ -256,25 +256,14 @@ function activate(context) {
     context.subscriptions.push(
         vscode.commands.registerCommand('stata-vscode.runSelection', runSelection),
         vscode.commands.registerCommand('stata-vscode.runFile', runFile),
+        vscode.commands.registerCommand('stata-vscode.showInteractive', runInteractive),
         vscode.commands.registerCommand('stata-vscode.showOutput', showOutput),
         vscode.commands.registerCommand('stata-vscode.showOutputWebview', showStataOutputWebview),
         vscode.commands.registerCommand('stata-vscode.testMcpServer', testMcpServer),
         vscode.commands.registerCommand('stata-vscode.detectStataPath', detectAndUpdateStataPath),
-        vscode.commands.registerCommand('stata-vscode.askAgent', askAgent)
+        vscode.commands.registerCommand('stata-vscode.askAgent', askAgent),
+        vscode.commands.registerCommand('stata-vscode.viewData', viewStataData)
     );
-
-    // Register language configuration
-    vscode.languages.setLanguageConfiguration('stata', {
-        comments: { lineComment: '*', blockComment: ['/*', '*/'] },
-        brackets: [['{', '}'], ['[', ']'], ['(', ')']],
-        autoClosingPairs: [
-            { open: '{', close: '}' },
-            { open: '[', close: ']' },
-            { open: '(', close: ')' },
-            { open: '"', close: '"', notIn: ['string'] },
-            { open: "'", close: "'", notIn: ['string'] }
-        ]
-    });
 
     // Auto-detect Stata path
     detectStataPath().then(path => {
@@ -499,6 +488,8 @@ async function startMcpServer() {
         Logger.info(`MCP server already running on ${host}:${port} with Stata initialized`);
         mcpServerRunning = true;
         updateStatusBar();
+
+        // Server is already running - no notification needed
         return;
     }
     
@@ -657,13 +648,15 @@ async function startMcpServer() {
         if (serverRunning) {
             mcpServerRunning = true;
             Logger.info(`MCP server started successfully on ${host}:${port}`);
+
             autoUpdateGlobalMcpConfig();
         } else {
             Logger.info(`MCP server failed to start within 15 seconds`);
             vscode.window.showErrorMessage('Failed to start MCP server. Check the Stata output panel for details.');
         }
-        
+
         updateStatusBar();
+
     } catch (error) {
         Logger.error(`Error starting MCP server: ${error.message}`);
         vscode.window.showErrorMessage(`Error starting MCP server: ${error.message}`);
@@ -711,23 +704,27 @@ async function runSelection() {
         vscode.window.showErrorMessage('No active editor');
         return;
     }
-    
+
     const selection = editor.selection;
     let text;
-    
+
     if (selection.isEmpty) {
         const line = editor.document.lineAt(selection.active.line);
         text = line.text;
     } else {
         text = editor.document.getText(selection);
     }
-    
+
     if (!text.trim()) {
         vscode.window.showErrorMessage('No text selected or current line is empty');
         return;
     }
-    
-    await executeStataCode(text, 'run_selection');
+
+    // Get the current file's directory to set as working directory
+    const filePath = editor.document.uri.fsPath;
+    const fileDir = filePath ? path.dirname(filePath) : null;
+
+    await executeStataCode(text, 'run_selection', fileDir);
 }
 
 async function runFile() {
@@ -738,7 +735,7 @@ async function runFile() {
     }
 
     const filePath = editor.document.uri.fsPath;
-    
+
     if (!filePath.toLowerCase().endsWith('.do')) {
         vscode.window.showErrorMessage('Not a Stata .do file');
         return;
@@ -747,11 +744,28 @@ async function runFile() {
     await executeStataFile(filePath);
 }
 
-async function executeStataCode(code, toolName = 'run_command') {
+let interactivePanel = null; // Global reference to interactive window
+
+async function runInteractive() {
+    console.log('[runInteractive] Command triggered - opening browser');
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        vscode.window.showErrorMessage('No active editor');
+        return;
+    }
+
+    const filePath = editor.document.uri.fsPath;
+
+    if (!filePath.toLowerCase().endsWith('.do')) {
+        vscode.window.showErrorMessage('Not a Stata .do file');
+        return;
+    }
+
+    // Execute the file and capture output
     const config = getConfig();
     const host = config.get('mcpServerHost') || 'localhost';
     const port = config.get('mcpServerPort') || 4000;
-    
+
     if (!await isServerRunning(host, port)) {
         await startMcpServer();
         if (!await isServerRunning(host, port)) {
@@ -759,16 +773,419 @@ async function executeStataCode(code, toolName = 'run_command') {
             return;
         }
     }
-    
+
+    // Get selected text or use full file
+    const selection = editor.selection;
+    let codeToRun = '';
+    let urlParams = '';
+
+    if (!selection.isEmpty) {
+        // Use selected code
+        codeToRun = editor.document.getText(selection);
+        const encodedCode = encodeURIComponent(codeToRun);
+        urlParams = `code=${encodedCode}`;
+        console.log('[runInteractive] Using selected code');
+    } else {
+        // Use full file
+        const encodedFilePath = encodeURIComponent(filePath);
+        urlParams = `file=${encodedFilePath}`;
+        console.log('[runInteractive] Using full file:', filePath);
+    }
+
+    // Open the interactive webpage in the system's default browser
+    // Using direct system commands to bypass VS Code's Simple Browser
+    const url = `http://${host}:${port}/interactive?${urlParams}`;
+    console.log('[runInteractive] Opening URL in system browser:', url);
+
+    try {
+        let openCommand;
+        if (IS_MAC) {
+            // macOS: use 'open' command with proper URL escaping
+            // Single quotes prevent shell interpretation of special chars
+            openCommand = `open '${url.replace(/'/g, "'\\''")}'`;
+        } else if (IS_WINDOWS) {
+            // Windows: use 'start' command
+            openCommand = `start "" "${url}"`;
+        } else {
+            // Linux: use 'xdg-open' command
+            openCommand = `xdg-open '${url.replace(/'/g, "'\\''")}'`;
+        }
+
+        console.log('[runInteractive] Executing command:', openCommand);
+        exec(openCommand, (error) => {
+            if (error) {
+                console.error('[runInteractive] Error opening browser:', error);
+                vscode.window.showErrorMessage(`Failed to open browser: ${error.message}`);
+            } else {
+                console.log('[runInteractive] Browser opened successfully');
+            }
+        });
+
+        vscode.window.showInformationMessage('Stata Interactive Window opened in your browser!');
+    } catch (error) {
+        console.error('[runInteractive] Error:', error);
+        vscode.window.showErrorMessage(`Failed to open browser: ${error.message}`);
+    }
+}
+
+async function showInteractiveWindow(filePath, output, graphs, host, port) {
+    // Create or reuse interactive panel
+    if (!interactivePanel) {
+        interactivePanel = vscode.window.createWebviewPanel(
+            'stataInteractive',
+            'Stata Interactive Window',
+            { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
+            {
+                enableScripts: true,
+                retainContextWhenHidden: true,
+                localResourceRoots: []
+            }
+        );
+
+        // Reset panel reference when closed
+        interactivePanel.onDidDispose(() => {
+            interactivePanel = null;
+        });
+
+        // Handle messages from webview (command execution)
+        interactivePanel.webview.onDidReceiveMessage(
+            async message => {
+                switch (message.command) {
+                    case 'runCommand':
+                        try {
+                            const config = getConfig();
+                            const cmdHost = config.get('mcpServerHost') || 'localhost';
+                            const cmdPort = config.get('mcpServerPort') || 4000;
+
+                            const response = await axios.post(
+                                `http://${cmdHost}:${cmdPort}/v1/tools`,
+                                {
+                                    tool: 'run_selection',
+                                    parameters: { selection: message.text }
+                                },
+                                { headers: { 'Content-Type': 'application/json' }, timeout: 30000 }
+                            );
+
+                            if (response.status === 200 && response.data.status === 'success') {
+                                const result = response.data.result || 'Command executed';
+                                const cmdGraphs = parseGraphsFromOutput(result);
+
+                                interactivePanel.webview.postMessage({
+                                    command: 'commandResult',
+                                    executedCommand: message.text,
+                                    result: result,
+                                    graphs: cmdGraphs.map(g => ({
+                                        name: g.name,
+                                        url: `http://${cmdHost}:${cmdPort}/graphs/${encodeURIComponent(g.name)}`
+                                    }))
+                                });
+                            } else {
+                                interactivePanel.webview.postMessage({
+                                    command: 'error',
+                                    text: response.data.message || 'Command failed'
+                                });
+                            }
+                        } catch (error) {
+                            interactivePanel.webview.postMessage({
+                                command: 'error',
+                                text: error.message
+                            });
+                        }
+                        break;
+                }
+            },
+            undefined,
+            []
+        );
+    }
+
+    // Reveal the panel
+    interactivePanel.reveal(vscode.ViewColumn.Active);
+
+    // Generate HTML content
+    const fileName = path.basename(filePath);
+    const graphsHtml = graphs.map(graph => {
+        const graphUrl = `http://${host}:${port}/graphs/${encodeURIComponent(graph.name)}`;
+        return `
+            <div class="graph-container">
+                <h3>${graph.name}</h3>
+                <img src="${graphUrl}" alt="${graph.name}"
+                     onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                <div class="error" style="display:none;">Failed to load graph: ${graph.name}</div>
+            </div>
+        `;
+    }).join('');
+
+    interactivePanel.webview.html = getInteractiveWindowHtml(fileName, output, graphsHtml);
+}
+
+function getInteractiveWindowHtml(fileName, output, graphsHtml) {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stata Interactive Window</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: var(--vscode-editor-background);
+            color: var(--vscode-editor-foreground);
+        }
+        .header {
+            border-bottom: 2px solid var(--vscode-panel-border);
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+            color: var(--vscode-foreground);
+        }
+        .header .file-name {
+            color: var(--vscode-descriptionForeground);
+            font-size: 14px;
+            margin-top: 5px;
+        }
+        .section {
+            margin-bottom: 30px;
+        }
+        .section-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: var(--vscode-foreground);
+            border-left: 4px solid var(--vscode-activityBarBadge-background);
+            padding-left: 10px;
+        }
+        .output-container {
+            background-color: var(--vscode-terminal-background);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 4px;
+            padding: 15px;
+            font-family: 'Courier New', Consolas, monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            overflow-x: auto;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .graph-container {
+            background-color: var(--vscode-editor-background);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 4px;
+            padding: 20px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .graph-container h3 {
+            margin-top: 0;
+            margin-bottom: 15px;
+            color: var(--vscode-foreground);
+        }
+        .graph-container img {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .error {
+            color: var(--vscode-errorForeground);
+            background-color: var(--vscode-inputValidation-errorBackground);
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .no-graphs {
+            color: var(--vscode-descriptionForeground);
+            font-style: italic;
+            padding: 20px;
+            text-align: center;
+        }
+        .command-input-section {
+            position: sticky;
+            bottom: 0;
+            background-color: var(--vscode-editor-background);
+            border-top: 2px solid var(--vscode-panel-border);
+            padding: 15px;
+            margin-top: 20px;
+        }
+        .command-input-container {
+            display: flex;
+            gap: 10px;
+        }
+        #command-input {
+            flex: 1;
+            background-color: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 4px;
+            padding: 8px 12px;
+            font-family: 'Courier New', Consolas, monospace;
+            font-size: 13px;
+        }
+        #command-input:focus {
+            outline: 1px solid var(--vscode-focusBorder);
+        }
+        #run-button {
+            background-color: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            border-radius: 4px;
+            padding: 8px 20px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        #run-button:hover {
+            background-color: var(--vscode-button-hoverBackground);
+        }
+        #run-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .command-hint {
+            color: var(--vscode-descriptionForeground);
+            font-size: 12px;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📊 Stata Interactive Window</h1>
+        <div class="file-name">File: ${fileName}</div>
+    </div>
+
+    <div class="section">
+        <div class="section-title">Output</div>
+        <div class="output-container" id="output-container">${escapeHtml(output)}</div>
+    </div>
+
+    <div class="section">
+        <div class="section-title">Graphs</div>
+        <div id="graphs-container">${graphsHtml || '<div class="no-graphs">No graphs generated</div>'}</div>
+    </div>
+
+    <div class="command-input-section">
+        <div class="section-title">Execute Stata Command</div>
+        <div class="command-input-container">
+            <input type="text" id="command-input" placeholder="Enter Stata command (e.g., summarize, list, scatter y x)..." />
+            <button id="run-button">Run</button>
+        </div>
+        <div class="command-hint">Press Enter to execute</div>
+    </div>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+        const commandInput = document.getElementById('command-input');
+        const runButton = document.getElementById('run-button');
+        const outputContainer = document.getElementById('output-container');
+        const graphsContainer = document.getElementById('graphs-container');
+
+        runButton.addEventListener('click', executeCommand);
+        commandInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') executeCommand();
+        });
+
+        function executeCommand() {
+            const command = commandInput.value.trim();
+            if (!command) return;
+            runButton.disabled = true;
+            runButton.textContent = 'Running...';
+            vscode.postMessage({ command: 'runCommand', text: command });
+            commandInput.value = '';
+        }
+
+        window.addEventListener('message', event => {
+            const message = event.data;
+            if (message.command === 'commandResult') {
+                // Create a new cell for this command/output pair
+                const cell = document.createElement('div');
+                cell.className = 'output-cell';
+                cell.style.borderLeft = '3px solid var(--vscode-activityBarBadge-background)';
+                cell.style.paddingLeft = '10px';
+                cell.style.marginBottom = '15px';
+
+                const cmd = document.createElement('div');
+                cmd.textContent = '> ' + message.executedCommand;
+                cmd.style.color = 'var(--vscode-terminal-ansiBrightBlue)';
+                cmd.style.fontWeight = 'bold';
+                cmd.style.marginBottom = '10px';
+                cell.appendChild(cmd);
+
+                const res = document.createElement('div');
+                res.textContent = message.result;
+                res.style.whiteSpace = 'pre-wrap';
+                cell.appendChild(res);
+
+                outputContainer.appendChild(cell);
+                outputContainer.scrollTop = outputContainer.scrollHeight;
+
+                // Add graphs if any
+                if (message.graphs && message.graphs.length > 0) {
+                    const graphsHtml = message.graphs.map(g =>
+                        \`<div class="graph-container"><h3>\${g.name}</h3>
+                        <img src="\${g.url}" alt="\${g.name}"></div>\`).join('');
+                    graphsContainer.innerHTML += graphsHtml;
+                }
+            } else if (message.command === 'error') {
+                const cell = document.createElement('div');
+                cell.className = 'error';
+                cell.textContent = 'Error: ' + message.text;
+                cell.style.marginBottom = '15px';
+                outputContainer.appendChild(cell);
+                outputContainer.scrollTop = outputContainer.scrollHeight;
+            }
+            runButton.disabled = false;
+            runButton.textContent = 'Run';
+            commandInput.focus();
+        });
+
+        commandInput.focus();
+    </script>
+</body>
+</html>`;
+}
+
+function escapeHtml(text) {
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return text.replace(/[&<>"']/g, m => map[m]);
+}
+
+async function executeStataCode(code, toolName = 'run_command', workingDir = null) {
+    const config = getConfig();
+    const host = config.get('mcpServerHost') || 'localhost';
+    const port = config.get('mcpServerPort') || 4000;
+
+    if (!await isServerRunning(host, port)) {
+        await startMcpServer();
+        if (!await isServerRunning(host, port)) {
+            vscode.window.showErrorMessage('Failed to connect to MCP server');
+            return;
+        }
+    }
+
     stataOutputChannel.show(true);
     Logger.debug(`Executing Stata code: ${code}`);
-    
+
     const paramName = toolName === 'run_selection' ? 'selection' : 'command';
 
     try {
         const requestBody = {
             tool: toolName,
-            parameters: { [paramName]: code }
+            parameters: {
+                [paramName]: code,
+                working_dir: workingDir
+            }
         };
         
         const response = await axios.post(
@@ -782,12 +1199,22 @@ async function executeStataCode(code, toolName = 'run_command') {
         
         if (response.status === 200) {
             const result = response.data;
-            
+
             if (result.status === 'success') {
                 const outputContent = result.result || 'Command executed successfully (no output)';
                 stataOutputChannel.clear();
                 stataOutputChannel.appendLine(outputContent);
                 stataOutputChannel.show(true);
+
+                // Parse and display any graphs (VS Code only, not for MCP calls)
+                const autoDisplayGraphs = config.get('autoDisplayGraphs', true);
+                if (autoDisplayGraphs) {
+                    const graphs = parseGraphsFromOutput(outputContent);
+                    if (graphs.length > 0) {
+                        await displayGraphs(graphs, host, port);
+                    }
+                }
+
                 return outputContent;
             } else {
                 const errorMessage = result.message || 'Unknown error';
@@ -854,12 +1281,22 @@ async function executeStataFile(filePath) {
         
         if (response.status === 200) {
             const result = response.data;
-            
+
             if (result.status === 'success') {
                 const outputContent = result.result || 'File executed successfully (no output)';
                 stataOutputChannel.clear();
                 stataOutputChannel.appendLine(outputContent);
                 stataOutputChannel.show(true);
+
+                // Parse and display any graphs (VS Code only, not for MCP calls)
+                const autoDisplayGraphs = config.get('autoDisplayGraphs', true);
+                if (autoDisplayGraphs) {
+                    const graphs = parseGraphsFromOutput(outputContent);
+                    if (graphs.length > 0) {
+                        await displayGraphs(graphs, host, port);
+                    }
+                }
+
                 return outputContent;
             } else {
                 const errorMessage = result.message || 'Unknown error';
@@ -931,6 +1368,541 @@ function showStataOutputWebview(content = null) {
     }
     
     stataOutputWebviewPanel.reveal(vscode.ViewColumn.Two);
+}
+
+// Global variable for data viewer panel
+let dataViewerPanel = null;
+
+async function viewStataData() {
+    Logger.info('View Stata Data command triggered');
+
+    const config = getConfig();
+    const host = config.get('mcpServerHost') || 'localhost';
+    const port = config.get('mcpServerPort') || 4000;
+
+    try {
+        // Call the server endpoint to get data
+        Logger.debug(`Fetching data from http://${host}:${port}/view_data`);
+        const response = await axios.get(`http://${host}:${port}/view_data`);
+
+        if (response.data.status === 'error') {
+            vscode.window.showErrorMessage(`Error viewing data: ${response.data.message}`);
+            stataOutputChannel.appendLine(`Error: ${response.data.message}`);
+            return;
+        }
+
+        // Create or reuse webview panel
+        if (!dataViewerPanel) {
+            dataViewerPanel = vscode.window.createWebviewPanel(
+                'stataDataViewer',
+                'Data Editor (Browse)',
+                { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
+                {
+                    enableScripts: true,
+                    retainContextWhenHidden: true
+                }
+            );
+
+            dataViewerPanel.onDidDispose(
+                () => { dataViewerPanel = null; },
+                null,
+                globalContext.subscriptions
+            );
+
+            // Handle messages from webview
+            dataViewerPanel.webview.onDidReceiveMessage(
+                async message => {
+                    if (message.command === 'applyFilter') {
+                        const ifCondition = message.condition;
+                        Logger.info(`Applying filter: ${ifCondition}`);
+
+                        try {
+                            const filterResponse = await axios.get(
+                                `http://${host}:${port}/view_data?if_condition=${encodeURIComponent(ifCondition)}`
+                            );
+
+                            if (filterResponse.data.status === 'error') {
+                                dataViewerPanel.webview.postMessage({
+                                    command: 'filterError',
+                                    message: filterResponse.data.message
+                                });
+                            } else {
+                                const { data, columns, rows, index, dtypes } = filterResponse.data;
+                                dataViewerPanel.webview.html = getStataDataViewerHtml(data, columns, index, dtypes, rows, ifCondition);
+                                Logger.info(`Filtered data: ${rows} observations`);
+                            }
+                        } catch (error) {
+                            Logger.error(`Filter error: ${error.message}`);
+                            dataViewerPanel.webview.postMessage({
+                                command: 'filterError',
+                                message: error.message
+                            });
+                        }
+                    }
+                },
+                undefined,
+                globalContext.subscriptions
+            );
+        }
+
+        const { data, columns, rows, index, dtypes } = response.data;
+
+        // If no data, show empty message
+        if (!data || data.length === 0) {
+            dataViewerPanel.webview.html = getEmptyDataViewerHtml();
+            dataViewerPanel.reveal(vscode.ViewColumn.Active);
+            return;
+        }
+
+        // Create the Stata-like data viewer HTML
+        dataViewerPanel.webview.html = getStataDataViewerHtml(data, columns, index, dtypes, rows);
+        dataViewerPanel.reveal(vscode.ViewColumn.Active);
+
+        Logger.info(`Data viewer displayed: ${rows} observations, ${columns.length} variables`);
+        stataOutputChannel.appendLine(`Data viewer opened: ${rows} observations, ${columns.length} variables`);
+
+    } catch (error) {
+        const errorMessage = `Failed to view data: ${error.message}`;
+        Logger.error(errorMessage);
+        vscode.window.showErrorMessage(errorMessage);
+        stataOutputChannel.appendLine(errorMessage);
+
+        if (error.code === 'ECONNREFUSED') {
+            const startServer = await vscode.window.showErrorMessage(
+                'MCP server is not running. Do you want to start it?',
+                'Yes', 'No'
+            );
+
+            if (startServer === 'Yes') {
+                await startMcpServer();
+            }
+        }
+    }
+}
+
+function getEmptyDataViewerHtml() {
+    return `<!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Data Editor</title>
+        <style>
+            body {
+                margin: 0;
+                padding: 40px;
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background: #ffffff;
+                text-align: center;
+            }
+            .empty-message {
+                color: #666;
+                font-size: 14px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="empty-message">
+            <p><strong>No data currently loaded</strong></p>
+            <p>Load a dataset in Stata to view it here.</p>
+        </div>
+    </body>
+    </html>`;
+}
+
+function getStataDataViewerHtml(data, columns, index, dtypes, totalRows, ifCondition = '') {
+    // Escape data for safe JSON embedding
+    const dataJson = JSON.stringify(data);
+    const columnsJson = JSON.stringify(columns);
+    const indexJson = JSON.stringify(index);
+    const dtypesJson = JSON.stringify(dtypes);
+    const ifConditionEscaped = ifCondition.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    return `<!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Data Editor (Browse)</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+
+            body {
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background: #ffffff;
+                overflow: hidden;
+                display: flex;
+                flex-direction: column;
+                height: 100vh;
+            }
+
+            .toolbar {
+                background: #f8f9fa;
+                border-bottom: 1px solid #dee2e6;
+                padding: 10px 16px;
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                font-size: 13px;
+                color: #212529;
+                min-height: 40px;
+            }
+
+            .toolbar-label {
+                font-weight: 600;
+                font-size: 14px;
+            }
+
+            .filter-section {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin-left: auto;
+            }
+
+            .filter-label {
+                font-weight: 600;
+                font-size: 13px;
+            }
+
+            #filter-input {
+                padding: 6px 10px;
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 13px;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                min-width: 300px;
+                background: #ffffff;
+            }
+
+            #filter-input:focus {
+                outline: none;
+                border-color: #007acc;
+                box-shadow: 0 0 0 3px rgba(0, 122, 204, 0.1);
+            }
+
+            .filter-button {
+                padding: 6px 14px;
+                background: #0e639c;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-weight: 600;
+                font-size: 13px;
+            }
+
+            .filter-button:hover {
+                background: #1177bb;
+            }
+
+            .filter-button:disabled {
+                background: #999;
+                cursor: not-allowed;
+            }
+
+            .clear-filter-button {
+                padding: 6px 14px;
+                background: #6c757d;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-weight: 600;
+                font-size: 13px;
+            }
+
+            .clear-filter-button:hover {
+                background: #5a6268;
+            }
+
+            .filter-error {
+                color: #dc3545;
+                font-size: 12px;
+                margin-left: 8px;
+            }
+
+            .filter-active {
+                background: #d1ecf1;
+                color: #0c5460;
+                padding: 4px 8px;
+                border-radius: 4px;
+                font-size: 12px;
+                font-family: 'Consolas', 'Monaco', monospace;
+            }
+
+            .grid-container {
+                flex: 1;
+                overflow: auto;
+                position: relative;
+                background: #ffffff;
+            }
+
+            .data-grid {
+                display: grid;
+                border: 1px solid #dee2e6;
+                font-size: 13px;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'SF Pro Text', sans-serif;
+                background: #ffffff;
+            }
+
+            .cell {
+                border-right: 1px solid #dee2e6;
+                border-bottom: 1px solid #dee2e6;
+                padding: 8px 12px;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                background: #ffffff;
+                min-height: 32px;
+                display: flex;
+                align-items: center;
+                color: #000000;
+                font-weight: 500;
+            }
+
+            .header-cell {
+                background: #f8f9fa;
+                color: #000000;
+                font-weight: 700;
+                font-size: 13px;
+                position: sticky;
+                top: 0;
+                z-index: 10;
+                padding: 10px 12px;
+                border-right: 1px solid #dee2e6;
+                border-bottom: 2px solid #adb5bd;
+                text-align: center;
+                cursor: default;
+                user-select: none;
+                min-height: 36px;
+            }
+
+            .index-cell {
+                background: #f8f9fa;
+                font-weight: 700;
+                font-size: 13px;
+                color: #000000;
+                position: sticky;
+                left: 0;
+                z-index: 5;
+                text-align: right;
+                border-right: 2px solid #adb5bd;
+                padding: 8px 12px;
+            }
+
+            .corner-cell {
+                background: #f8f9fa;
+                position: sticky;
+                left: 0;
+                top: 0;
+                z-index: 15;
+                border-right: 2px solid #adb5bd;
+                border-bottom: 2px solid #adb5bd;
+            }
+
+            .cell:hover:not(.header-cell):not(.index-cell):not(.corner-cell) {
+                background: #e9ecef;
+                outline: 2px solid #0d6efd;
+                outline-offset: -2px;
+            }
+
+            .selected-cell {
+                background: #cfe2ff !important;
+                outline: 2px solid #0d6efd !important;
+                outline-offset: -2px;
+            }
+
+            .numeric {
+                text-align: right;
+            }
+
+            .string {
+                text-align: left;
+            }
+
+            .null-value {
+                color: #6c757d !important;
+                font-style: italic;
+            }
+
+            .data-cell {
+                color: #000000 !important;
+            }
+
+            ::-webkit-scrollbar {
+                width: 16px;
+                height: 16px;
+            }
+
+            ::-webkit-scrollbar-track {
+                background: #f0f0f0;
+            }
+
+            ::-webkit-scrollbar-thumb {
+                background: #c0c0c0;
+                border: 2px solid #f0f0f0;
+                border-radius: 2px;
+            }
+
+            ::-webkit-scrollbar-thumb:hover {
+                background: #a0a0a0;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="toolbar">
+            <span class="toolbar-label">Data Editor (Browse)</span>
+            <span>|</span>
+            <span id="data-info"></span>
+            ${ifCondition ? `<span class="filter-active">Filter: if ${ifConditionEscaped}</span>` : ''}
+            <div class="filter-section">
+                <span class="filter-label">if</span>
+                <input type="text" id="filter-input" placeholder="e.g., price > 5000 & mpg < 30" value="${ifConditionEscaped}" />
+                <button class="filter-button" id="apply-filter-btn">Apply</button>
+                ${ifCondition ? '<button class="clear-filter-button" id="clear-filter-btn">Clear</button>' : ''}
+                <span id="filter-error" class="filter-error"></span>
+            </div>
+        </div>
+        <div class="grid-container">
+            <div class="data-grid" id="dataGrid"></div>
+        </div>
+
+        <script>
+            const vscode = acquireVsCodeApi();
+            const data = ${dataJson};
+            const columns = ${columnsJson};
+            const indexData = ${indexJson};
+            const dtypes = ${dtypesJson};
+            const totalRows = ${totalRows};
+            const currentFilter = '${ifCondition.replace(/'/g, "\\'")}';
+
+            // Filter functionality
+            const filterInput = document.getElementById('filter-input');
+            const applyFilterBtn = document.getElementById('apply-filter-btn');
+            const clearFilterBtn = document.getElementById('clear-filter-btn');
+            const filterError = document.getElementById('filter-error');
+
+            applyFilterBtn.addEventListener('click', applyFilter);
+            filterInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') applyFilter();
+            });
+
+            if (clearFilterBtn) {
+                clearFilterBtn.addEventListener('click', () => {
+                    vscode.postMessage({
+                        command: 'applyFilter',
+                        condition: ''
+                    });
+                });
+            }
+
+            function applyFilter() {
+                const condition = filterInput.value.trim();
+                filterError.textContent = '';
+                applyFilterBtn.disabled = true;
+                applyFilterBtn.textContent = 'Applying...';
+
+                vscode.postMessage({
+                    command: 'applyFilter',
+                    condition: condition
+                });
+            }
+
+            // Listen for error messages
+            window.addEventListener('message', event => {
+                const message = event.data;
+                if (message.command === 'filterError') {
+                    filterError.textContent = 'Error: ' + message.message;
+                    applyFilterBtn.disabled = false;
+                    applyFilterBtn.textContent = 'Apply';
+                }
+            });
+
+            // Update info bar
+            document.getElementById('data-info').textContent =
+                totalRows + ' observations, ' + columns.length + ' variables';
+
+            // Calculate grid dimensions
+            const numCols = columns.length + 1; // +1 for index column
+            const numRows = data.length + 1; // +1 for header row
+
+            // Set up grid template
+            const grid = document.getElementById('dataGrid');
+            grid.style.gridTemplateColumns = 'minmax(80px, auto) ' + 'minmax(140px, 1fr) '.repeat(columns.length);
+
+            // Create corner cell
+            const cornerCell = document.createElement('div');
+            cornerCell.className = 'cell header-cell corner-cell';
+            cornerCell.textContent = '';
+            grid.appendChild(cornerCell);
+
+            // Create header row
+            columns.forEach(col => {
+                const headerCell = document.createElement('div');
+                headerCell.className = 'cell header-cell';
+                headerCell.textContent = col;
+                headerCell.title = col + ' (' + (dtypes[col] || 'unknown') + ')';
+                grid.appendChild(headerCell);
+            });
+
+            // Create data rows
+            data.forEach((row, rowIdx) => {
+                // Index column
+                const indexCell = document.createElement('div');
+                indexCell.className = 'cell index-cell';
+                indexCell.textContent = indexData[rowIdx] !== undefined ? indexData[rowIdx] : rowIdx;
+                grid.appendChild(indexCell);
+
+                // Data columns
+                row.forEach((value, colIdx) => {
+                    const cell = document.createElement('div');
+                    const dtype = dtypes[columns[colIdx]] || '';
+                    const isNumeric = dtype.includes('int') || dtype.includes('float');
+
+                    cell.className = 'cell data-cell ' + (isNumeric ? 'numeric' : 'string');
+
+                    // Check for Stata missing values (very large numbers > 8.9e+307)
+                    const isStataMissing = typeof value === 'number' &&
+                                         (value === null ||
+                                          value === undefined ||
+                                          !isFinite(value) ||
+                                          Math.abs(value) > 8.98e+307);
+
+                    if (value === null || value === undefined || isStataMissing) {
+                        cell.textContent = '.';
+                        cell.classList.add('null-value');
+                    } else if (typeof value === 'number') {
+                        // Format numbers
+                        if (Number.isInteger(value)) {
+                            cell.textContent = value.toString();
+                        } else {
+                            cell.textContent = value.toFixed(6).replace(/\.?0+$/, '');
+                        }
+                    } else {
+                        cell.textContent = value.toString();
+                    }
+
+                    cell.title = cell.textContent;
+
+                    // Click handler for cell selection
+                    cell.addEventListener('click', function() {
+                        document.querySelectorAll('.selected-cell').forEach(c => {
+                            c.classList.remove('selected-cell');
+                        });
+                        this.classList.add('selected-cell');
+                    });
+
+                    grid.appendChild(cell);
+                });
+            });
+        </script>
+    </body>
+    </html>`;
 }
 
 async function testMcpServer() {
@@ -1269,6 +2241,271 @@ async function detectAndUpdateStataPath() {
 function showOutput(content) {
     if (content) stataOutputChannel.append(content);
     stataOutputChannel.show(true);
+}
+
+// Graph display functionality
+function parseGraphsFromOutput(output) {
+    const graphs = [];
+
+    Logger.debug(`Parsing output for graphs. Output length: ${output ? output.length : 0}`);
+
+    // Look for the GRAPHS DETECTED section in the output
+    const graphSectionRegex = /={60}\nGRAPHS DETECTED: (\d+) graph\(s\) created\n={60}\n((?:\s*•\s+.+\n?)+)/;
+    const match = output.match(graphSectionRegex);
+
+    if (match) {
+        Logger.debug(`Found GRAPHS DETECTED section. Match: ${match[0]}`);
+        const graphLines = match[2].trim().split('\n');
+        Logger.debug(`Graph lines: ${JSON.stringify(graphLines)}`);
+
+        for (const line of graphLines) {
+            // Extract graph name and path from lines like "  • graph1: /path/to/graph.png"
+            const graphMatch = line.match(/•\s+(.+):\s+(.+)/);
+            if (graphMatch) {
+                Logger.debug(`Matched graph line: name="${graphMatch[1].trim()}", path="${graphMatch[2].trim()}"`);
+                graphs.push({
+                    name: graphMatch[1].trim(),
+                    path: graphMatch[2].trim()
+                });
+            } else {
+                Logger.debug(`Failed to match graph line: "${line}"`);
+            }
+        }
+    } else {
+        Logger.debug(`No GRAPHS DETECTED section found in output`);
+    }
+
+    Logger.debug(`Parsed ${graphs.length} graph(s)`);
+    return graphs;
+}
+
+// Global variable for graph viewer panel
+let graphViewerPanel = null;
+let allGraphs = {}; // Store all graphs by name to accumulate them
+
+async function displayGraphs(graphs, host, port) {
+    if (!graphs || graphs.length === 0) {
+        return;
+    }
+
+    const config = getConfig();
+    const displayMethod = config.get('graphDisplayMethod') || 'vscode';
+
+    if (displayMethod === 'vscode') {
+        Logger.info(`Displaying ${graphs.length} graph(s) in VS Code webview`);
+        displayGraphsInVSCode(graphs, host, port);
+    } else {
+        Logger.info(`Displaying ${graphs.length} graph(s) in external browser`);
+        displayGraphsInBrowser(graphs, host, port);
+    }
+}
+
+function displayGraphsInVSCode(graphs, host, port) {
+    // Create or reuse graph viewer panel
+    if (!graphViewerPanel) {
+        graphViewerPanel = vscode.window.createWebviewPanel(
+            'stataGraphViewer',
+            'Stata Graphs',
+            { viewColumn: vscode.ViewColumn.Beside, preserveFocus: false },
+            {
+                enableScripts: true,
+                retainContextWhenHidden: true,
+                enableCommandUris: true
+            }
+        );
+
+        graphViewerPanel.onDidDispose(
+            () => {
+                graphViewerPanel = null;
+                allGraphs = {}; // Clear graphs when panel is closed
+            },
+            null,
+            globalContext.subscriptions
+        );
+
+        // Handle messages from webview
+        graphViewerPanel.webview.onDidReceiveMessage(
+            message => {
+                if (message.command === 'clearGraphs') {
+                    allGraphs = {};
+                    updateGraphViewerPanel(host, port);
+                }
+            },
+            undefined,
+            globalContext.subscriptions
+        );
+    }
+
+    // Add new graphs to the collection (or update existing ones)
+    const timestamp = Date.now();
+    graphs.forEach(graph => {
+        allGraphs[graph.name] = {
+            ...graph,
+            timestamp: timestamp
+        };
+    });
+
+    updateGraphViewerPanel(host, port);
+    graphViewerPanel.reveal(vscode.ViewColumn.Beside);
+
+    Logger.info(`Displayed ${graphs.length} graph(s) in VS Code webview (total: ${Object.keys(allGraphs).length})`);
+}
+
+function updateGraphViewerPanel(host, port) {
+    if (!graphViewerPanel) return;
+
+    const graphsArray = Object.values(allGraphs);
+
+    // Generate HTML for graphs with timestamps to force reload
+    const graphsHtml = graphsArray.map(graph => {
+        const graphUrl = `http://${host}:${port}/graphs/${encodeURIComponent(graph.name)}?t=${graph.timestamp}`;
+        return `
+            <div class="graph-container" data-graph-name="${escapeHtml(graph.name)}">
+                <h3>${escapeHtml(graph.name)}</h3>
+                <img src="${graphUrl}" alt="${escapeHtml(graph.name)}"
+                     onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                <div class="error" style="display:none;">Failed to load graph: ${escapeHtml(graph.name)}</div>
+            </div>
+        `;
+    }).join('');
+
+    graphViewerPanel.webview.html = getGraphViewerHtml(graphsHtml, graphsArray.length);
+}
+
+function displayGraphsInBrowser(graphs, host, port) {
+    for (const graph of graphs) {
+        try {
+            // Open each graph in external browser
+            const graphUrl = `http://${host}:${port}/graphs/${encodeURIComponent(graph.name)}`;
+            console.log(`[displayGraphs] Opening graph in system browser: ${graphUrl}`);
+
+            let openCommand;
+            if (IS_MAC) {
+                openCommand = `open '${graphUrl.replace(/'/g, "'\\''")}'`;
+            } else if (IS_WINDOWS) {
+                openCommand = `start "" "${graphUrl}"`;
+            } else {
+                openCommand = `xdg-open '${graphUrl.replace(/'/g, "'\\''")}'`;
+            }
+
+            exec(openCommand, (error) => {
+                if (error) {
+                    console.error('[displayGraphs] Error opening browser:', error);
+                    vscode.window.showErrorMessage(`Failed to open graph ${graph.name}: ${error.message}`);
+                } else {
+                    console.log(`[displayGraphs] Graph ${graph.name} opened successfully`);
+                }
+            });
+
+            Logger.info(`Opened graph in external browser: ${graph.name}`);
+        } catch (error) {
+            Logger.error(`Error displaying graph ${graph.name}: ${error.message}`);
+        }
+    }
+}
+
+function getGraphViewerHtml(graphsHtml, graphCount) {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stata Graphs</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: var(--vscode-editor-background);
+            color: var(--vscode-editor-foreground);
+        }
+        .header {
+            border-bottom: 2px solid var(--vscode-panel-border);
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header-left h1 {
+            margin: 0;
+            font-size: 24px;
+            color: var(--vscode-foreground);
+        }
+        .header-left .graph-count {
+            color: var(--vscode-descriptionForeground);
+            font-size: 14px;
+            margin-top: 5px;
+        }
+        .clear-button {
+            background-color: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: background-color 0.2s;
+        }
+        .clear-button:hover {
+            background-color: var(--vscode-button-hoverBackground);
+        }
+        .graph-container {
+            background-color: var(--vscode-editor-background);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 4px;
+            padding: 20px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .graph-container h3 {
+            margin-top: 0;
+            margin-bottom: 15px;
+            color: var(--vscode-foreground);
+            font-size: 16px;
+        }
+        .graph-container img {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .error {
+            color: var(--vscode-errorForeground);
+            background-color: var(--vscode-inputValidation-errorBackground);
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .no-graphs {
+            color: var(--vscode-descriptionForeground);
+            font-style: italic;
+            padding: 20px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-left">
+            <h1>Stata Graphs</h1>
+            <div class="graph-count">${graphCount} graph(s) displayed</div>
+        </div>
+        <button class="clear-button" onclick="clearGraphs()">Clear All</button>
+    </div>
+    <div id="graphs-container">
+        ${graphsHtml || '<div class="no-graphs">No graphs to display</div>'}
+    </div>
+    <script>
+        const vscode = acquireVsCodeApi();
+
+        function clearGraphs() {
+            vscode.postMessage({ command: 'clearGraphs' });
+        }
+    </script>
+</body>
+</html>`;
 }
 
 module.exports = {

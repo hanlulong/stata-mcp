@@ -14,7 +14,7 @@ const net = require('net');
 // Default options
 const options = {
     host: 'localhost',
-    port: 4000,
+    port: 4001,
     logLevel: 'INFO',
     stataPath: null,
     forcePort: false, // Don't force port by default
@@ -67,7 +67,7 @@ Options:
 
 // Get extension directory and server script path
 const extensionDir = path.resolve(__dirname, '..');
-const serverScript = path.join(extensionDir, 'stata_mcp_server.py');
+const serverScript = path.join(extensionDir, 'src', 'stata_mcp_server.py');
 
 // Check if port is in use
 async function isPortInUse(port) {
@@ -107,7 +107,7 @@ async function startServer() {
         const extensionDir = path.resolve(__dirname, '..');
         const pythonPathFile = path.join(extensionDir, '.python-path');
         const setupCompleteFile = path.join(extensionDir, '.setup-complete');
-        const serverScriptPath = path.join(extensionDir, 'stata_mcp_server.py');
+        const serverScriptPath = path.join(extensionDir, 'src', 'stata_mcp_server.py');
         
         // Use the port from options (could be user specified)
         const port = options.port;
@@ -241,12 +241,31 @@ async function startServer() {
                 args.push(options.stataEdition);
                 
                 console.log(`Unix command: ${cmd} ${args.join(' ')}`);
-                
+
                 // Use spawn without shell for Unix
+                // On macOS, use detached mode and pipe stdio to prevent showing in dock
                 serverProcess = spawn(cmd, args, {
-                    stdio: 'inherit',
-                    shell: false
+                    stdio: ['ignore', 'pipe', 'pipe'],
+                    shell: false,
+                    detached: false,
+                    env: {
+                        ...process.env,
+                        // Prevent Python from showing in dock on macOS
+                        PYTHONDONTWRITEBYTECODE: '1'
+                    }
                 });
+
+                // Log output from the server for debugging
+                if (serverProcess.stdout) {
+                    serverProcess.stdout.on('data', (data) => {
+                        console.log(`[MCP Server] ${data.toString().trim()}`);
+                    });
+                }
+                if (serverProcess.stderr) {
+                    serverProcess.stderr.on('data', (data) => {
+                        console.error(`[MCP Server Error] ${data.toString().trim()}`);
+                    });
+                }
             }
             
             serverProcess.on('error', (err) => {
