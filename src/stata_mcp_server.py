@@ -252,33 +252,42 @@ def try_init_stata(stata_path):
 # If there are port conflicts, the server will fail to start cleanly
 
 def get_log_file_path(do_file_path, do_file_base):
-    """Get the appropriate log file path based on user settings"""
+    """Get the appropriate log file path based on user settings
+
+    Returns an absolute path to ensure log files are saved to the correct location
+    regardless of Stata's working directory.
+    """
     global log_file_location, custom_log_directory, extension_path
-    
+
     if log_file_location == 'extension':
         # Use logs folder in extension directory
         if extension_path:
             logs_dir = os.path.join(extension_path, 'logs')
             # Create logs directory if it doesn't exist
             os.makedirs(logs_dir, exist_ok=True)
-            return os.path.join(logs_dir, f"{do_file_base}_mcp.log")
+            log_path = os.path.join(logs_dir, f"{do_file_base}_mcp.log")
+            return os.path.abspath(log_path)
         else:
             # Fallback to workspace if extension path is not available
             do_file_dir = os.path.dirname(do_file_path)
-            return os.path.join(do_file_dir, f"{do_file_base}_mcp.log")
+            log_path = os.path.join(do_file_dir, f"{do_file_base}_mcp.log")
+            return os.path.abspath(log_path)
     elif log_file_location == 'custom':
         # Use custom directory
         if custom_log_directory and os.path.exists(custom_log_directory):
-            return os.path.join(custom_log_directory, f"{do_file_base}_mcp.log")
+            log_path = os.path.join(custom_log_directory, f"{do_file_base}_mcp.log")
+            return os.path.abspath(log_path)
         else:
             # Fallback to workspace if custom directory is invalid
             logging.warning(f"Custom log directory not valid: {custom_log_directory}, falling back to workspace")
             do_file_dir = os.path.dirname(do_file_path)
-            return os.path.join(do_file_dir, f"{do_file_base}_mcp.log")
+            log_path = os.path.join(do_file_dir, f"{do_file_base}_mcp.log")
+            return os.path.abspath(log_path)
     else:  # workspace
         # Use same directory as .do file (original behavior)
         do_file_dir = os.path.dirname(do_file_path)
-        return os.path.join(do_file_dir, f"{do_file_base}_mcp.log")
+        log_path = os.path.join(do_file_dir, f"{do_file_base}_mcp.log")
+        return os.path.abspath(log_path)
 
 def get_stata_path():
     """Get the Stata executable path based on the platform and configured path"""
@@ -953,13 +962,18 @@ def run_stata_file(file_path: str, timeout=600):
             return error_msg
 
         logging.info(f"Running Stata do file: {file_path}")
-        
+
+        # Ensure file_path is absolute for consistent behavior
+        file_path = os.path.abspath(file_path)
+
         # Get the directory and filename for later use
-        do_file_dir = os.path.dirname(file_path)
+        do_file_dir = os.path.dirname(file_path)  # This is now guaranteed to be absolute
         do_file_name = os.path.basename(file_path)
         do_file_base = os.path.splitext(do_file_name)[0]
-        
+
         # Create a custom log file path based on user settings
+        # The log file path will be absolute, allowing it to be saved anywhere
+        # regardless of Stata's current working directory
         custom_log_file = get_log_file_path(file_path, do_file_base)
         logging.info(f"Will save log to: {custom_log_file}")
         
@@ -1024,9 +1038,13 @@ def run_stata_file(file_path: str, timeout=600):
             ) as temp_do:
                 # First close any existing log files
                 temp_do.write(f"capture log close _all\n")
+                # Change working directory to the .do file's directory
+                # This ensures the .do file executes in its workspace (relative paths work correctly)
+                # The log file uses an absolute path, so it's saved to the configured location
+                temp_do.write(f"cd \"{do_file_dir}\"\n")
                 # Note: _gr_list on is enabled externally before .do file execution
                 # Note: Graph names are auto-injected above into modified_content
-                # Then add our own log command
+                # Then add our own log command with absolute path
                 temp_do.write(f"log using \"{custom_log_file}\", replace text\n")
                 temp_do.write(modified_content)
                 temp_do.write(f"\ncapture log close _all\n")  # Ensure all logs are closed at the end
