@@ -106,16 +106,16 @@ Starting with version 0.1.8, the extension integrates a fast Python package inst
 
 1. Open a Stata .do file
 2. Run commands using:
-   - **Run Selection**: Select Stata code and press `Ctrl+Shift+Enter` (or `Cmd+Shift+Enter` on Mac)
-   - **Run File**: Press `Ctrl+Shift+D` (or `Cmd+Shift+D` on Mac) to run the entire .do file
-   - **Interactive Mode**: Select code and click the ▶️ button in the editor toolbar to run in an interactive window
+   - **Run Selection**: Select Stata code and press `Ctrl+Shift+Enter` (or `Cmd+Shift+Enter` on Mac), or click the first button (▶️) in the editor toolbar
+   - **Run File**: Press `Ctrl+Shift+D` (or `Cmd+Shift+D` on Mac) to run the entire .do file, or click the second button in the toolbar
+   - **Interactive Mode**: Click the third button (📊) in the editor toolbar to run code in an interactive window
 3. View output in the editor panel or interactive window
 
 ### Data Viewer
 
 Access the data viewer to inspect your Stata dataset:
 
-1. Click the **View Data** button (📊) in the editor toolbar
+1. Click the **View Data** button (fourth button, table icon) in the editor toolbar
 2. View your current dataset in a table format
 3. **Filter data**: Use Stata `if` conditions to view subsets of your data
    - Example: `price > 5000 & mpg < 30`
