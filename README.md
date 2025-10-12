@@ -140,7 +140,7 @@ Select your preferred Stata edition (MP, SE, or BE) in the Extension Settings
 ## Detailed Configurations
 
 <details>
-<summary><strong style="font-size: 1.35em;">Extension Settings</strong></summary>
+<summary><strong style="font-size: 1.5em;">Extension Settings</strong></summary>
 
 Customize the extension behavior through VS Code settings. Access these settings via:
 - **VS Code/Cursor**: File > Preferences > Settings (or `Ctrl+,` / `Cmd+,`)
@@ -194,7 +194,7 @@ Customize the extension behavior through VS Code settings. Access these settings
 </details>
 
 <details>
-<summary><strong style="font-size: 1.35em;">Log File Management</strong></summary>
+<summary><strong style="font-size: 1.5em;">Log File Management</strong></summary>
 
 The extension automatically creates log files when running Stata .do files. You can control where these log files are saved:
 
@@ -223,7 +223,7 @@ The extension automatically creates log files when running Stata .do files. You 
 </details>
 
 <details>
-<summary><strong style="font-size: 1.35em;">Claude Code</strong></summary>
+<summary><strong style="font-size: 1.5em;">Claude Code</strong></summary>
 
 [Claude Code](https://www.anthropic.com/claude/code) is Anthropic's official AI coding assistant available in VS Code and Cursor. Follow these steps to configure the Stata MCP server:
 
@@ -273,7 +273,7 @@ If Claude Code is not recognizing the Stata MCP server:
 </details>
 
 <details>
-<summary><strong style="font-size: 1.35em;">Claude Desktop</strong></summary>
+<summary><strong style="font-size: 1.5em;">Claude Desktop</strong></summary>
 
 You can use this extension with [Claude Desktop](https://claude.ai/download) through [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):
 
@@ -330,7 +330,7 @@ You can use this extension with [Claude Desktop](https://claude.ai/download) thr
 </details>
 
 <details>
-<summary><strong style="font-size: 1.35em;">OpenAI Codex</strong></summary>
+<summary><strong style="font-size: 1.5em;">OpenAI Codex</strong></summary>
 
 You can use this extension with [OpenAI Codex](https://openai.com/index/openai-codex/) through [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):
 
@@ -381,7 +381,7 @@ If Codex is not recognizing the Stata MCP server:
 </details>
 
 <details>
-<summary><strong style="font-size: 1.35em;">Cline</strong></summary>
+<summary><strong style="font-size: 1.5em;">Cline</strong></summary>
 
 1. Open your [Cline](https://github.com/cline/cline) MCP settings file:
    - **macOS**: `~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
@@ -425,7 +425,7 @@ If Cline is not recognizing the Stata MCP server:
 </details>
 
 <details>
-<summary><strong style="font-size: 1.35em;">Cursor</strong></summary>
+<summary><strong style="font-size: 1.5em;">Cursor</strong></summary>
 
 The extension automatically configures [Cursor](https://www.cursor.com/) MCP integration. To verify it's working:
 
