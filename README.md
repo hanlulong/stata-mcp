@@ -14,7 +14,7 @@ This extension provides Stata integration for Visual Studio Code and Cursor IDE 
 - Execute selections or entire .do files
 - View Stata output in the editor in real-time
 - Get AI assistant integration through the MCP protocol
-- Experience enhanced AI coding with [Cursor](https://www.cursor.com/), [Cline](https://github.com/cline/cline), [Claude Code](https://claude.com/product/claude-code), or [Codex](https://openai.com/index/openai-codex/)
+- Experience enhanced AI coding with [Cursor](https://www.cursor.com/), [Cline](https://github.com/cline/cline), [Claude Code](https://claude.com/product/claude-code), or [Codex](https://github.com/openai/codex)
 - Choose your Stata edition (MP, SE, or BE)
 
 ## Features
@@ -336,7 +336,7 @@ You can use this extension with [Claude Desktop](https://claude.ai/download) thr
 <details>
 <summary><strong>OpenAI Codex</strong></summary>
 
-You can use this extension with [OpenAI Codex](https://openai.com/index/openai-codex/) through [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):
+You can use this extension with [OpenAI Codex](https://github.com/openai/codex) through [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):
 
 1. Make sure the Stata MCP extension is installed in VS Code or Cursor and currently running before attempting to configure Codex
 2. Install [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):

@@ -14,7 +14,7 @@
 - 执行选中部分或整个 .do 文件
 - 在编辑器中实时查看 Stata 输出
 - 通过 MCP 协议获得 AI 助手集成
-- 使用 [Cursor](https://www.cursor.com/)、[Cline](https://github.com/cline/cline)、[Claude Code](https://claude.com/product/claude-code) 或 [Codex](https://openai.com/index/openai-codex/) 体验增强的 AI 编程
+- 使用 [Cursor](https://www.cursor.com/)、[Cline](https://github.com/cline/cline)、[Claude Code](https://claude.com/product/claude-code) 或 [Codex](https://github.com/openai/codex) 体验增强的 AI 编程
 - 选择您的 Stata 版本（MP、SE 或 BE）
 
 ## 功能特性
@@ -335,7 +335,7 @@ cursor --install-extension path/to/stata-mcp-0.2.8.vsix
 <details>
 <summary><strong>OpenAI Codex</strong></summary>
 
-您可以通过 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy) 将此扩展与 [OpenAI Codex](https://openai.com/index/openai-codex/) 一起使用：
+您可以通过 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy) 将此扩展与 [OpenAI Codex](https://github.com/openai/codex) 一起使用：
 
 1. 确保 Stata MCP 扩展已安装在 VS Code 或 Cursor 中并且当前正在运行，然后再尝试配置 Codex
 2. 安装 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy)：
