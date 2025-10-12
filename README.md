@@ -192,7 +192,6 @@ Customize the extension behavior through VS Code settings. Access these settings
 4. Restart the extension or reload the window if prompted
 
 </details>
-
 <details>
 <summary><h3>Log File Management</h3></summary>
 
@@ -221,7 +220,6 @@ The extension automatically creates log files when running Stata .do files. You 
 - **Custom Directory**: Centralize all logs in one location across projects
 
 </details>
-
 <details>
 <summary><h3>Claude Code</h3></summary>
 
@@ -271,7 +269,6 @@ If Claude Code is not recognizing the Stata MCP server:
 5. Ensure there are no port conflicts (default port is 4000)
 
 </details>
-
 <details>
 <summary><h3>Claude Desktop</h3></summary>
 
@@ -328,7 +325,6 @@ You can use this extension with [Claude Desktop](https://claude.ai/download) thr
 6. Claude Desktop will automatically discover the available Stata tools, allowing you to run Stata commands and analyze data directly from your conversations.
 
 </details>
-
 <details>
 <summary><h3>OpenAI Codex</h3></summary>
 
@@ -379,7 +375,6 @@ If Codex is not recognizing the Stata MCP server:
 6. Ensure there are no port conflicts (default port is 4000)
 
 </details>
-
 <details>
 <summary><h3>Cline</h3></summary>
 
@@ -423,7 +418,6 @@ If Cline is not recognizing the Stata MCP server:
 4. Check the extension output panel (View > Output > Stata MCP) for any errors
 
 </details>
-
 <details>
 <summary><h3>Cursor</h3></summary>
 

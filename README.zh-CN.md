@@ -191,7 +191,6 @@ cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 4. 如有提示，重启扩展或重新加载窗口
 
 </details>
-
 <details>
 <summary><h3>日志文件管理</h3></summary>
 
@@ -220,7 +219,6 @@ cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 - **自定义目录**：将所有项目的日志集中在一个位置
 
 </details>
-
 <details>
 <summary><h3>Claude Code</h3></summary>
 
@@ -270,7 +268,6 @@ cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 5. 确保没有端口冲突（默认端口为 4000）
 
 </details>
-
 <details>
 <summary><h3>Claude Desktop</h3></summary>
 
@@ -327,7 +324,6 @@ cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 6. Claude Desktop 将自动发现可用的 Stata 工具，允许您直接从对话中运行 Stata 命令和分析数据。
 
 </details>
-
 <details>
 <summary><h3>OpenAI Codex</h3></summary>
 
@@ -378,7 +374,6 @@ cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 6. 确保没有端口冲突（默认端口为 4000）
 
 </details>
-
 <details>
 <summary><h3>Cline</h3></summary>
 
@@ -422,7 +417,6 @@ cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 4. 检查扩展输出面板（查看 > 输出 > Stata MCP）是否有任何错误
 
 </details>
-
 <details>
 <summary><h3>Cursor</h3></summary>
 
