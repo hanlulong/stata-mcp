@@ -140,7 +140,7 @@ Select your preferred Stata edition (MP, SE, or BE) in the Extension Settings
 ## Detailed Configurations
 
 <details>
-<summary><big><b>Extension Settings</b></big></summary>
+<summary><big><big><b>Extension Settings</b></big></big></summary>
 
 Customize the extension behavior through VS Code settings. Access these settings via:
 - **VS Code/Cursor**: File > Preferences > Settings (or `Ctrl+,` / `Cmd+,`)
@@ -191,9 +191,11 @@ Customize the extension behavior through VS Code settings. Access these settings
 3. Modify the desired settings
 4. Restart the extension or reload the window if prompted
 
+<br>
+
 </details>
 <details>
-<summary><big><b>Log File Management</b></big></summary>
+<summary><big><big><b>Log File Management</b></big></big></summary>
 
 The extension automatically creates log files when running Stata .do files. You can control where these log files are saved:
 
@@ -219,9 +221,11 @@ The extension automatically creates log files when running Stata .do files. You 
 - **Workspace Directory**: Log files stay with your .do files for easy reference
 - **Custom Directory**: Centralize all logs in one location across projects
 
+<br>
+
 </details>
 <details>
-<summary><big><b>Claude Code</b></big></summary>
+<summary><big><big><b>Claude Code</b></big></big></summary>
 
 [Claude Code](https://www.anthropic.com/claude/code) is Anthropic's official AI coding assistant available in VS Code and Cursor. Follow these steps to configure the Stata MCP server:
 
@@ -268,9 +272,11 @@ If Claude Code is not recognizing the Stata MCP server:
 4. Check the extension output panel (View > Output > Stata MCP) for any errors
 5. Ensure there are no port conflicts (default port is 4000)
 
+<br>
+
 </details>
 <details>
-<summary><big><b>Claude Desktop</b></big></summary>
+<summary><big><big><b>Claude Desktop</b></big></big></summary>
 
 You can use this extension with [Claude Desktop](https://claude.ai/download) through [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):
 
@@ -324,9 +330,11 @@ You can use this extension with [Claude Desktop](https://claude.ai/download) thr
 
 6. Claude Desktop will automatically discover the available Stata tools, allowing you to run Stata commands and analyze data directly from your conversations.
 
+<br>
+
 </details>
 <details>
-<summary><big><b>OpenAI Codex</b></big></summary>
+<summary><big><big><b>OpenAI Codex</b></big></big></summary>
 
 You can use this extension with [OpenAI Codex](https://openai.com/index/openai-codex/) through [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):
 
@@ -374,9 +382,11 @@ If Codex is not recognizing the Stata MCP server:
 5. Check the extension output panel (View > Output > Stata MCP) for any errors
 6. Ensure there are no port conflicts (default port is 4000)
 
+<br>
+
 </details>
 <details>
-<summary><big><b>Cline</b></big></summary>
+<summary><big><big><b>Cline</b></big></big></summary>
 
 1. Open your [Cline](https://github.com/cline/cline) MCP settings file:
    - **macOS**: `~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
@@ -417,9 +427,11 @@ If Cline is not recognizing the Stata MCP server:
 3. Try restarting VS Code
 4. Check the extension output panel (View > Output > Stata MCP) for any errors
 
+<br>
+
 </details>
 <details>
-<summary><big><b>Cursor</b></big></summary>
+<summary><big><big><b>Cursor</b></big></big></summary>
 
 The extension automatically configures [Cursor](https://www.cursor.com/) MCP integration. To verify it's working:
 
@@ -475,6 +487,8 @@ If Cursor is not recognizing the Stata MCP server:
 2. Check that the configuration file exists with the correct content
 3. Try restarting Cursor
 4. Ensure there are no port conflicts with other running applications
+
+<br>
 
 </details>
 

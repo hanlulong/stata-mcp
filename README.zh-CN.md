@@ -139,7 +139,7 @@ cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 ## 详细配置
 
 <details>
-<summary><big><b>扩展设置</b></big></summary>
+<summary><big><big><b>扩展设置</b></big></big></summary>
 
 通过 VS Code 设置自定义扩展行为。访问这些设置：
 - **VS Code/Cursor**：文件 > 首选项 > 设置（或 `Ctrl+,` / `Cmd+,`）
@@ -190,9 +190,11 @@ cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 3. 修改所需的设置
 4. 如有提示，重启扩展或重新加载窗口
 
+<br>
+
 </details>
 <details>
-<summary><big><b>日志文件管理</b></big></summary>
+<summary><big><big><b>日志文件管理</b></big></big></summary>
 
 该扩展在运行 Stata .do 文件时会自动创建日志文件。您可以控制这些日志文件的保存位置：
 
@@ -218,9 +220,11 @@ cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 - **工作空间目录**：日志文件与您的 .do 文件保持在一起，便于参考
 - **自定义目录**：将所有项目的日志集中在一个位置
 
+<br>
+
 </details>
 <details>
-<summary><big><b>Claude Code</b></big></summary>
+<summary><big><big><b>Claude Code</b></big></big></summary>
 
 [Claude Code](https://www.anthropic.com/claude/code) 是 Anthropic 的官方 AI 编程助手，可在 VS Code 和 Cursor 中使用。按照以下步骤配置 Stata MCP 服务器：
 
@@ -267,9 +271,11 @@ cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 4. 检查扩展输出面板（查看 > 输出 > Stata MCP）是否有任何错误
 5. 确保没有端口冲突（默认端口为 4000）
 
+<br>
+
 </details>
 <details>
-<summary><big><b>Claude Desktop</b></big></summary>
+<summary><big><big><b>Claude Desktop</b></big></big></summary>
 
 您可以通过 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy) 将此扩展与 [Claude Desktop](https://claude.ai/download) 一起使用：
 
@@ -323,9 +329,11 @@ cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 
 6. Claude Desktop 将自动发现可用的 Stata 工具，允许您直接从对话中运行 Stata 命令和分析数据。
 
+<br>
+
 </details>
 <details>
-<summary><big><b>OpenAI Codex</b></big></summary>
+<summary><big><big><b>OpenAI Codex</b></big></big></summary>
 
 您可以通过 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy) 将此扩展与 [OpenAI Codex](https://openai.com/index/openai-codex/) 一起使用：
 
@@ -373,9 +381,11 @@ cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 5. 检查扩展输出面板（查看 > 输出 > Stata MCP）是否有任何错误
 6. 确保没有端口冲突（默认端口为 4000）
 
+<br>
+
 </details>
 <details>
-<summary><big><b>Cline</b></big></summary>
+<summary><big><big><b>Cline</b></big></big></summary>
 
 1. 打开您的 [Cline](https://github.com/cline/cline) MCP 设置文件：
    - **macOS**：`~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
@@ -416,9 +426,11 @@ cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 3. 尝试重启 VS Code
 4. 检查扩展输出面板（查看 > 输出 > Stata MCP）是否有任何错误
 
+<br>
+
 </details>
 <details>
-<summary><big><b>Cursor</b></big></summary>
+<summary><big><big><b>Cursor</b></big></big></summary>
 
 该扩展自动配置 [Cursor](https://www.cursor.com/) MCP 集成。要验证其是否正常工作：
 
@@ -475,10 +487,11 @@ Cursor MCP 配置文件的位置因操作系统而异：
 3. 尝试重启 Cursor
 4. 确保与其他正在运行的应用程序没有端口冲突
 
+<br>
+
 </details>
 
-<details>
-<summary><h2>Cline MCP 配置</h2></summary>
+## Python Environment Management
 
 1. 打开您的 [Cline](https://github.com/cline/cline) MCP 设置文件：
    - **macOS**：`~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
@@ -518,6 +531,8 @@ Cursor MCP 配置文件的位置因操作系统而异：
 2. 检查配置文件是否存在且内容正确
 3. 尝试重启 VS Code
 4. 检查扩展输出面板（查看 > 输出 > Stata MCP）是否有任何错误
+
+<br>
 
 </details>
 
@@ -572,6 +587,8 @@ Cursor MCP 配置文件的位置因操作系统而异：
 3. 尝试重启 VS Code 或 Cursor
 4. 检查扩展输出面板（查看 > 输出 > Stata MCP）是否有任何错误
 5. 确保没有端口冲突（默认端口为 4000）
+
+<br>
 
 </details>
 
@@ -630,6 +647,8 @@ Cursor MCP 配置文件的位置因操作系统而异：
 
 6. Claude Desktop 将自动发现可用的 Stata 工具，允许您直接从对话中运行 Stata 命令和分析数据。
 
+<br>
+
 </details>
 
 <details>
@@ -680,6 +699,8 @@ Cursor MCP 配置文件的位置因操作系统而异：
 4. 尝试重启 VS Code 或 Cursor
 5. 检查扩展输出面板（查看 > 输出 > Stata MCP）是否有任何错误
 6. 确保没有端口冲突（默认端口为 4000）
+
+<br>
 
 </details>
 
