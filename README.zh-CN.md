@@ -630,4 +630,4 @@ MIT
 ## 致谢
 
 由 Lu Han 创建
-由 DeepEcon 发布
+由 [DeepEcon](https://deepecon.ai/) 发布
