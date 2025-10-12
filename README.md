@@ -108,7 +108,7 @@ Starting with version 0.1.8, the extension integrates a fast Python package inst
 2. Run commands using:
    - **Run Selection**: Select Stata code and press `Ctrl+Shift+Enter` (or `Cmd+Shift+Enter` on Mac), or click the first button (▶️) in the editor toolbar
    - **Run File**: Press `Ctrl+Shift+D` (or `Cmd+Shift+D` on Mac) to run the entire .do file, or click the second button in the toolbar
-   - **Interactive Mode**: Click the third button (📊) in the editor toolbar to run code in an interactive window
+   - **Interactive Mode**: Select Stata code and click the 📊 button in the editor toolbar to run the selection in an interactive window, or click without selection to open an empty interactive window
 3. View output in the editor panel or interactive window
 
 ### Data Viewer
