@@ -8,20 +8,20 @@
 [![GitHub license](https://img.shields.io/github/license/hanlulong/stata-mcp)](https://github.com/hanlulong/stata-mcp/blob/main/LICENSE) 
 
 
-This extension provides Stata integration for Visual Studio Code and Cursor IDE using the Model Context Protocol (MCP). The extension allows you to:
+This extension provides Stata integration for Visual Studio Code and Cursor IDE using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/docs/getting-started/intro). The extension allows you to:
 
 - Run Stata commands directly from VS Code or Cursor
 - Execute selections or entire .do files
 - View Stata output in the editor in real-time
 - Get AI assistant integration through the MCP protocol
-- Experience enhanced AI coding with Cursor or Cline
+- Experience enhanced AI coding with [Cursor](https://www.cursor.com/), [Cline](https://github.com/cline/cline), [Claude Code](https://www.anthropic.com/claude/code), or [Codex](https://openai.com/index/openai-codex/)
 - Choose your Stata edition (MP, SE, or BE)
 
 ## Features
 
 - **Run Stata Commands**: Execute selections or entire .do files directly from your editor
 - **Syntax Highlighting**: Full syntax support for Stata .do, .ado, .mata, and .doh files
-- **AI Assistant Integration**: Contextual help and code suggestions via MCP
+- **AI Assistant Integration**: Contextual help and code suggestions via [MCP](https://modelcontextprotocol.io/)
 - **Cross-platform**: Works on Windows, macOS, and Linux
 - **Automatic Stata Detection**: Automatically finds your Stata installation
 - **Real-time Output**: See Stata results instantly in your editor
@@ -38,7 +38,6 @@ Watch how this extension enhances your Stata workflow with Cursor (or VS Code) a
 
 > **Looking for other Stata integrations?**
 > - Use Stata with Notepad++ and Sublime Text 3? See [here](https://github.com/sook-tusk/Tech_Integrate_Stata_R_with_Editors)
-> - Use Stata MCP in Claude Desktop without installing this extension? See [here](https://github.com/SepineTam/stata-mcp)
 > - Use Stata via Jupyter? See [here](https://github.com/hanlulong/stata-mcp/blob/main/docs/jupyter-stata.md)
 
 
@@ -69,11 +68,11 @@ Or:
 
 #### Option 2: From .vsix file
 
-1. Download the extension package `stata-mcp-0.2.5.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
+1. Download the extension package `stata-mcp-0.2.6.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
 2. Install using one of these methods:
 
 ```bash
-code --install-extension path/to/stata-mcp-0.2.5.vsix
+code --install-extension path/to/stata-mcp-0.2.6.vsix
 ```
 
 Or:
@@ -85,11 +84,11 @@ Or:
 
 ### Cursor Installation
 
-1. Download the extension package `stata-mcp-0.2.5.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
+1. Download the extension package `stata-mcp-0.2.6.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
 2. Install using one of these methods:
 
 ```bash
-cursor --install-extension path/to/stata-mcp-0.2.5.vsix
+cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 ```
 
 Or:
@@ -101,57 +100,334 @@ Or:
 
 Starting with version 0.1.8, the extension integrates a fast Python package installer called `uv` to set up the environment. If uv is not found on your system, the extension will attempt to install it automatically.
 
-## Extension Settings
-
-You can customize the extension behavior through VS Code settings:
-
-- `stata-vscode.stataPath`: Path to Stata installation directory
-- `stata-vscode.mcpServerHost`: Host for MCP server (default: localhost)
-- `stata-vscode.mcpServerPort`: Port for the MCP server (default: 4000)
-- `stata-vscode.autoStartServer`: Automatically start MCP server when extension activates (default: true)
-- `stata-vscode.debugMode`: Show detailed debug information in output panel (default: false)
-- `stata-vscode.forcePort`: Force the MCP server to use the specified port even if it's already in use (default: false)
-- `stata-vscode.clineConfigPath`: Custom path to Cline configuration file (optional, defaults to standard locations)
-- `stata-vscode.runFileTimeout`: Timeout in seconds for 'Run File' operations (default: 600 seconds / 10 minutes)
-- `stata-vscode.stataEdition`: Stata edition to use (MP, SE, BE) - default: MP
-- `stata-vscode.logFileLocation`: Location for Stata log files - 'extension' (logs folder in extension directory), 'workspace' (same directory as .do file), or 'custom' (user-specified directory) - default: extension
-- `stata-vscode.customLogDirectory`: Custom directory for Stata log files (only used when logFileLocation is set to 'custom')
-
 ## Usage
+
+### Running Stata Code
 
 1. Open a Stata .do file
 2. Run commands using:
    - **Run Selection**: Select Stata code and press `Ctrl+Shift+Enter` (or `Cmd+Shift+Enter` on Mac)
    - **Run File**: Press `Ctrl+Shift+D` (or `Cmd+Shift+D` on Mac) to run the entire .do file
-3. View output in the editor panel
-4. **Choose Stata Edition**: Select your preferred Stata edition (MP, SE, or BE) in the extension settings
+   - **Interactive Mode**: Select code and click the ▶️ button in the editor toolbar to run in an interactive window
+3. View output in the editor panel or interactive window
 
-## Log File Management
+### Data Viewer
+
+Access the data viewer to inspect your Stata dataset:
+
+1. Click the **View Data** button (📊) in the editor toolbar
+2. View your current dataset in a table format
+3. **Filter data**: Use Stata `if` conditions to view subsets of your data
+   - Example: `price > 5000 & mpg < 30`
+   - Type your condition in the filter box and click "Apply"
+   - Click "Clear" to remove the filter and view all data
+
+### Graph Display Options
+
+Control how graphs are displayed:
+
+1. **Auto-display graphs**: Graphs are automatically shown when generated (default: enabled)
+   - Disable in Extension Settings: `stata-vscode.autoDisplayGraphs`
+2. **Choose display method**:
+   - **VS Code webview** (default): Graphs appear in a panel within VS Code
+   - **External browser**: Graphs open in your default web browser
+   - Change in Extension Settings: `stata-vscode.graphDisplayMethod`
+
+### Stata Edition Selection
+
+Select your preferred Stata edition (MP, SE, or BE) in the Extension Settings
+
+## Detailed Configurations
+
+<details>
+<summary>Extension Settings</summary>
+
+Customize the extension behavior through VS Code settings. Access these settings via:
+- **VS Code/Cursor**: File > Preferences > Settings (or `Ctrl+,` / `Cmd+,`)
+- Search for "Stata MCP" to find all extension settings
+
+### Core Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `stata-vscode.stataPath` | Path to Stata installation directory | Auto-detected |
+| `stata-vscode.stataEdition` | Stata edition to use (MP, SE, BE) | `mp` |
+| `stata-vscode.autoStartServer` | Automatically start MCP server when extension activates | `true` |
+
+### Server Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `stata-vscode.mcpServerHost` | Host for MCP server | `localhost` |
+| `stata-vscode.mcpServerPort` | Port for the MCP server | `4000` |
+| `stata-vscode.forcePort` | Force the specified port even if it's already in use | `false` |
+
+### Graph Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `stata-vscode.autoDisplayGraphs` | Automatically display graphs when generated by Stata commands | `true` |
+| `stata-vscode.graphDisplayMethod` | Choose how to display graphs: `vscode` (webview panel) or `browser` (external browser) | `vscode` |
+
+### Log File Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `stata-vscode.logFileLocation` | Location for Stata log files: `extension` (logs folder in extension directory), `workspace` (same directory as .do file), or `custom` (user-specified directory) | `extension` |
+| `stata-vscode.customLogDirectory` | Custom directory for Stata log files (only used when logFileLocation is set to `custom`) | Empty |
+
+### Advanced Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `stata-vscode.runFileTimeout` | Timeout in seconds for 'Run File' operations | `600` (10 minutes) |
+| `stata-vscode.debugMode` | Show detailed debug information in output panel | `false` |
+| `stata-vscode.clineConfigPath` | Custom path to Cline configuration file (optional) | Auto-detected |
+
+### How to Change Settings
+
+1. Open VS Code/Cursor settings (`Ctrl+,` or `Cmd+,`)
+2. Search for "Stata MCP"
+3. Modify the desired settings
+4. Restart the extension or reload the window if prompted
+
+</details>
+
+<details>
+<summary>Log File Management</summary>
 
 The extension automatically creates log files when running Stata .do files. You can control where these log files are saved:
+
+### Log File Locations
 
 1. **Extension Directory** (default): Log files are saved in a `logs` folder within the extension directory, keeping your workspace clean
 2. **Workspace Directory**: Log files are saved in the same directory as your .do file (original behavior)
 3. **Custom Directory**: Log files are saved to a directory you specify
 
-To change this setting:
-1. Open VS Code/Cursor settings
+### Changing Log File Location
+
+1. Open VS Code/Cursor settings (`Ctrl+,` or `Cmd+,`)
 2. Search for "Stata MCP"
-3. Find "Log File Location" and select your preferred option
-4. If using "Custom Directory", also set the "Custom Log Directory" path
+3. Find "Log File Location" (`stata-vscode.logFileLocation`) and select your preferred option:
+   - `extension`: Save to extension directory (default)
+   - `workspace`: Save to same directory as .do file
+   - `custom`: Save to a custom directory
+4. If using "Custom Directory", also set "Custom Log Directory" (`stata-vscode.customLogDirectory`) path
 
-## How It Works
+### Benefits of Each Option
 
-The extension creates a local MCP server that connects your editor to Stata, enabling:
+- **Extension Directory**: Keeps your project workspace clean and organized
+- **Workspace Directory**: Log files stay with your .do files for easy reference
+- **Custom Directory**: Centralize all logs in one location across projects
 
-1. **Command Execution**: Run Stata commands and see results instantly
-2. **Context Awareness**: AI assistants understand your Stata data and commands
-3. **Enhanced Productivity**: Get intelligent code suggestions and documentation
+</details>
 
+<details>
+<summary>Claude Code</summary>
 
-## Cursor MCP Configuration
+[Claude Code](https://www.anthropic.com/claude/code) is Anthropic's official AI coding assistant available in VS Code and Cursor. Follow these steps to configure the Stata MCP server:
 
-The extension automatically configures Cursor MCP integration. To verify it's working:
+### Installation
+
+1. **Install the Stata MCP extension** in VS Code or Cursor (see [Installation](#installation) section above)
+
+2. **Start the Stata MCP server**: The server should start automatically when you open VS Code/Cursor with the extension installed. Verify it's running by checking the status bar (should show "Stata").
+
+### Configuration
+
+Once the Stata MCP server is running, configure Claude Code to connect to it:
+
+1. Open your terminal or command palette
+
+2. Run the following command to add the Stata MCP server:
+   ```bash
+   claude mcp add --transport sse stata-mcp http://localhost:4000/mcp --scope user
+   ```
+
+3. Restart VS Code or Cursor
+
+4. Claude Code will now have access to Stata tools and can help you:
+   - Write and execute Stata commands
+   - Analyze your data
+   - Generate visualizations
+   - Debug Stata code
+   - Create statistical reports
+
+### Verifying the Connection
+
+To verify Claude Code is properly connected to the Stata MCP server:
+
+1. Open a Stata .do file or create a new one
+2. Ask Claude Code to help with a Stata task (e.g., "Load the auto dataset and show summary statistics")
+3. Claude Code should be able to execute Stata commands and show results
+
+### Troubleshooting
+
+If Claude Code is not recognizing the Stata MCP server:
+1. Verify the MCP server is running (Status bar should show "Stata")
+2. Check that you ran the `claude mcp add` command with the correct URL
+3. Try restarting VS Code or Cursor
+4. Check the extension output panel (View > Output > Stata MCP) for any errors
+5. Ensure there are no port conflicts (default port is 4000)
+
+</details>
+
+<details>
+<summary>Claude Desktop</summary>
+
+You can use this extension with [Claude Desktop](https://claude.ai/download) through [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):
+
+1. Make sure the Stata MCP extension is installed in VS Code or Cursor and currently running before attempting to configure Claude Desktop
+2. Install [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):
+   ```bash
+   # Using pip
+   pip install mcp-proxy
+
+   # Or using uv (faster)
+   uv install mcp-proxy
+   ```
+
+3. Find the path to mcp-proxy:
+   ```bash
+   # On Mac/Linux
+   which mcp-proxy
+
+   # On Windows (PowerShell)
+   (Get-Command mcp-proxy).Path
+   ```
+
+4. Configure Claude Desktop by editing the MCP config file:
+
+   **On Windows** (typically at `%APPDATA%\Claude Desktop\claude_desktop_config.json`):
+   ```json
+   {
+     "mcpServers": {
+       "stata-mcp": {
+         "command": "mcp-proxy",
+         "args": ["http://127.0.0.1:4000/mcp"]
+       }
+     }
+   }
+   ```
+
+   **On macOS** (typically at `~/Library/Application Support/Claude Desktop/claude_desktop_config.json`):
+   ```json
+   {
+     "mcpServers": {
+       "stata-mcp": {
+         "command": "/path/to/mcp-proxy",
+         "args": ["http://127.0.0.1:4000/mcp"]
+       }
+     }
+   }
+   ```
+   Replace `/path/to/mcp-proxy` with the actual path you found in step 3.
+
+5. Restart Claude Desktop
+
+6. Claude Desktop will automatically discover the available Stata tools, allowing you to run Stata commands and analyze data directly from your conversations.
+
+</details>
+
+<details>
+<summary>OpenAI Codex</summary>
+
+You can use this extension with [OpenAI Codex](https://openai.com/index/openai-codex/) through [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):
+
+1. Make sure the Stata MCP extension is installed in VS Code or Cursor and currently running before attempting to configure Codex
+2. Install [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):
+   ```bash
+   # Using pip
+   pip install mcp-proxy
+
+   # Or using uv (faster)
+   uv install mcp-proxy
+   ```
+
+3. Configure Codex by editing the config file at `~/.codex/config.toml`:
+
+   **On macOS/Linux** (`~/.codex/config.toml`):
+   ```toml
+   # Stata MCP Server (SSE Transport)
+   [mcp_servers.stata-mcp]
+   command = "mcp-proxy"
+   args = ["http://localhost:4000/mcp"]
+   ```
+
+   **On Windows** (`%USERPROFILE%\.codex\config.toml`):
+   ```toml
+   # Stata MCP Server (SSE Transport)
+   [mcp_servers.stata-mcp]
+   command = "mcp-proxy"
+   args = ["http://localhost:4000/mcp"]
+   ```
+
+4. If the file already contains other MCP servers, just add the `[mcp_servers.stata-mcp]` section.
+
+5. Restart Codex or VS Code/Cursor
+
+6. Codex will automatically discover the available Stata tools, allowing you to run Stata commands and analyze data directly from your conversations.
+
+### Troubleshooting Codex Configuration
+
+If Codex is not recognizing the Stata MCP server:
+1. Verify the MCP server is running (Status bar should show "Stata")
+2. Check that the configuration file exists at `~/.codex/config.toml` with the correct content
+3. Ensure mcp-proxy is installed: `pip list | grep mcp-proxy` or `which mcp-proxy`
+4. Try restarting VS Code or Cursor
+5. Check the extension output panel (View > Output > Stata MCP) for any errors
+6. Ensure there are no port conflicts (default port is 4000)
+
+</details>
+
+<details>
+<summary>Cline</summary>
+
+1. Open your [Cline](https://github.com/cline/cline) MCP settings file:
+   - **macOS**: `~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
+   - **Windows**: `%APPDATA%/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
+   - **Linux**: `~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
+
+2. Add the Stata MCP server configuration:
+   ```json
+   {
+     "mcpServers": {
+       "stata-mcp": {
+         "url": "http://localhost:4000/mcp",
+         "transport": "sse"
+       }
+     }
+   }
+   ```
+
+3. If the file already contains other MCP servers, just add the `"stata-mcp"` entry to the existing `"mcpServers"` object.
+
+4. Save the file and restart VS Code.
+
+You can also configure Cline through VS Code settings:
+```json
+"cline.mcpSettings": {
+  "stata-mcp": {
+    "url": "http://localhost:4000/mcp",
+    "transport": "sse"
+  }
+}
+```
+
+### Troubleshooting Cline Configuration
+
+If Cline is not recognizing the Stata MCP server:
+1. Verify the MCP server is running (Status bar should show "Stata")
+2. Check that the configuration file exists with the correct content
+3. Try restarting VS Code
+4. Check the extension output panel (View > Output > Stata MCP) for any errors
+
+</details>
+
+<details>
+<summary>Cursor</summary>
+
+The extension automatically configures [Cursor](https://www.cursor.com/) MCP integration. To verify it's working:
 
 1. Open Cursor
 2. Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac) to open the Command Palette
@@ -206,103 +482,7 @@ If Cursor is not recognizing the Stata MCP server:
 3. Try restarting Cursor
 4. Ensure there are no port conflicts with other running applications
 
-## Cline MCP Configuration
-
-
-1. Open your Cline MCP settings file:
-   - **macOS**: `~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
-   - **Windows**: `%APPDATA%/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
-   - **Linux**: `~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
-
-2. Add the Stata MCP server configuration:
-   ```json
-   {
-     "mcpServers": {
-       "stata-mcp": {
-         "url": "http://localhost:4000/mcp",
-         "transport": "sse"
-       }
-     }
-   }
-   ```
-
-3. If the file already contains other MCP servers, just add the `"stata-mcp"` entry to the existing `"mcpServers"` object.
-
-4. Save the file and restart VS Code.
-
-You can also configure Cline through VS Code settings:
-```json
-"cline.mcpSettings": {
-  "stata-mcp": {
-    "url": "http://localhost:4000/mcp",
-    "transport": "sse"
-  }
-}
-```
-
-### Troubleshooting Cline Configuration
-
-If Cline is not recognizing the Stata MCP server:
-1. Verify the MCP server is running (Status bar should show "Stata")
-2. Check that the configuration file exists with the correct content
-3. Try restarting VS Code
-4. Check the extension output panel (View > Output > Stata MCP) for any errors
-
-## Claude Desktop MCP Configuration
-
-You can use this extension with Claude Desktop through mcp-proxy:
-
-1. Make sure the Stata MCP extension is installed in VS Code or Cursor and currently running before attempting to configure Claude Desktop
-2. Install mcp-proxy:
-   ```bash
-   # Using pip
-   pip install mcp-proxy
-   
-   # Or using uv (faster)
-   uv install mcp-proxy
-   ```
-
-3. Find the path to mcp-proxy:
-   ```bash
-   # On Mac/Linux
-   which mcp-proxy
-   
-   # On Windows (PowerShell)
-   (Get-Command mcp-proxy).Path
-   ```
-
-4. Configure Claude Desktop by editing the MCP config file:
-
-   **On Windows** (typically at `%APPDATA%\Claude Desktop\claude_desktop_config.json`):
-   ```json
-   {
-     "mcpServers": {
-       "stata-mcp": {
-         "command": "mcp-proxy",
-         "args": ["http://127.0.0.1:4000/mcp"]
-       }
-     }
-   }
-   ```
-
-   **On macOS** (typically at `~/Library/Application Support/Claude Desktop/claude_desktop_config.json`):
-   ```json
-   {
-     "mcpServers": {
-       "stata-mcp": {
-         "command": "/path/to/mcp-proxy",
-         "args": ["http://127.0.0.1:4000/mcp"]
-       }
-     }
-   }
-   ```
-   Replace `/path/to/mcp-proxy` with the actual path you found in step 3.
-
-5. Restart Claude Desktop
-
-6. Claude Desktop will automatically discover the available Stata tools, allowing you to run Stata commands and analyze data directly from your conversations.
-
-> **Note:** There is an alternative way to use Stata MCP in Claude Desktop without installing this extension. See [here](https://github.com/SepineTam/stata-mcp).
+</details>
 
 ## Python Environment Management
 

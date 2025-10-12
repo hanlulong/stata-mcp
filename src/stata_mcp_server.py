@@ -363,7 +363,12 @@ def check_stata_installed():
 
 # Function to run a Stata command
 def run_stata_command(command: str, clear_history=False):
-    """Run a Stata command"""
+    """Run a Stata command
+
+    Note: This function manually enables _gr_list on before execution and detects graphs after.
+    We do NOT use inline=True because it calls _gr_list off at the end, clearing our graph list!
+    This function is only called from /v1/tools endpoint which is excluded from MCP.
+    """
     global stata_available, has_stata, command_history
     
     # Only log at debug level instead of info to reduce verbosity
@@ -371,8 +376,13 @@ def run_stata_command(command: str, clear_history=False):
     
     # Clear history if requested
     if clear_history:
+        logging.info(f"Clearing command history (had {len(command_history)} items)")
         command_history = []
-    
+        # If it's just a clear request with no command, return empty
+        if not command or command.strip() == '':
+            logging.info("Clear history request completed")
+            return ''
+
     # For multi-line commands, don't add semicolons - just clean up whitespace
     if "\n" in command:
         # Clean up the commands to ensure proper formatting without adding semicolons
@@ -411,6 +421,19 @@ def run_stata_command(command: str, clear_history=False):
     if has_stata and stata_available:
         # Run the command via pystata
         try:
+            # Enable graph listing for this command using low-level API
+            try:
+                from pystata.config import stlib, get_encode_str
+                logging.debug("Enabling graph listing with _gr_list on...")
+                stlib.StataSO_Execute(get_encode_str("qui _gr_list on"), False)
+                logging.debug("Successfully enabled graph listing")
+            except Exception as e:
+                logging.warning(f"Could not enable graph listing: {str(e)}")
+                logging.debug(f"Graph listing enable error: {traceback.format_exc()}")
+
+            # Initialize graphs list (will be populated if graphs are found)
+            graphs_from_interactive = []
+
             # Create a temp file to capture output
             with tempfile.NamedTemporaryFile(
 
@@ -420,7 +443,7 @@ def run_stata_command(command: str, clear_history=False):
                 # Write the command to the file
                 f.write(f"capture log close _all\n")
                 f.write(f"log using \"{f.name}.log\", replace text\n")
-                
+
                 # Special handling for 'do' commands to ensure proper quoting
                 if command.lower().startswith('do '):
                     # For do commands, we need to make sure the file path is properly handled
@@ -429,10 +452,10 @@ def run_stata_command(command: str, clear_history=False):
                 else:
                     # Normal commands don't need special treatment
                     f.write(f"{command}\n")
-                    
+
                 f.write(f"capture log close\n")
                 do_file = f.name
-            
+
             # Execute the do file with echo=False to completely silence Stata output to console
             try:
                 # Redirect stdout temporarily to silence Stata output
@@ -442,7 +465,8 @@ def run_stata_command(command: str, clear_history=False):
                 try:
                     # Always use double quotes for the do file path for PyStata
                     run_cmd = f"do \"{do_file}\""
-                    globals()['stata'].run(run_cmd, echo=False)
+                    # Use inline=False because inline=True calls _gr_list off at the end!
+                    globals()['stata'].run(run_cmd, echo=False, inline=False)
                     logging.debug(f"Command executed successfully via pystata: {run_cmd}")
                 except Exception as e:
                     # If command fails, try to reinitialize Stata once
@@ -453,7 +477,7 @@ def run_stata_command(command: str, clear_history=False):
                         if try_init_stata(STATA_PATH):
                             # Retry the command if reinitialization succeeded
                             try:
-                                globals()['stata'].run(f"do \"{do_file}\"", echo=False)
+                                globals()['stata'].run(f"do \"{do_file}\"", echo=False, inline=False)
                                 logging.info(f"Command succeeded after Stata reinitialization")
                             except Exception as retry_error:
                                 logging.error(f"Command still failed after reinitializing Stata: {str(retry_error)}")
@@ -468,11 +492,22 @@ def run_stata_command(command: str, clear_history=False):
                     # Restore stdout
                     sys.stdout.close()
                     sys.stdout = original_stdout
+
+                # Immediately check for graphs while they're still in memory
+                # This happens right after stata.run() completes, before any cleanup
+                try:
+                    logging.debug("Checking for graphs immediately after execution (interactive mode)...")
+                    graphs_from_interactive = display_graphs_interactive(graph_format='png', width=800, height=600)
+                    if graphs_from_interactive:
+                        logging.info(f"Captured {len(graphs_from_interactive)} graphs in interactive mode")
+                except Exception as graph_err:
+                    logging.warning(f"Could not capture graphs in interactive mode: {str(graph_err)}")
+
             except Exception as exec_error:
                 error_msg = f"Error running command: {str(exec_error)}"
                 logging.error(error_msg)
                 return error_msg
-            
+
             # Read the log file
             log_file = f"{do_file}.log"
             logging.debug(f"Reading log file: {log_file}")
@@ -546,22 +581,35 @@ def run_stata_command(command: str, clear_history=False):
                     result = "Command executed successfully (no output)"
                 else:
                     result = "\n".join(result_lines)
-                    
-                # Add to command history
-                command_history.append({"command": command_entry, "result": result})
-                
-                # Keep only the last 50 commands to avoid memory issues
-                if len(command_history) > 50:
-                    command_history = command_history[-50:]
-                
-                # Build a string of all command history in chronological order (oldest to newest)
-                full_output = []
-                for entry in command_history:
-                    full_output.append(f">>> {entry['command']}")
-                    full_output.append(entry['result'])
-                    # No separator lines
-                    
-                return "\n".join(full_output)
+
+                # Use graphs captured in interactive mode (if any)
+                # These were already captured right after execution while still in memory
+                if graphs_from_interactive:
+                    graph_info = "\n\n" + "="*60 + "\n"
+                    graph_info += f"GRAPHS DETECTED: {len(graphs_from_interactive)} graph(s) created\n"
+                    graph_info += "="*60 + "\n"
+                    for graph in graphs_from_interactive:
+                        # Include command if available, using special format for JavaScript parsing
+                        if 'command' in graph and graph['command']:
+                            graph_info += f"  • {graph['name']}: {graph['path']} [CMD: {graph['command']}]\n"
+                        else:
+                            graph_info += f"  • {graph['name']}: {graph['path']}\n"
+                    result += graph_info
+                    logging.info(f"Added {len(graphs_from_interactive)} graphs to output (from interactive mode)")
+                else:
+                    logging.debug("No graphs were captured in interactive mode")
+
+                # Disable graph listing after detection
+                try:
+                    from pystata.config import stlib, get_encode_str
+                    stlib.StataSO_Execute(get_encode_str("qui _gr_list off"), False)
+                    logging.debug("Disabled graph listing")
+                except Exception as e:
+                    logging.warning(f"Could not disable graph listing: {str(e)}")
+
+                # For interactive window, just return the current result
+                # The client will handle displaying history
+                return result
                 
             except Exception as e:
                 error_msg = f"Error reading log file: {str(e)}"
@@ -586,9 +634,222 @@ def run_stata_command(command: str, clear_history=False):
         command_history.append({"command": command_entry, "result": error_msg})
         return error_msg
 
-def run_stata_selection(selection):
-    """Run selected Stata code"""
-    return run_stata_command(selection)
+def detect_and_export_graphs():
+    """Detect and export any graphs created by Stata commands
+
+    Returns:
+        List of dictionaries with graph info: [{"name": "graph1", "path": "/path/to/graph.png"}, ...]
+    """
+    global stata_available, has_stata, extension_path
+
+    if not (has_stata and stata_available):
+        return []
+
+    try:
+        import sfi
+        from pystata.config import stlib, get_encode_str
+
+        # Get list of graphs using low-level API like PyStata does
+        logging.debug("Checking for graphs using _gr_list (low-level API)...")
+
+        # Get the list (_gr_list should already be on from before command execution)
+        rc = stlib.StataSO_Execute(get_encode_str("qui _gr_list list"), False)
+        logging.debug(f"_gr_list list returned rc={rc}")
+        gnamelist = sfi.Macro.getGlobal("r(_grlist)")
+        logging.debug(f"r(_grlist) returned: '{gnamelist}' (type: {type(gnamelist)}, length: {len(gnamelist) if gnamelist else 0})")
+
+        if not gnamelist:
+            logging.debug("No graphs found (gnamelist is empty)")
+            return []
+
+        graphs_info = []
+        graph_names = gnamelist.split()
+        logging.info(f"Found {len(graph_names)} graph(s): {graph_names}")
+
+        # Create graphs directory in extension path or temp
+        if extension_path:
+            graphs_dir = os.path.join(extension_path, 'graphs')
+        else:
+            graphs_dir = os.path.join(tempfile.gettempdir(), 'stata_mcp_graphs')
+
+        os.makedirs(graphs_dir, exist_ok=True)
+        logging.debug(f"Exporting graphs to: {graphs_dir}")
+
+        # Export each graph to PNG
+        for i, gname in enumerate(graph_names):
+            try:
+                # Display the graph first using low-level API
+                # Stata graph names should not be quoted in graph display command
+                gph_disp = f'qui graph display {gname}'
+                rc = stlib.StataSO_Execute(get_encode_str(gph_disp), False)
+                if rc != 0:
+                    logging.warning(f"Failed to display graph '{gname}' (rc={rc})")
+                    continue
+
+                # Export as PNG (best for VS Code display)
+                # Use a sanitized filename but keep the original name for the name() option
+                graph_file = os.path.join(graphs_dir, f'{gname}.png')
+                # The name() option does NOT need quotes - it's a Stata name, not a string
+                gph_exp = f'qui graph export "{graph_file}", name({gname}) replace width(800) height(600)'
+
+                logging.debug(f"Executing graph export command: {gph_exp}")
+                rc = stlib.StataSO_Execute(get_encode_str(gph_exp), False)
+                if rc != 0:
+                    logging.warning(f"Failed to export graph '{gname}' (rc={rc})")
+                    continue
+
+                if os.path.exists(graph_file):
+                    graphs_info.append({
+                        "name": gname,
+                        "path": graph_file
+                    })
+                    logging.info(f"Exported graph '{gname}' to {graph_file}")
+                else:
+                    logging.warning(f"Failed to export graph '{gname}' - file not created")
+
+            except Exception as e:
+                logging.error(f"Error exporting graph '{gname}': {str(e)}")
+                continue
+
+        return graphs_info
+
+    except Exception as e:
+        logging.error(f"Error detecting graphs: {str(e)}")
+        return []
+
+def display_graphs_interactive(graph_format='png', width=800, height=600):
+    """Display graphs using PyStata's interactive approach (similar to Jupyter)
+
+    This function mimics PyStata's grdisplay.py approach for exporting graphs.
+    It should be called immediately after command execution while graphs are still in memory.
+
+    Args:
+        graph_format: Format for exported graphs ('svg', 'png', or 'pdf')
+        width: Width for graph export (pixels for png, inches for svg/pdf)
+        height: Height for graph export (pixels for png, inches for svg/pdf)
+
+    Returns:
+        List of dictionaries with graph info: [{"name": "graph1", "path": "/path/to/graph.png", "format": "png", "command": "scatter y x"}, ...]
+    """
+    global stata_available, has_stata, extension_path
+
+    if not (has_stata and stata_available):
+        return []
+
+    try:
+        import sfi
+        from pystata.config import stlib, get_encode_str
+
+        # Use the same approach as PyStata's grdisplay.py
+        logging.debug(f"Interactive graph display: checking for graphs (format: {graph_format})...")
+
+        # Get the list of graphs (_gr_list should already be on from before file execution)
+        rc = stlib.StataSO_Execute(get_encode_str("qui _gr_list list"), False)
+        logging.debug(f"_gr_list list returned rc={rc}")
+        gnamelist = sfi.Macro.getGlobal("r(_grlist)")
+        logging.debug(f"r(_grlist) returned: '{gnamelist}' (type: {type(gnamelist)}, length: {len(gnamelist) if gnamelist else 0})")
+
+        if not gnamelist:
+            logging.debug("No graphs found in interactive mode")
+            return []
+
+        graphs_info = []
+        graph_names = gnamelist.split()
+        logging.info(f"Found {len(graph_names)} graph(s) in interactive mode: {graph_names}")
+
+        # Create graphs directory
+        if extension_path:
+            graphs_dir = os.path.join(extension_path, 'graphs')
+        else:
+            graphs_dir = os.path.join(tempfile.gettempdir(), 'stata_mcp_graphs')
+
+        os.makedirs(graphs_dir, exist_ok=True)
+        logging.debug(f"Exporting graphs to: {graphs_dir}")
+
+        # Export each graph using PyStata's approach
+        for i, gname in enumerate(graph_names):
+            try:
+                # Display the graph first (required before export)
+                # Stata graph names should not be quoted in graph display command
+                gph_disp = f'qui graph display {gname}'
+                logging.debug(f"Displaying graph: {gph_disp}")
+                rc = stlib.StataSO_Execute(get_encode_str(gph_disp), False)
+                if rc != 0:
+                    logging.warning(f"Failed to display graph '{gname}' (rc={rc})")
+                    continue
+
+                # Determine file extension and export command based on format
+                if graph_format == 'svg':
+                    graph_file = os.path.join(graphs_dir, f'{gname}.svg')
+                    if width and height:
+                        gph_exp = f'qui graph export "{graph_file}", name({gname}) replace width({width}) height({height})'
+                    else:
+                        gph_exp = f'qui graph export "{graph_file}", name({gname}) replace'
+                elif graph_format == 'pdf':
+                    graph_file = os.path.join(graphs_dir, f'{gname}.pdf')
+                    # For PDF, use xsize/ysize instead of width/height
+                    if width and height:
+                        gph_exp = f'qui graph export "{graph_file}", name({gname}) replace xsize({width/96:.2f}) ysize({height/96:.2f})'
+                    else:
+                        gph_exp = f'qui graph export "{graph_file}", name({gname}) replace'
+                else:  # png (default)
+                    graph_file = os.path.join(graphs_dir, f'{gname}.png')
+                    if width and height:
+                        gph_exp = f'qui graph export "{graph_file}", name({gname}) replace width({width}) height({height})'
+                    else:
+                        gph_exp = f'qui graph export "{graph_file}", name({gname}) replace width(800) height(600)'
+
+                # Export the graph
+                logging.debug(f"Exporting graph: {gph_exp}")
+                rc = stlib.StataSO_Execute(get_encode_str(gph_exp), False)
+                if rc != 0:
+                    logging.warning(f"Failed to export graph '{gname}' (rc={rc})")
+                    continue
+
+                if os.path.exists(graph_file):
+                    graph_dict = {
+                        "name": gname,
+                        "path": graph_file,
+                        "format": graph_format
+                    }
+                    graphs_info.append(graph_dict)
+                    logging.info(f"Exported graph '{gname}' to {graph_file} (format: {graph_format})")
+                else:
+                    logging.warning(f"Graph file not found after export: {graph_file}")
+
+            except Exception as e:
+                logging.error(f"Error exporting graph '{gname}': {str(e)}")
+                continue
+
+        return graphs_info
+
+    except Exception as e:
+        logging.error(f"Error in interactive graph display: {str(e)}")
+        logging.debug(f"Interactive display error details: {traceback.format_exc()}")
+        return []
+
+def run_stata_selection(selection, working_dir=None):
+    """Run selected Stata code
+
+    Args:
+        selection: The Stata code to run
+        working_dir: Optional working directory to change to before execution
+    """
+    # If a working directory is provided, prepend a cd command
+    if working_dir and os.path.isdir(working_dir):
+        logging.info(f"Changing working directory to: {working_dir}")
+        # Normalize path for the OS
+        working_dir = os.path.normpath(working_dir)
+        # On Windows, ensure backslashes
+        if platform.system() == "Windows":
+            working_dir = working_dir.replace('/', '\\')
+        # Use double quotes for the cd command to handle spaces
+        cd_command = f'cd "{working_dir}"'
+        # Combine cd command with the selection
+        full_command = f"{cd_command}\n{selection}"
+        return run_stata_command(full_command)
+    else:
+        return run_stata_command(selection)
 
 def run_stata_file(file_path: str, timeout=600):
     """Run a Stata .do file with improved handling for long-running processes
@@ -707,21 +968,53 @@ def run_stata_file(file_path: str, timeout=600):
         try:
             with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
                 do_file_content = f.read()
-                
-            # Create a modified version with log commands commented out
+
+            # Create a modified version with log commands commented out and auto-name graphs
             modified_content = ""
             log_commands_found = 0
-            
-            # Process line by line to comment out log commands
+            graph_counter = 0
+
+            # Process line by line to comment out log commands and add graph names where needed
             for line in do_file_content.splitlines():
                 # Check if this line has a log command
                 if re.match(r'^\s*(log\s+using|log\s+close|capture\s+log\s+close)', line, re.IGNORECASE):
                     modified_content += f"* COMMENTED OUT BY MCP: {line}\n"
                     log_commands_found += 1
-                else:
-                    modified_content += f"{line}\n"
-            
+                    continue
+
+                # Check if this is a graph creation command that might need a name
+                # Match: scatter, histogram, twoway, kdensity, graph bar/box/dot/etc (but not graph export)
+                graph_match = re.match(r'^(\s*)(scatter|histogram|twoway|kdensity|graph\s+(bar|box|dot|pie|matrix|hbar|hbox|combine))\s+(.*)$', line, re.IGNORECASE)
+
+                if graph_match:
+                    indent = graph_match.group(1)
+                    graph_cmd = graph_match.group(2)
+                    rest = graph_match.group(4) if graph_match.lastindex >= 4 else ""
+
+                    # Check if it already has name() option
+                    if not re.search(r'\bname\s*\(', rest, re.IGNORECASE):
+                        # Add automatic unique name
+                        graph_counter += 1
+                        graph_name = f"graph{graph_counter}"
+
+                        # Add name option - if there's a comma, add after it; otherwise add with comma
+                        if ',' in rest:
+                            # Insert name option right after the first comma
+                            rest = re.sub(r',', f', name({graph_name}, replace)', 1)
+                        else:
+                            # No comma yet, add it
+                            rest = rest.rstrip() + f', name({graph_name}, replace)'
+
+                        modified_content += f"{indent}{graph_cmd} {rest}\n"
+                        logging.debug(f"Auto-named graph: {graph_name}")
+                        continue
+
+                # Keep line as-is (including graph export commands)
+                modified_content += f"{line}\n"
+
             logging.info(f"Found and commented out {log_commands_found} log commands in the do file")
+            if graph_counter > 0:
+                logging.info(f"Auto-named {graph_counter} graph commands")
             
             # Save the modified content to a temporary file
             with tempfile.NamedTemporaryFile(
@@ -731,10 +1024,13 @@ def run_stata_file(file_path: str, timeout=600):
             ) as temp_do:
                 # First close any existing log files
                 temp_do.write(f"capture log close _all\n")
+                # Note: _gr_list on is enabled externally before .do file execution
+                # Note: Graph names are auto-injected above into modified_content
                 # Then add our own log command
                 temp_do.write(f"log using \"{custom_log_file}\", replace text\n")
                 temp_do.write(modified_content)
                 temp_do.write(f"\ncapture log close _all\n")  # Ensure all logs are closed at the end
+                # Note: We intentionally do NOT disable _gr_list so graphs persist for detection
                 modified_do_file = temp_do.name
                 
             logging.info(f"Created modified do file at {modified_do_file}")
@@ -772,6 +1068,14 @@ def run_stata_file(file_path: str, timeout=600):
             
             # Set up for PyStata execution
             if has_stata and stata_available:
+                # Enable graph listing for this do file execution using low-level API
+                try:
+                    from pystata.config import stlib, get_encode_str
+                    stlib.StataSO_Execute(get_encode_str("qui _gr_list on"), False)
+                    logging.debug("Enabled graph listing for do file")
+                except Exception as e:
+                    logging.warning(f"Could not enable graph listing: {str(e)}")
+
                 # Record start time for timeout tracking
                 start_time = time.time()
                 last_update_time = start_time
@@ -789,16 +1093,17 @@ def run_stata_file(file_path: str, timeout=600):
                 def run_stata_thread():
                     try:
                         # Make sure to properly quote the path - this is the key fix
+                        # Use inline=False because inline=True calls _gr_list off!
                         if platform.system() == "Windows":
                             # Make sure Windows paths are properly escaped
-                            globals()['stata'].run(do_command, echo=False)
+                            globals()['stata'].run(do_command, echo=False, inline=False)
                         else:
                             # On macOS/Linux, double-check the quoting - adding extra safety
                             if not (do_command.startswith('do "') or do_command.startswith("do '")):
                                 do_command_fixed = f'do "{stata_path}"'
-                                globals()['stata'].run(do_command_fixed, echo=False)
+                                globals()['stata'].run(do_command_fixed, echo=False, inline=False)
                             else:
-                                globals()['stata'].run(do_command, echo=False)
+                                globals()['stata'].run(do_command, echo=False, inline=False)
                     except Exception as e:
                         nonlocal stata_error
                         stata_error = str(e)
@@ -967,10 +1272,34 @@ def run_stata_file(file_path: str, timeout=600):
                             completion_msg = f"\n*** Execution completed in {time.time() - start_time:.1f} seconds ***\n"
                             completion_msg += "Final output:\n"
                             completion_msg += "\n".join(result_lines)
-                            
+
                             # Replace the result with a clean summary
                             result = f">>> {command_entry}\n{completion_msg}"
-                            
+
+                            # Detect and export any graphs created by the do file
+                            # Using interactive mode which should work because inline=True keeps graphs in memory
+                            try:
+                                logging.debug("Attempting to detect graphs from do file (interactive mode)...")
+                                graphs = display_graphs_interactive(graph_format='png', width=800, height=600)
+                                logging.debug(f"Graph detection returned: {graphs}")
+                                if graphs:
+                                    graph_info = "\n\n" + "="*60 + "\n"
+                                    graph_info += f"GRAPHS DETECTED: {len(graphs)} graph(s) created\n"
+                                    graph_info += "="*60 + "\n"
+                                    for graph in graphs:
+                                        # Include command if available, using special format for JavaScript parsing
+                                        if 'command' in graph and graph['command']:
+                                            graph_info += f"  • {graph['name']}: {graph['path']} [CMD: {graph['command']}]\n"
+                                        else:
+                                            graph_info += f"  • {graph['name']}: {graph['path']}\n"
+                                    result += graph_info
+                                    logging.info(f"Detected {len(graphs)} graphs from do file: {[g['name'] for g in graphs]}")
+                                else:
+                                    logging.debug("No graphs detected from do file")
+                            except Exception as e:
+                                logging.warning(f"Error detecting graphs: {str(e)}")
+                                logging.debug(f"Graph detection error details: {traceback.format_exc()}")
+
                             # Log the final file location
                             result += f"\n\nLog file saved to: {custom_log_file}"
                     except Exception as e:
@@ -1164,7 +1493,7 @@ async def stata_run_file_endpoint(file_path: str, timeout: int = 600) -> Respons
 # MCP server will be initialized in main() after args are parsed
 
 # Add FastAPI endpoint for legacy VS Code extension
-@app.post("/v1/tools")
+@app.post("/v1/tools", include_in_schema=False)
 async def call_tool(request: ToolRequest) -> ToolResponse:
     try:
         # Map VS Code extension tool names to MCP tool names
@@ -1193,7 +1522,9 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
                     status="error",
                     message="Missing required parameter: selection"
                 )
-            result = run_stata_selection(request.parameters["selection"])
+            # Get optional working_dir parameter
+            working_dir = request.parameters.get("working_dir", None)
+            result = run_stata_selection(request.parameters["selection"], working_dir=working_dir)
             # Format output for better display
             result = result.replace("\\n", "\n")
             
@@ -1263,7 +1594,7 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
         )
 
 # Simplified health check endpoint - only report server status without executing Stata commands
-@app.get("/health")
+@app.get("/health", include_in_schema=False)
 async def health_check():
     return {
         "status": "ok",
@@ -1271,6 +1602,624 @@ async def health_check():
         "version": SERVER_VERSION,
         "stata_available": stata_available
     }
+
+# Endpoint to serve graph images
+# Hidden from OpenAPI schema so it won't be exposed to LLMs via MCP
+@app.get("/graphs/{graph_name}", include_in_schema=False)
+async def get_graph(graph_name: str):
+    """Serve a graph image file"""
+    try:
+        # Construct the path to the graph file
+        if extension_path:
+            graphs_dir = os.path.join(extension_path, 'graphs')
+        else:
+            graphs_dir = os.path.join(tempfile.gettempdir(), 'stata_mcp_graphs')
+
+        # Support both with and without .png extension
+        if not graph_name.endswith('.png'):
+            graph_name = f"{graph_name}.png"
+
+        graph_path = os.path.join(graphs_dir, graph_name)
+
+        # Check if file exists
+        if not os.path.exists(graph_path):
+            return Response(
+                content=f"Graph not found: {graph_name}",
+                status_code=404,
+                media_type="text/plain"
+            )
+
+        # Read and return the image file
+        with open(graph_path, 'rb') as f:
+            image_data = f.read()
+
+        return Response(content=image_data, media_type="image/png")
+
+    except Exception as e:
+        logging.error(f"Error serving graph {graph_name}: {str(e)}")
+        return Response(
+            content=f"Error serving graph: {str(e)}",
+            status_code=500
+        )
+
+@app.post("/clear_history", include_in_schema=False)
+async def clear_history_endpoint():
+    """Clear the command history"""
+    global command_history
+    try:
+        count = len(command_history)
+        command_history = []
+        logging.info(f"Cleared command history ({count} items)")
+        return {"status": "success", "message": f"Cleared {count} items from history"}
+    except Exception as e:
+        logging.error(f"Error clearing history: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+@app.get("/view_data", include_in_schema=False)
+async def view_data_endpoint(if_condition: str = None):
+    """Get current Stata data as a pandas DataFrame and return as JSON
+
+    Args:
+        if_condition: Optional Stata if condition (e.g., "price > 5000 & mpg < 30")
+    """
+    global stata_available, stata
+
+    try:
+        if not stata_available or stata is None:
+            logging.error("Stata is not available")
+            return Response(
+                content=json.dumps({
+                    "status": "error",
+                    "message": "Stata is not initialized"
+                }),
+                media_type="application/json",
+                status_code=500
+            )
+
+        # Apply if condition if provided
+        if if_condition:
+            logging.info(f"Applying filter: if {if_condition}")
+            try:
+                # Get full data first
+                df = stata.pdataframe_from_data()
+
+                if df is None or df.empty:
+                    raise Exception("No data currently loaded in Stata")
+
+                # Use Stata to create a filter marker variable
+                try:
+                    import sfi
+
+                    # First, check if variable already exists and drop it
+                    try:
+                        stata.run("capture drop _filter_marker", inline=False, echo=False)
+                    except:
+                        pass
+
+                    # Generate marker for rows that match the condition
+                    gen_cmd = f"quietly generate byte _filter_marker = ({if_condition})"
+                    logging.debug(f"Running filter command: {gen_cmd}")
+
+                    try:
+                        stata.run(gen_cmd, inline=False, echo=False)
+                        logging.debug(f"Generate command executed successfully")
+                    except SystemError as se:
+                        logging.error(f"SystemError in generate command: {str(se)}")
+                        raise Exception(f"Invalid condition syntax: {if_condition}")
+                    except Exception as e:
+                        logging.error(f"Exception in generate command: {type(e).__name__}: {str(e)}")
+                        raise Exception(f"Error creating filter: {str(e)}")
+
+                    # Get the marker variable values using SFI
+                    n_obs = sfi.Data.getObsTotal()
+                    logging.debug(f"Total observations: {n_obs}")
+
+                    # Get the variable index for _filter_marker
+                    var_index = sfi.Data.getVarIndex('_filter_marker')
+                    logging.debug(f"Filter marker variable index: {var_index}")
+
+                    if var_index < 0:
+                        raise Exception("Failed to create filter marker variable")
+
+                    # Read the filter values for all observations
+                    # NOTE: sfi.Data.get() returns nested lists like [[1]] or [[0]]
+                    # We need to extract the actual value
+                    filter_mask = []
+                    for i in range(n_obs):
+                        val = sfi.Data.get('_filter_marker', i)
+                        # Extract the actual value from nested list structure
+                        if isinstance(val, list) and len(val) > 0:
+                            if isinstance(val[0], list) and len(val[0]) > 0:
+                                actual_val = val[0][0]
+                            else:
+                                actual_val = val[0]
+                        else:
+                            actual_val = val
+                        filter_mask.append(actual_val == 1)
+
+                    # Debug: Log first few values and count
+                    true_count = sum(filter_mask)
+                    if n_obs > 0:
+                        sample_vals = [sfi.Data.get('_filter_marker', i) for i in range(min(5, n_obs))]
+                        logging.debug(f"First 5 marker values (raw): {sample_vals}")
+                    logging.debug(f"Filter mask true count: {true_count} out of {n_obs}")
+
+                    # Drop the temporary marker
+                    stata.run("quietly drop _filter_marker", inline=False, echo=False)
+
+                    # Filter the DataFrame using the mask
+                    df = df[filter_mask].reset_index(drop=True)
+                    logging.info(f"Filtered data: {len(df)} rows match condition (out of {n_obs} total)")
+
+                except Exception as stata_err:
+                    # Clean up if there's an error
+                    try:
+                        stata.run("capture drop _filter_marker", inline=False, echo=False)
+                    except:
+                        pass
+                    logging.error(f"Filter processing error: {type(stata_err).__name__}: {str(stata_err)}")
+                    raise Exception(f"{str(stata_err)}")
+
+            except Exception as filter_err:
+                logging.error(f"Filter error: {str(filter_err)}")
+                return Response(
+                    content=json.dumps({
+                        "status": "error",
+                        "message": f"Filter error: {str(filter_err)}"
+                    }),
+                    media_type="application/json",
+                    status_code=400
+                )
+        else:
+            # Get data as pandas DataFrame without filtering
+            logging.info("Getting data from Stata using pdataframe_from_data()")
+            df = stata.pdataframe_from_data()
+
+        # Check if data is empty
+        if df is None or df.empty:
+            logging.info("No data currently loaded in Stata")
+            return Response(
+                content=json.dumps({
+                    "status": "success",
+                    "message": "No data currently loaded",
+                    "data": [],
+                    "columns": [],
+                    "rows": 0
+                }),
+                media_type="application/json"
+            )
+
+        # Get data info
+        rows, cols = df.shape
+        logging.info(f"Data retrieved: {rows} observations, {cols} variables")
+
+        # Convert DataFrame to JSON format
+        # Replace NaN with None for proper JSON serialization
+        df_clean = df.replace({float('nan'): None})
+
+        # Convert to list of lists for better performance
+        data_values = df_clean.values.tolist()
+        column_names = df_clean.columns.tolist()
+
+        # Get data types for each column
+        dtypes = {col: str(df[col].dtype) for col in df.columns}
+
+        return Response(
+            content=json.dumps({
+                "status": "success",
+                "data": data_values,
+                "columns": column_names,
+                "dtypes": dtypes,
+                "rows": int(rows),
+                "index": df.index.tolist()
+            }),
+            media_type="application/json"
+        )
+
+    except Exception as e:
+        error_msg = f"Error getting data: {str(e)}"
+        logging.error(error_msg)
+        logging.error(traceback.format_exc())
+        return Response(
+            content=json.dumps({
+                "status": "error",
+                "message": error_msg
+            }),
+            media_type="application/json",
+            status_code=500
+        )
+
+@app.get("/interactive", include_in_schema=False)
+async def interactive_window(file: str = None, code: str = None):
+    """Serve the interactive Stata window as a full webpage"""
+    # If a file path or code is provided, we'll auto-execute it on page load
+    auto_run_file = file if file else ""
+    auto_run_code = code if code else ""
+
+    # Use regular string and insert the file path separately to avoid f-string conflicts
+    html_content = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stata Interactive Window</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        .left-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #3e3e42;
+            overflow: hidden;
+        }
+        .output-section {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        .output-cell {
+            border-left: 3px solid #007acc;
+            padding-left: 15px;
+            margin-bottom: 20px;
+            background: #252526;
+            padding: 15px;
+            border-radius: 4px;
+        }
+        .command-line {
+            color: #4fc1ff;
+            font-weight: bold;
+            margin-bottom: 10px;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+        .command-output {
+            font-family: 'Consolas', 'Monaco', monospace;
+            white-space: pre-wrap;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .input-section {
+            border-top: 1px solid #3e3e42;
+            padding: 20px;
+            background: #252526;
+        }
+        .input-container {
+            display: flex;
+            gap: 10px;
+        }
+        #command-input {
+            flex: 1;
+            background: #3c3c3c;
+            border: 1px solid #6c6c6c;
+            color: #d4d4d4;
+            padding: 12px 15px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 14px;
+            border-radius: 4px;
+        }
+        #command-input:focus {
+            outline: none;
+            border-color: #007acc;
+        }
+        #run-button {
+            background: #0e639c;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            font-weight: 600;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+        #run-button:hover {
+            background: #1177bb;
+        }
+        #run-button:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+        .right-panel {
+            width: 40%;
+            overflow-y: auto;
+            padding: 20px;
+            background: #1e1e1e;
+        }
+        .graphs-title {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #ffffff;
+        }
+        .graph-card {
+            background: #252526;
+            border: 1px solid #3e3e42;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .graph-card h3 {
+            margin-bottom: 15px;
+            color: #ffffff;
+        }
+        .graph-card img {
+            width: 100%;
+            height: auto;
+            border-radius: 4px;
+        }
+        .error {
+            background: #5a1d1d;
+            border-left: 3px solid #f48771;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .hint {
+            color: #858585;
+            font-size: 12px;
+            margin-top: 8px;
+        }
+        .no-graphs {
+            color: #858585;
+            font-style: italic;
+            text-align: center;
+            padding: 40px;
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <div class="left-panel">
+            <div class="output-section" id="output-container"></div>
+
+            <div class="input-section">
+                <div class="input-container">
+                    <input type="text" id="command-input"
+                           placeholder="Enter Stata command (e.g., summarize, scatter y x, regress y x)..."
+                           autocomplete="off" />
+                    <button id="run-button">Run</button>
+                </div>
+                <div class="hint">Press Enter to execute • Ctrl+L to clear output</div>
+            </div>
+        </div>
+
+        <div class="right-panel">
+            <div class="graphs-title">Graphs</div>
+            <div id="graphs-container">
+                <div class="no-graphs">No graphs yet. Run commands to generate graphs.</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const commandInput = document.getElementById('command-input');
+        const runButton = document.getElementById('run-button');
+        const outputContainer = document.getElementById('output-container');
+        const graphsContainer = document.getElementById('graphs-container');
+
+        runButton.addEventListener('click', executeCommand);
+        commandInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') executeCommand();
+        });
+
+        document.addEventListener('keydown', async (e) => {
+            if (e.ctrlKey && e.key === 'l') {
+                e.preventDefault();
+                // Clear text output visually
+                outputContainer.innerHTML = '';
+                // Clear graphs visually
+                graphsContainer.innerHTML = '<div class="no-graphs">No graphs yet. Run commands to generate graphs.</div>';
+                // Clear server-side command history so it doesn't come back
+                try {
+                    const response = await fetch('/clear_history', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    const data = await response.json();
+                    console.log('History cleared:', data.message);
+                } catch (err) {
+                    console.error('Error clearing history:', err);
+                }
+            }
+        });
+
+        async function executeCommand() {
+            const command = commandInput.value.trim();
+            if (!command) return;
+
+            runButton.disabled = true;
+            runButton.textContent = 'Running...';
+
+            try {
+                const response = await fetch('/v1/tools', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        tool: 'run_selection',
+                        parameters: { selection: command }
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    addOutputCell(command, data.result);
+                    updateGraphs(data.result);
+                } else {
+                    addError(data.message || 'Command failed');
+                }
+            } catch (error) {
+                addError(error.message);
+            }
+
+            runButton.disabled = false;
+            runButton.textContent = 'Run';
+            commandInput.value = '';
+            commandInput.focus();
+        }
+
+        function addOutputCell(command, output) {
+            const cell = document.createElement('div');
+            cell.className = 'output-cell';
+            cell.innerHTML = `
+                <div class="command-line">> ${escapeHtml(command)}</div>
+                <div class="command-output">${escapeHtml(output)}</div>
+            `;
+            outputContainer.appendChild(cell);
+            outputContainer.scrollTop = outputContainer.scrollHeight;
+        }
+
+        function addError(message) {
+            const error = document.createElement('div');
+            error.className = 'error';
+            error.textContent = 'Error: ' + message;
+            outputContainer.appendChild(error);
+            outputContainer.scrollTop = outputContainer.scrollHeight;
+        }
+
+        function updateGraphs(output) {
+            // Updated regex to capture optional command: • name: path [CMD: command]
+            // Use [^\\n\\[] to stop at newlines or opening bracket
+            const graphRegex = /• ([^:]+): ([^\\n\\[]+)(?:\\[CMD: ([^\\]]+)\\])?/g;
+            const matches = [...output.matchAll(graphRegex)];
+
+            if (matches.length > 0) {
+                // Remove "no graphs" message if it exists
+                const noGraphsMsg = graphsContainer.querySelector('.no-graphs');
+                if (noGraphsMsg) {
+                    graphsContainer.innerHTML = '';
+                }
+
+                // Add or update each graph
+                matches.forEach(match => {
+                    const name = match[1].trim();
+                    const path = match[2].trim();
+                    const command = match[3] ? match[3].trim() : null;
+
+                    // Check if graph already exists
+                    const existingGraph = graphsContainer.querySelector(`[data-graph-name="${name}"]`);
+                    if (existingGraph) {
+                        // Update existing graph - force reload by adding timestamp
+                        updateGraph(existingGraph, name, `/graphs/${encodeURIComponent(name)}`, command);
+                    } else {
+                        // Add new graph
+                        addGraph(name, `/graphs/${encodeURIComponent(name)}`, command);
+                    }
+                });
+            }
+        }
+
+        function updateGraph(existingCard, name, url, command) {
+            // Force reload by adding timestamp to bypass cache
+            const timestamp = new Date().getTime();
+            const urlWithTimestamp = `${url}?t=${timestamp}`;
+
+            const commandHtml = command ? `<div style="color: #858585; font-size: 12px; margin-bottom: 8px; font-family: 'Courier New', monospace; background: #1a1a1a; padding: 6px; border-radius: 3px; border-left: 3px solid #4a9eff;">$ ${escapeHtml(command)}</div>` : '';
+            existingCard.innerHTML = `
+                <h3>${escapeHtml(name)}</h3>
+                ${commandHtml}
+                <img src="${urlWithTimestamp}" alt="${escapeHtml(name)}"
+                     onerror="this.parentElement.innerHTML='<p style=\\'color:#f48771\\'>Failed to load graph</p>'">
+            `;
+        }
+
+        function addGraph(name, url, command) {
+            const card = document.createElement('div');
+            card.className = 'graph-card';
+            card.setAttribute('data-graph-name', name);
+            const commandHtml = command ? `<div style="color: #858585; font-size: 12px; margin-bottom: 8px; font-family: 'Courier New', monospace; background: #1a1a1a; padding: 6px; border-radius: 3px; border-left: 3px solid #4a9eff;">$ ${escapeHtml(command)}</div>` : '';
+            card.innerHTML = `
+                <h3>${escapeHtml(name)}</h3>
+                ${commandHtml}
+                <img src="${url}" alt="${escapeHtml(name)}"
+                     onerror="this.parentElement.innerHTML='<p style=\\'color:#f48771\\'>Failed to load graph</p>'">
+            `;
+            graphsContainer.appendChild(card);
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Auto-execute file or code if provided in URL parameter
+        const urlParams = new URLSearchParams(window.location.search);
+        const autoRunFile = urlParams.get('file');
+        const autoRunCode = urlParams.get('code');
+
+        if (autoRunFile) {
+            console.log('Auto-running file from URL parameter:', autoRunFile);
+            // Run the file on page load
+            fetch('/v1/tools', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    tool: 'run_file',
+                    parameters: { file_path: autoRunFile }
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    addOutputCell('Running file: ' + autoRunFile, data.result);
+                    updateGraphs(data.result);
+                } else {
+                    addError(data.message || 'Failed to run file');
+                }
+            })
+            .catch(error => {
+                addError('Error running file: ' + error.message);
+            });
+        } else if (autoRunCode) {
+            console.log('Auto-running code from URL parameter');
+            // Run the selected code on page load
+            fetch('/v1/tools', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    tool: 'run_selection',
+                    parameters: { selection: autoRunCode }
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    addOutputCell('Running selection', data.result);
+                    updateGraphs(data.result);
+                } else {
+                    addError(data.message || 'Failed to run code');
+                }
+            })
+            .catch(error => {
+                addError('Error running code: ' + error.message);
+            });
+        }
+
+        commandInput.focus();
+    </script>
+</body>
+</html>
+    """
+    # Replace the placeholder with the actual file path (with proper escaping)
+    if auto_run_file:
+        # Escape the file path for JavaScript string
+        escaped_file = auto_run_file.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+        html_content = html_content.replace('AUTO_RUN_FILE_PLACEHOLDER', escaped_file)
+
+    return Response(content=html_content, media_type="text/html")
 
 def main():
     """Main function to set up and run the server"""
@@ -1510,11 +2459,20 @@ def main():
         try_init_stata(STATA_PATH)
         
         # Create and mount the MCP server
+        # Only expose run_selection and run_file to LLMs
+        # Other endpoints are still accessible via direct HTTP calls from VS Code extension
         mcp = FastApiMCP(
             app,
             name=SERVER_NAME,
-            description="This server provides tools for running Stata commands and scripts.",
-            exclude_operations=["call_tool_v1_tools_post", "health_check_health_get"]  # Exclude these operations from MCP tools
+            description="This server provides tools for running Stata commands and scripts. Use stata_run_selection for running code snippets and stata_run_file for executing .do files.",
+            exclude_operations=[
+                "call_tool_v1_tools_post",  # Legacy VS Code extension endpoint
+                "health_check_health_get",  # Health check endpoint
+                "view_data_endpoint_view_data_get",  # Data viewer endpoint (VS Code only)
+                "get_graph_graphs_graph_name_get",  # Graph serving endpoint (VS Code only)
+                "clear_history_endpoint_clear_history_post",  # History clearing (VS Code only)
+                "interactive_window_interactive_get"  # Interactive window (VS Code only)
+            ]
         )
 
         # Mount the MCP server to the FastAPI app

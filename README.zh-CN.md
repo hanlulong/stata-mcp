@@ -8,20 +8,20 @@
 [![GitHub license](https://img.shields.io/github/license/hanlulong/stata-mcp)](https://github.com/hanlulong/stata-mcp/blob/main/LICENSE) 
 
 
-此扩展通过模型上下文协议（MCP）为 Visual Studio Code 和 Cursor IDE 提供 Stata 集成。该扩展允许您：
+此扩展通过[模型上下文协议（MCP）](https://modelcontextprotocol.io/docs/getting-started/intro)为 Visual Studio Code 和 Cursor IDE 提供 Stata 集成。该扩展允许您：
 
 - 直接从 VS Code 或 Cursor 运行 Stata 命令
 - 执行选中部分或整个 .do 文件
 - 在编辑器中实时查看 Stata 输出
 - 通过 MCP 协议获得 AI 助手集成
-- 使用 Cursor 或 Cline 体验增强的 AI 编程
+- 使用 [Cursor](https://www.cursor.com/)、[Cline](https://github.com/cline/cline)、[Claude Code](https://www.anthropic.com/claude/code) 或 [Codex](https://openai.com/index/openai-codex/) 体验增强的 AI 编程
 - 选择您的 Stata 版本（MP、SE 或 BE）
 
 ## 功能特性
 
 - **运行 Stata 命令**：直接从编辑器执行选中部分或整个 .do 文件
 - **语法高亮**：完全支持 Stata .do、.ado、.mata 和 .doh 文件的语法
-- **AI 助手集成**：通过 MCP 提供上下文帮助和代码建议
+- **AI 助手集成**：通过 [MCP](https://modelcontextprotocol.io/) 提供上下文帮助和代码建议
 - **跨平台**：支持 Windows、macOS 和 Linux
 - **自动检测 Stata**：自动查找您的 Stata 安装
 - **实时输出**：在编辑器中即时查看 Stata 结果
@@ -38,7 +38,6 @@
 
 > **寻找其他 Stata 集成？**
 > - 使用 Stata 与 Notepad++ 和 Sublime Text 3？请看[这里](https://github.com/sook-tusk/Tech_Integrate_Stata_R_with_Editors)
-> - 在 Claude Desktop 中使用 Stata MCP 而不安装此扩展？请看[这里](https://github.com/SepineTam/stata-mcp)
 > - 通过 Jupyter 使用 Stata？请看[这里](https://github.com/hanlulong/stata-mcp/blob/main/docs/jupyter-stata.zh-CN.md)
 
 ## 系统要求
@@ -68,11 +67,11 @@ code --install-extension DeepEcon.stata-mcp
 
 #### 选项 2：从 .vsix 文件安装
 
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.2.5.vsix`。
+1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.2.6.vsix`。
 2. 使用以下方法之一安装：
 
 ```bash
-code --install-extension path/to/stata-mcp-0.2.5.vsix
+code --install-extension path/to/stata-mcp-0.2.6.vsix
 ```
 
 或：
@@ -84,11 +83,11 @@ code --install-extension path/to/stata-mcp-0.2.5.vsix
 
 ### Cursor 安装
 
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.2.5.vsix`。
+1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.2.6.vsix`。
 2. 使用以下方法之一安装：
 
 ```bash
-cursor --install-extension path/to/stata-mcp-0.2.5.vsix
+cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 ```
 
 或：
@@ -100,56 +99,334 @@ cursor --install-extension path/to/stata-mcp-0.2.5.vsix
 
 从 0.1.8 版本开始，该扩展集成了名为 `uv` 的快速 Python 包安装器来设置环境。如果在您的系统上找不到 uv，扩展将尝试自动安装它。
 
-## 扩展设置
-
-您可以通过 VS Code 设置自定义扩展行为：
-
-- `stata-vscode.stataPath`：Stata 安装目录的路径
-- `stata-vscode.mcpServerHost`：MCP 服务器的主机（默认：localhost）
-- `stata-vscode.mcpServerPort`：MCP 服务器的端口（默认：4000）
-- `stata-vscode.autoStartServer`：扩展激活时自动启动 MCP 服务器（默认：true）
-- `stata-vscode.debugMode`：在输出面板中显示详细的调试信息（默认：false）
-- `stata-vscode.forcePort`：即使端口已被使用，也强制 MCP 服务器使用指定端口（默认：false）
-- `stata-vscode.clineConfigPath`：Cline 配置文件的自定义路径（可选，默认为标准位置）
-- `stata-vscode.runFileTimeout`："运行文件"操作的超时时间（秒）（默认：600 秒/10 分钟）
-- `stata-vscode.stataEdition`：要使用的 Stata 版本（MP、SE、BE）- 默认：MP
-- `stata-vscode.logFileLocation`：Stata 日志文件的位置 - 'extension'（扩展目录中的 logs 文件夹）、'workspace'（与 .do 文件相同的目录）或 'custom'（用户指定的目录）- 默认：extension
-- `stata-vscode.customLogDirectory`：Stata 日志文件的自定义目录（仅当 logFileLocation 设置为 'custom' 时使用）
-
 ## 使用方法
+
+### 运行 Stata 代码
 
 1. 打开一个 Stata .do 文件
 2. 使用以下方式运行命令：
    - **运行选中部分**：选中 Stata 代码并按 `Ctrl+Shift+Enter`（Mac 上为 `Cmd+Shift+Enter`）
    - **运行文件**：按 `Ctrl+Shift+D`（Mac 上为 `Cmd+Shift+D`）运行整个 .do 文件
-3. 在编辑器面板中查看输出
-4. **选择 Stata 版本**：在扩展设置中选择您首选的 Stata 版本（MP、SE 或 BE）
+   - **交互模式**：选中代码并点击编辑器工具栏中的 ▶️ 按钮在交互窗口中运行
+3. 在编辑器面板或交互窗口中查看输出
 
-## 日志文件管理
+### 数据查看器
+
+访问数据查看器以检查您的 Stata 数据集：
+
+1. 点击编辑器工具栏中的**查看数据**按钮（📊）
+2. 以表格格式查看您当前的数据集
+3. **筛选数据**：使用 Stata `if` 条件查看数据子集
+   - 示例：`price > 5000 & mpg < 30`
+   - 在筛选框中输入条件并点击"应用"
+   - 点击"清除"以移除筛选并查看所有数据
+
+### 图形显示选项
+
+控制图形的显示方式：
+
+1. **自动显示图形**：生成图形时自动显示（默认：启用）
+   - 在扩展设置中禁用：`stata-vscode.autoDisplayGraphs`
+2. **选择显示方式**：
+   - **VS Code webview**（默认）：图形显示在 VS Code 内的面板中
+   - **外部浏览器**：图形在默认网页浏览器中打开
+   - 在扩展设置中更改：`stata-vscode.graphDisplayMethod`
+
+### Stata 版本选择
+
+在扩展设置中选择您首选的 Stata 版本（MP、SE 或 BE）
+
+## 详细配置
+
+<details>
+<summary>扩展设置</summary>
+
+通过 VS Code 设置自定义扩展行为。访问这些设置：
+- **VS Code/Cursor**：文件 > 首选项 > 设置（或 `Ctrl+,` / `Cmd+,`）
+- 搜索"Stata MCP"以查找所有扩展设置
+
+### 核心设置
+
+| 设置 | 描述 | 默认值 |
+|------|------|--------|
+| `stata-vscode.stataPath` | Stata 安装目录的路径 | 自动检测 |
+| `stata-vscode.stataEdition` | 要使用的 Stata 版本（MP、SE、BE） | `mp` |
+| `stata-vscode.autoStartServer` | 扩展激活时自动启动 MCP 服务器 | `true` |
+
+### 服务器设置
+
+| 设置 | 描述 | 默认值 |
+|------|------|--------|
+| `stata-vscode.mcpServerHost` | MCP 服务器的主机 | `localhost` |
+| `stata-vscode.mcpServerPort` | MCP 服务器的端口 | `4000` |
+| `stata-vscode.forcePort` | 即使端口已被使用也强制使用指定端口 | `false` |
+
+### 图形设置
+
+| 设置 | 描述 | 默认值 |
+|------|------|--------|
+| `stata-vscode.autoDisplayGraphs` | Stata 命令生成图形时自动显示 | `true` |
+| `stata-vscode.graphDisplayMethod` | 选择图形显示方式：`vscode`（webview 面板）或 `browser`（外部浏览器） | `vscode` |
+
+### 日志文件设置
+
+| 设置 | 描述 | 默认值 |
+|------|------|--------|
+| `stata-vscode.logFileLocation` | Stata 日志文件的位置：`extension`（扩展目录中的 logs 文件夹）、`workspace`（与 .do 文件相同的目录）或 `custom`（用户指定的目录） | `extension` |
+| `stata-vscode.customLogDirectory` | Stata 日志文件的自定义目录（仅当 logFileLocation 设置为 `custom` 时使用） | 空 |
+
+### 高级设置
+
+| 设置 | 描述 | 默认值 |
+|------|------|--------|
+| `stata-vscode.runFileTimeout` | "运行文件"操作的超时时间（秒） | `600`（10 分钟） |
+| `stata-vscode.debugMode` | 在输出面板中显示详细的调试信息 | `false` |
+| `stata-vscode.clineConfigPath` | Cline 配置文件的自定义路径（可选） | 自动检测 |
+
+### 如何更改设置
+
+1. 打开 VS Code/Cursor 设置（`Ctrl+,` 或 `Cmd+,`）
+2. 搜索"Stata MCP"
+3. 修改所需的设置
+4. 如有提示，重启扩展或重新加载窗口
+
+</details>
+
+<details>
+<summary>日志文件管理</summary>
 
 该扩展在运行 Stata .do 文件时会自动创建日志文件。您可以控制这些日志文件的保存位置：
+
+### 日志文件位置
 
 1. **扩展目录**（默认）：日志文件保存在扩展目录内的 `logs` 文件夹中，保持您的工作空间整洁
 2. **工作空间目录**：日志文件保存在与您的 .do 文件相同的目录中（原始行为）
 3. **自定义目录**：日志文件保存到您指定的目录
 
-要更改此设置：
-1. 打开 VS Code/Cursor 设置
-2. 搜索 "Stata MCP"
-3. 找到"日志文件位置"并选择您首选的选项
-4. 如果使用"自定义目录"，还要设置"自定义日志目录"路径
+### 更改日志文件位置
 
-## 工作原理
+1. 打开 VS Code/Cursor 设置（`Ctrl+,` 或 `Cmd+,`）
+2. 搜索"Stata MCP"
+3. 找到"日志文件位置"（`stata-vscode.logFileLocation`）并选择您首选的选项：
+   - `extension`：保存到扩展目录（默认）
+   - `workspace`：保存到与 .do 文件相同的目录
+   - `custom`：保存到自定义目录
+4. 如果使用"自定义目录"，还要设置"自定义日志目录"（`stata-vscode.customLogDirectory`）路径
 
-该扩展创建一个本地 MCP 服务器，将您的编辑器连接到 Stata，实现：
+### 各选项的优势
 
-1. **命令执行**：运行 Stata 命令并即时查看结果
-2. **上下文感知**：AI 助手理解您的 Stata 数据和命令
-3. **增强生产力**：获得智能代码建议和文档
+- **扩展目录**：保持项目工作空间整洁有序
+- **工作空间目录**：日志文件与您的 .do 文件保持在一起，便于参考
+- **自定义目录**：将所有项目的日志集中在一个位置
 
-## Cursor MCP 配置
+</details>
 
-该扩展自动配置 Cursor MCP 集成。要验证其是否正常工作：
+<details>
+<summary>Claude Code</summary>
+
+[Claude Code](https://www.anthropic.com/claude/code) 是 Anthropic 的官方 AI 编程助手，可在 VS Code 和 Cursor 中使用。按照以下步骤配置 Stata MCP 服务器：
+
+### 安装
+
+1. **安装 Stata MCP 扩展**（在 VS Code 或 Cursor 中，参见上面的[安装](#安装)部分）
+
+2. **启动 Stata MCP 服务器**：当您打开安装了扩展的 VS Code/Cursor 时，服务器应自动启动。通过检查状态栏（应显示"Stata"）来验证其是否正在运行。
+
+### 配置
+
+一旦 Stata MCP 服务器运行，配置 Claude Code 以连接到它：
+
+1. 打开您的终端或命令面板
+
+2. 运行以下命令以添加 Stata MCP 服务器：
+   ```bash
+   claude mcp add --transport sse stata-mcp http://localhost:4000/mcp --scope user
+   ```
+
+3. 重启 VS Code 或 Cursor
+
+4. Claude Code 现在可以访问 Stata 工具并可以帮助您：
+   - 编写和执行 Stata 命令
+   - 分析您的数据
+   - 生成可视化图表
+   - 调试 Stata 代码
+   - 创建统计报告
+
+### 验证连接
+
+要验证 Claude Code 是否正确连接到 Stata MCP 服务器：
+
+1. 打开一个 Stata .do 文件或创建一个新文件
+2. 请求 Claude Code 帮助完成 Stata 任务（例如，"加载 auto 数据集并显示汇总统计信息"）
+3. Claude Code 应该能够执行 Stata 命令并显示结果
+
+### 故障排除
+
+如果 Claude Code 无法识别 Stata MCP 服务器：
+1. 验证 MCP 服务器正在运行（状态栏应显示"Stata"）
+2. 检查您是否使用正确的 URL 运行了 `claude mcp add` 命令
+3. 尝试重启 VS Code 或 Cursor
+4. 检查扩展输出面板（查看 > 输出 > Stata MCP）是否有任何错误
+5. 确保没有端口冲突（默认端口为 4000）
+
+</details>
+
+<details>
+<summary>Claude Desktop</summary>
+
+您可以通过 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy) 将此扩展与 [Claude Desktop](https://claude.ai/download) 一起使用：
+
+1. 确保 Stata MCP 扩展已安装在 VS Code 或 Cursor 中并且当前正在运行，然后再尝试配置 Claude Desktop
+2. 安装 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy)：
+   ```bash
+   # 使用 pip
+   pip install mcp-proxy
+
+   # 或使用 uv（更快）
+   uv install mcp-proxy
+   ```
+
+3. 找到 mcp-proxy 的路径：
+   ```bash
+   # 在 Mac/Linux 上
+   which mcp-proxy
+
+   # 在 Windows（PowerShell）上
+   (Get-Command mcp-proxy).Path
+   ```
+
+4. 通过编辑 MCP 配置文件来配置 Claude Desktop：
+
+   **在 Windows**（通常位于 `%APPDATA%\Claude Desktop\claude_desktop_config.json`）：
+   ```json
+   {
+     "mcpServers": {
+       "stata-mcp": {
+         "command": "mcp-proxy",
+         "args": ["http://127.0.0.1:4000/mcp"]
+       }
+     }
+   }
+   ```
+
+   **在 macOS**（通常位于 `~/Library/Application Support/Claude Desktop/claude_desktop_config.json`）：
+   ```json
+   {
+     "mcpServers": {
+       "stata-mcp": {
+         "command": "/path/to/mcp-proxy",
+         "args": ["http://127.0.0.1:4000/mcp"]
+       }
+     }
+   }
+   ```
+   将 `/path/to/mcp-proxy` 替换为您在第 3 步中找到的实际路径。
+
+5. 重启 Claude Desktop
+
+6. Claude Desktop 将自动发现可用的 Stata 工具，允许您直接从对话中运行 Stata 命令和分析数据。
+
+</details>
+
+<details>
+<summary>OpenAI Codex</summary>
+
+您可以通过 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy) 将此扩展与 [OpenAI Codex](https://openai.com/index/openai-codex/) 一起使用：
+
+1. 确保 Stata MCP 扩展已安装在 VS Code 或 Cursor 中并且当前正在运行，然后再尝试配置 Codex
+2. 安装 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy)：
+   ```bash
+   # 使用 pip
+   pip install mcp-proxy
+
+   # 或使用 uv（更快）
+   uv install mcp-proxy
+   ```
+
+3. 通过编辑 `~/.codex/config.toml` 配置文件来配置 Codex：
+
+   **在 macOS/Linux**（`~/.codex/config.toml`）：
+   ```toml
+   # Stata MCP Server (SSE Transport)
+   [mcp_servers.stata-mcp]
+   command = "mcp-proxy"
+   args = ["http://localhost:4000/mcp"]
+   ```
+
+   **在 Windows**（`%USERPROFILE%\.codex\config.toml`）：
+   ```toml
+   # Stata MCP Server (SSE Transport)
+   [mcp_servers.stata-mcp]
+   command = "mcp-proxy"
+   args = ["http://localhost:4000/mcp"]
+   ```
+
+4. 如果文件已包含其他 MCP 服务器，只需添加 `[mcp_servers.stata-mcp]` 部分。
+
+5. 重启 Codex 或 VS Code/Cursor
+
+6. Codex 将自动发现可用的 Stata 工具，允许您直接从对话中运行 Stata 命令和分析数据。
+
+### Codex 配置故障排除
+
+如果 Codex 无法识别 Stata MCP 服务器：
+1. 验证 MCP 服务器正在运行（状态栏应显示"Stata"）
+2. 检查配置文件是否存在于 `~/.codex/config.toml` 并且内容正确
+3. 确保已安装 mcp-proxy：`pip list | grep mcp-proxy` 或 `which mcp-proxy`
+4. 尝试重启 VS Code 或 Cursor
+5. 检查扩展输出面板（查看 > 输出 > Stata MCP）是否有任何错误
+6. 确保没有端口冲突（默认端口为 4000）
+
+</details>
+
+<details>
+<summary>Cline</summary>
+
+1. 打开您的 [Cline](https://github.com/cline/cline) MCP 设置文件：
+   - **macOS**：`~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
+   - **Windows**：`%APPDATA%/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
+   - **Linux**：`~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
+
+2. 添加 Stata MCP 服务器配置：
+   ```json
+   {
+     "mcpServers": {
+       "stata-mcp": {
+         "url": "http://localhost:4000/mcp",
+         "transport": "sse"
+       }
+     }
+   }
+   ```
+
+3. 如果文件已包含其他 MCP 服务器，只需将 `"stata-mcp"` 条目添加到现有的 `"mcpServers"` 对象中。
+
+4. 保存文件并重启 VS Code。
+
+您还可以通过 VS Code 设置配置 Cline：
+```json
+"cline.mcpSettings": {
+  "stata-mcp": {
+    "url": "http://localhost:4000/mcp",
+    "transport": "sse"
+  }
+}
+```
+
+### Cline 配置故障排除
+
+如果 Cline 无法识别 Stata MCP 服务器：
+1. 验证 MCP 服务器正在运行（状态栏应显示"Stata"）
+2. 检查配置文件是否存在且内容正确
+3. 尝试重启 VS Code
+4. 检查扩展输出面板（查看 > 输出 > Stata MCP）是否有任何错误
+
+</details>
+
+<details>
+<summary>Cursor</summary>
+
+该扩展自动配置 [Cursor](https://www.cursor.com/) MCP 集成。要验证其是否正常工作：
 
 1. 打开 Cursor
 2. 按 `Ctrl+Shift+P`（Mac 上为 `Cmd+Shift+P`）打开命令面板
@@ -204,10 +481,12 @@ Cursor MCP 配置文件的位置因操作系统而异：
 3. 尝试重启 Cursor
 4. 确保与其他正在运行的应用程序没有端口冲突
 
-## Cline MCP 配置
+</details>
 
+<details>
+<summary><h2>Cline MCP 配置</h2></summary>
 
-1. 打开您的 Cline MCP 设置文件：
+1. 打开您的 [Cline](https://github.com/cline/cline) MCP 设置文件：
    - **macOS**：`~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
    - **Windows**：`%APPDATA%/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
    - **Linux**：`~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
@@ -246,16 +525,73 @@ Cursor MCP 配置文件的位置因操作系统而异：
 3. 尝试重启 VS Code
 4. 检查扩展输出面板（查看 > 输出 > Stata MCP）是否有任何错误
 
-## Claude Desktop MCP 配置
+</details>
 
-您可以通过 mcp-proxy 将此扩展与 Claude Desktop 一起使用：
+<details>
+<summary><h2>Claude Code (Codex) 配置</h2></summary>
+
+[Claude Code](https://www.anthropic.com/claude/code) 是 Anthropic 的官方 AI 编程助手，可在 VS Code 和 Cursor 中使用。按照以下步骤配置 Stata MCP 服务器：
+
+### 安装
+
+1. **安装 Stata MCP 扩展**（在 VS Code 或 Cursor 中，参见上面的[安装](#安装)部分）
+
+2. **安装 Claude Code**：
+   - **对于 VS Code**：从 [VS Code 市场](https://marketplace.visualstudio.com/items?itemName=Anthropic.claude-code)安装
+   - **对于 Cursor**：Claude Code (Codex) 已内置并默认可用
+
+3. **启动 Stata MCP 服务器**：当您打开安装了扩展的 VS Code/Cursor 时，服务器应自动启动。通过检查状态栏（应显示"Stata"）来验证其是否正在运行。
+
+### 配置
+
+一旦 Stata MCP 服务器运行，配置 Claude Code 以连接到它：
+
+1. 打开您的终端或命令面板
+
+2. 运行以下命令以添加 Stata MCP 服务器：
+   ```bash
+   claude mcp add --transport sse stata-mcp http://localhost:4000/mcp --scope user
+   ```
+
+3. 重启 VS Code 或 Cursor
+
+4. Claude Code 现在可以访问 Stata 工具并可以帮助您：
+   - 编写和执行 Stata 命令
+   - 分析您的数据
+   - 生成可视化图表
+   - 调试 Stata 代码
+   - 创建统计报告
+
+### 验证连接
+
+要验证 Claude Code 是否正确连接到 Stata MCP 服务器：
+
+1. 打开一个 Stata .do 文件或创建一个新文件
+2. 请求 Claude Code 帮助完成 Stata 任务（例如，"加载 auto 数据集并显示汇总统计信息"）
+3. Claude Code 应该能够执行 Stata 命令并显示结果
+
+### 故障排除
+
+如果 Claude Code 无法识别 Stata MCP 服务器：
+1. 验证 MCP 服务器正在运行（状态栏应显示"Stata"）
+2. 检查您是否使用正确的 URL 运行了 `claude mcp add` 命令
+3. 尝试重启 VS Code 或 Cursor
+4. 检查扩展输出面板（查看 > 输出 > Stata MCP）是否有任何错误
+5. 确保没有端口冲突（默认端口为 4000）
+
+</details>
+
+<details>
+<summary><h2>Claude Desktop MCP 配置</h2></summary>
+
+您可以通过 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy) 将此扩展与 [Claude Desktop](https://claude.ai/download) 一起使用：
 
 1. 确保 Stata MCP 扩展已安装在 VS Code 或 Cursor 中并且当前正在运行，然后再尝试配置 Claude Desktop
-2. 安装 mcp-proxy：
+2. 安装 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy)：
    ```bash
    # 使用 pip
    pip install mcp-proxy
-   
+
    # 或使用 uv（更快）
    uv install mcp-proxy
    ```
@@ -264,7 +600,7 @@ Cursor MCP 配置文件的位置因操作系统而异：
    ```bash
    # 在 Mac/Linux 上
    which mcp-proxy
-   
+
    # 在 Windows（PowerShell）上
    (Get-Command mcp-proxy).Path
    ```
@@ -300,7 +636,58 @@ Cursor MCP 配置文件的位置因操作系统而异：
 
 6. Claude Desktop 将自动发现可用的 Stata 工具，允许您直接从对话中运行 Stata 命令和分析数据。
 
-> **注意：** 有一种替代方法可以在不安装此扩展的情况下在 Claude Desktop 中使用 Stata MCP。请看[这里](https://github.com/SepineTam/stata-mcp)。
+</details>
+
+<details>
+<summary><h2>OpenAI Codex 配置</h2></summary>
+
+您可以通过 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy) 将此扩展与 [OpenAI Codex](https://openai.com/index/openai-codex/) 一起使用：
+
+1. 确保 Stata MCP 扩展已安装在 VS Code 或 Cursor 中并且当前正在运行，然后再尝试配置 Codex
+2. 安装 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy)：
+   ```bash
+   # 使用 pip
+   pip install mcp-proxy
+
+   # 或使用 uv（更快）
+   uv install mcp-proxy
+   ```
+
+3. 通过编辑 `~/.codex/config.toml` 配置文件来配置 Codex：
+
+   **在 macOS/Linux**（`~/.codex/config.toml`）：
+   ```toml
+   # Stata MCP Server (SSE Transport)
+   [mcp_servers.stata-mcp]
+   command = "mcp-proxy"
+   args = ["http://localhost:4000/mcp"]
+   ```
+
+   **在 Windows**（`%USERPROFILE%\.codex\config.toml`）：
+   ```toml
+   # Stata MCP Server (SSE Transport)
+   [mcp_servers.stata-mcp]
+   command = "mcp-proxy"
+   args = ["http://localhost:4000/mcp"]
+   ```
+
+4. 如果文件已包含其他 MCP 服务器，只需添加 `[mcp_servers.stata-mcp]` 部分。
+
+5. 重启 Codex 或 VS Code/Cursor
+
+6. Codex 将自动发现可用的 Stata 工具，允许您直接从对话中运行 Stata 命令和分析数据。
+
+### Codex 配置故障排除
+
+如果 Codex 无法识别 Stata MCP 服务器：
+1. 验证 MCP 服务器正在运行（状态栏应显示"Stata"）
+2. 检查配置文件是否存在于 `~/.codex/config.toml` 并且内容正确
+3. 确保已安装 mcp-proxy：`pip list | grep mcp-proxy` 或 `which mcp-proxy`
+4. 尝试重启 VS Code 或 Cursor
+5. 检查扩展输出面板（查看 > 输出 > Stata MCP）是否有任何错误
+6. 确保没有端口冲突（默认端口为 4000）
+
+</details>
 
 ## Python 环境管理
 
