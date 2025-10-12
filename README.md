@@ -14,7 +14,7 @@ This extension provides Stata integration for Visual Studio Code and Cursor IDE 
 - Execute selections or entire .do files
 - View Stata output in the editor in real-time
 - Get AI assistant integration through the MCP protocol
-- Experience enhanced AI coding with [Cursor](https://www.cursor.com/), [Cline](https://github.com/cline/cline), [Claude Code](https://www.anthropic.com/claude/code), or [Codex](https://openai.com/index/openai-codex/)
+- Experience enhanced AI coding with [Cursor](https://www.cursor.com/), [Cline](https://github.com/cline/cline), [Claude Code](https://claude.com/product/claude-code), or [Codex](https://openai.com/index/openai-codex/)
 - Choose your Stata edition (MP, SE, or BE)
 
 ## Features
@@ -227,7 +227,7 @@ The extension automatically creates log files when running Stata .do files. You 
 <details>
 <summary><strong>Claude Code</strong></summary>
 
-[Claude Code](https://www.anthropic.com/claude/code) is Anthropic's official AI coding assistant available in VS Code and Cursor. Follow these steps to configure the Stata MCP server:
+[Claude Code](https://claude.com/product/claude-code) is Anthropic's official AI coding assistant available in VS Code and Cursor. Follow these steps to configure the Stata MCP server:
 
 ### Installation
 

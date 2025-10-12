@@ -14,7 +14,7 @@
 - 执行选中部分或整个 .do 文件
 - 在编辑器中实时查看 Stata 输出
 - 通过 MCP 协议获得 AI 助手集成
-- 使用 [Cursor](https://www.cursor.com/)、[Cline](https://github.com/cline/cline)、[Claude Code](https://www.anthropic.com/claude/code) 或 [Codex](https://openai.com/index/openai-codex/) 体验增强的 AI 编程
+- 使用 [Cursor](https://www.cursor.com/)、[Cline](https://github.com/cline/cline)、[Claude Code](https://claude.com/product/claude-code) 或 [Codex](https://openai.com/index/openai-codex/) 体验增强的 AI 编程
 - 选择您的 Stata 版本（MP、SE 或 BE）
 
 ## 功能特性
@@ -226,7 +226,7 @@ cursor --install-extension path/to/stata-mcp-0.2.8.vsix
 <details>
 <summary><strong>Claude Code</strong></summary>
 
-[Claude Code](https://www.anthropic.com/claude/code) 是 Anthropic 的官方 AI 编程助手，可在 VS Code 和 Cursor 中使用。按照以下步骤配置 Stata MCP 服务器：
+[Claude Code](https://claude.com/product/claude-code) 是 Anthropic 的官方 AI 编程助手，可在 VS Code 和 Cursor 中使用。按照以下步骤配置 Stata MCP 服务器：
 
 ### 安装
 
