@@ -139,7 +139,7 @@ cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 ## 详细配置
 
 <details>
-<summary>扩展设置</summary>
+<summary><strong style="font-size: 1.2em;">扩展设置</strong></summary>
 
 通过 VS Code 设置自定义扩展行为。访问这些设置：
 - **VS Code/Cursor**：文件 > 首选项 > 设置（或 `Ctrl+,` / `Cmd+,`）
@@ -193,7 +193,7 @@ cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 </details>
 
 <details>
-<summary>日志文件管理</summary>
+<summary><strong style="font-size: 1.2em;">日志文件管理</strong></summary>
 
 该扩展在运行 Stata .do 文件时会自动创建日志文件。您可以控制这些日志文件的保存位置：
 
@@ -222,7 +222,7 @@ cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 </details>
 
 <details>
-<summary>Claude Code</summary>
+<summary><strong style="font-size: 1.2em;">Claude Code</strong></summary>
 
 [Claude Code](https://www.anthropic.com/claude/code) 是 Anthropic 的官方 AI 编程助手，可在 VS Code 和 Cursor 中使用。按照以下步骤配置 Stata MCP 服务器：
 
@@ -272,7 +272,7 @@ cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 </details>
 
 <details>
-<summary>Claude Desktop</summary>
+<summary><strong style="font-size: 1.2em;">Claude Desktop</strong></summary>
 
 您可以通过 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy) 将此扩展与 [Claude Desktop](https://claude.ai/download) 一起使用：
 
@@ -329,7 +329,7 @@ cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 </details>
 
 <details>
-<summary>OpenAI Codex</summary>
+<summary><strong style="font-size: 1.2em;">OpenAI Codex</strong></summary>
 
 您可以通过 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy) 将此扩展与 [OpenAI Codex](https://openai.com/index/openai-codex/) 一起使用：
 
@@ -380,7 +380,7 @@ cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 </details>
 
 <details>
-<summary>Cline</summary>
+<summary><strong style="font-size: 1.2em;">Cline</strong></summary>
 
 1. 打开您的 [Cline](https://github.com/cline/cline) MCP 设置文件：
    - **macOS**：`~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
@@ -424,7 +424,7 @@ cursor --install-extension path/to/stata-mcp-0.2.6.vsix
 </details>
 
 <details>
-<summary>Cursor</summary>
+<summary><strong style="font-size: 1.2em;">Cursor</strong></summary>
 
 该扩展自动配置 [Cursor](https://www.cursor.com/) MCP 集成。要验证其是否正常工作：
 
