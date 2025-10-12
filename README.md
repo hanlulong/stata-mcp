@@ -140,7 +140,7 @@ Select your preferred Stata edition (MP, SE, or BE) in the Extension Settings
 ## Detailed Configurations
 
 <details>
-<summary><h3>Extension Settings</h3></summary>
+<summary><big><b>Extension Settings</b></big></summary>
 
 Customize the extension behavior through VS Code settings. Access these settings via:
 - **VS Code/Cursor**: File > Preferences > Settings (or `Ctrl+,` / `Cmd+,`)
@@ -193,7 +193,7 @@ Customize the extension behavior through VS Code settings. Access these settings
 
 </details>
 <details>
-<summary><h3>Log File Management</h3></summary>
+<summary><big><b>Log File Management</b></big></summary>
 
 The extension automatically creates log files when running Stata .do files. You can control where these log files are saved:
 
@@ -221,7 +221,7 @@ The extension automatically creates log files when running Stata .do files. You 
 
 </details>
 <details>
-<summary><h3>Claude Code</h3></summary>
+<summary><big><b>Claude Code</b></big></summary>
 
 [Claude Code](https://www.anthropic.com/claude/code) is Anthropic's official AI coding assistant available in VS Code and Cursor. Follow these steps to configure the Stata MCP server:
 
@@ -270,7 +270,7 @@ If Claude Code is not recognizing the Stata MCP server:
 
 </details>
 <details>
-<summary><h3>Claude Desktop</h3></summary>
+<summary><big><b>Claude Desktop</b></big></summary>
 
 You can use this extension with [Claude Desktop](https://claude.ai/download) through [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):
 
@@ -326,7 +326,7 @@ You can use this extension with [Claude Desktop](https://claude.ai/download) thr
 
 </details>
 <details>
-<summary><h3>OpenAI Codex</h3></summary>
+<summary><big><b>OpenAI Codex</b></big></summary>
 
 You can use this extension with [OpenAI Codex](https://openai.com/index/openai-codex/) through [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):
 
@@ -376,7 +376,7 @@ If Codex is not recognizing the Stata MCP server:
 
 </details>
 <details>
-<summary><h3>Cline</h3></summary>
+<summary><big><b>Cline</b></big></summary>
 
 1. Open your [Cline](https://github.com/cline/cline) MCP settings file:
    - **macOS**: `~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
@@ -419,7 +419,7 @@ If Cline is not recognizing the Stata MCP server:
 
 </details>
 <details>
-<summary><h3>Cursor</h3></summary>
+<summary><big><b>Cursor</b></big></summary>
 
 The extension automatically configures [Cursor](https://www.cursor.com/) MCP integration. To verify it's working:
 
