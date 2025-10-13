@@ -453,14 +453,28 @@ def run_stata_command(command: str, clear_history=False):
                 f.write(f"capture log close _all\n")
                 f.write(f"log using \"{f.name}.log\", replace text\n")
 
+                # Process command line by line to comment out cls commands
+                cls_commands_found = 0
+                processed_command = ""
+                for line in command.splitlines():
+                    # Check if this is a cls command
+                    if re.match(r'^\s*cls\s*$', line, re.IGNORECASE):
+                        processed_command += f"* COMMENTED OUT BY MCP: {line}\n"
+                        cls_commands_found += 1
+                    else:
+                        processed_command += f"{line}\n"
+
+                if cls_commands_found > 0:
+                    logging.info(f"Found and commented out {cls_commands_found} cls commands in the selection")
+
                 # Special handling for 'do' commands to ensure proper quoting
                 if command.lower().startswith('do '):
                     # For do commands, we need to make sure the file path is properly handled
                     # The command already has the file in quotes from the code above
-                    f.write(f"{command}\n")
+                    f.write(f"{processed_command}")
                 else:
                     # Normal commands don't need special treatment
-                    f.write(f"{command}\n")
+                    f.write(f"{processed_command}")
 
                 f.write(f"capture log close\n")
                 do_file = f.name
@@ -989,11 +1003,18 @@ def run_stata_file(file_path: str, timeout=600):
             graph_counter = 0
 
             # Process line by line to comment out log commands and add graph names where needed
+            cls_commands_found = 0
             for line in do_file_content.splitlines():
                 # Check if this line has a log command
                 if re.match(r'^\s*(log\s+using|log\s+close|capture\s+log\s+close)', line, re.IGNORECASE):
                     modified_content += f"* COMMENTED OUT BY MCP: {line}\n"
                     log_commands_found += 1
+                    continue
+
+                # Check if this is a cls command
+                if re.match(r'^\s*cls\s*$', line, re.IGNORECASE):
+                    modified_content += f"* COMMENTED OUT BY MCP: {line}\n"
+                    cls_commands_found += 1
                     continue
 
                 # Check if this is a graph creation command that might need a name
@@ -1027,6 +1048,8 @@ def run_stata_file(file_path: str, timeout=600):
                 modified_content += f"{line}\n"
 
             logging.info(f"Found and commented out {log_commands_found} log commands in the do file")
+            if cls_commands_found > 0:
+                logging.info(f"Found and commented out {cls_commands_found} cls commands in the do file")
             if graph_counter > 0:
                 logging.info(f"Auto-named {graph_counter} graph commands")
             
