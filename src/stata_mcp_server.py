@@ -22,6 +22,17 @@ from typing import Dict, Any, Optional
 import warnings
 import re
 
+# Fix encoding issues on Windows for Unicode characters
+if platform.system() == 'Windows':
+    # Force UTF-8 encoding for stdout and stderr on Windows
+    import io
+    if sys.stdout.encoding != 'utf-8':
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    if sys.stderr.encoding != 'utf-8':
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    # Set environment variable for Python to use UTF-8
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
+
 # Check if running as a module (using -m flag)
 is_running_as_module = __name__ == "__main__" and not sys.argv[0].endswith('stata_mcp_server.py')
 if is_running_as_module:
@@ -40,6 +51,7 @@ try:
     from fastapi import FastAPI, Request, Response
     from fastapi_mcp import FastApiMCP
     from pydantic import BaseModel, Field
+    from contextlib import asynccontextmanager
 except ImportError as e:
     print(f"ERROR: Required Python packages not found: {str(e)}")
     print("Please install the required packages:")
@@ -84,6 +96,8 @@ stata = None  # Module-level reference to stata module
 STATA_PATH = None
 # Add a flag to track if we've already displayed the Stata banner
 stata_banner_displayed = False
+# Add a flag to track if MCP server is fully initialized
+mcp_initialized = False
 # Add a storage for continuous command history
 command_history = []
 # Store the current Stata edition
@@ -170,7 +184,19 @@ def try_init_stata(stata_path):
                 # Initialize with the specified Stata edition
                 config.init(stata_edition)
                 logging.info(f"Stata initialized successfully with {stata_edition.upper()} edition")
-                
+
+                # Fix encoding for PyStata output on Windows
+                if platform.system() == 'Windows':
+                    import io
+                    # Replace PyStata's output file handle with UTF-8 encoded version
+                    config.stoutputf = io.TextIOWrapper(
+                        sys.stdout.buffer,
+                        encoding='utf-8',
+                        errors='replace',
+                        line_buffering=True
+                    )
+                    logging.debug("Configured PyStata output with UTF-8 encoding for Windows")
+
                 # Now import stata after initialization
                 from pystata import stata as stata_module
                 # Set module-level stata reference
@@ -371,8 +397,13 @@ def check_stata_installed():
     return True
 
 # Function to run a Stata command
-def run_stata_command(command: str, clear_history=False):
+def run_stata_command(command: str, clear_history=False, auto_detect_graphs=False):
     """Run a Stata command
+
+    Args:
+        command: The Stata command to run
+        clear_history: Whether to clear command history
+        auto_detect_graphs: Whether to detect and export graphs after execution (default: False for MCP/LLM calls)
 
     Note: This function manually enables _gr_list on before execution and detects graphs after.
     We do NOT use inline=True because it calls _gr_list off at the end, clearing our graph list!
@@ -457,6 +488,9 @@ def run_stata_command(command: str, clear_history=False):
                 cls_commands_found = 0
                 processed_command = ""
                 for line in command.splitlines():
+                    # Ensure line is a string (defensive programming)
+                    line = str(line) if line is not None else ""
+
                     # Check if this is a cls command
                     if re.match(r'^\s*cls\s*$', line, re.IGNORECASE):
                         processed_command += f"* COMMENTED OUT BY MCP: {line}\n"
@@ -516,15 +550,17 @@ def run_stata_command(command: str, clear_history=False):
                     sys.stdout.close()
                     sys.stdout = original_stdout
 
-                # Immediately check for graphs while they're still in memory
-                # This happens right after stata.run() completes, before any cleanup
-                try:
-                    logging.debug("Checking for graphs immediately after execution (interactive mode)...")
-                    graphs_from_interactive = display_graphs_interactive(graph_format='png', width=800, height=600)
-                    if graphs_from_interactive:
-                        logging.info(f"Captured {len(graphs_from_interactive)} graphs in interactive mode")
-                except Exception as graph_err:
-                    logging.warning(f"Could not capture graphs in interactive mode: {str(graph_err)}")
+                # Only detect and export graphs if enabled (not from LLM/MCP)
+                if auto_detect_graphs:
+                    # Immediately check for graphs while they're still in memory
+                    # This happens right after stata.run() completes, before any cleanup
+                    try:
+                        logging.debug("Checking for graphs immediately after execution (interactive mode)...")
+                        graphs_from_interactive = display_graphs_interactive(graph_format='png', width=800, height=600)
+                        if graphs_from_interactive:
+                            logging.info(f"Captured {len(graphs_from_interactive)} graphs in interactive mode")
+                    except Exception as graph_err:
+                        logging.warning(f"Could not capture graphs in interactive mode: {str(graph_err)}")
 
             except Exception as exec_error:
                 error_msg = f"Error running command: {str(exec_error)}"
@@ -851,12 +887,13 @@ def display_graphs_interactive(graph_format='png', width=800, height=600):
         logging.debug(f"Interactive display error details: {traceback.format_exc()}")
         return []
 
-def run_stata_selection(selection, working_dir=None):
+def run_stata_selection(selection, working_dir=None, auto_detect_graphs=False):
     """Run selected Stata code
 
     Args:
         selection: The Stata code to run
         working_dir: Optional working directory to change to before execution
+        auto_detect_graphs: Whether to detect and export graphs (default: False for MCP/LLM calls)
     """
     # If a working directory is provided, prepend a cd command
     if working_dir and os.path.isdir(working_dir):
@@ -870,16 +907,17 @@ def run_stata_selection(selection, working_dir=None):
         cd_command = f'cd "{working_dir}"'
         # Combine cd command with the selection
         full_command = f"{cd_command}\n{selection}"
-        return run_stata_command(full_command)
+        return run_stata_command(full_command, auto_detect_graphs=auto_detect_graphs)
     else:
-        return run_stata_command(selection)
+        return run_stata_command(selection, auto_detect_graphs=auto_detect_graphs)
 
-def run_stata_file(file_path: str, timeout=600):
+def run_stata_file(file_path: str, timeout=600, auto_name_graphs=False):
     """Run a Stata .do file with improved handling for long-running processes
-    
+
     Args:
         file_path: The path to the .do file to run
         timeout: Timeout in seconds (default: 600 seconds / 10 minutes)
+        auto_name_graphs: Whether to automatically add names to graphs (default: False for MCP/LLM calls)
     """
     # Set timeout from parameter instead of hardcoding
     MAX_TIMEOUT = timeout
@@ -1005,6 +1043,9 @@ def run_stata_file(file_path: str, timeout=600):
             # Process line by line to comment out log commands and add graph names where needed
             cls_commands_found = 0
             for line in do_file_content.splitlines():
+                # Ensure line is a string (defensive programming)
+                line = str(line) if line is not None else ""
+
                 # Check if this line has a log command
                 if re.match(r'^\s*(log\s+using|log\s+close|capture\s+log\s+close)', line, re.IGNORECASE):
                     modified_content += f"* COMMENTED OUT BY MCP: {line}\n"
@@ -1017,32 +1058,47 @@ def run_stata_file(file_path: str, timeout=600):
                     cls_commands_found += 1
                     continue
 
-                # Check if this is a graph creation command that might need a name
-                # Match: scatter, histogram, twoway, kdensity, graph bar/box/dot/etc (but not graph export)
-                graph_match = re.match(r'^(\s*)(scatter|histogram|twoway|kdensity|graph\s+(bar|box|dot|pie|matrix|hbar|hbox|combine))\s+(.*)$', line, re.IGNORECASE)
+                # Only auto-name graphs if called from VS Code extension (not from LLM/MCP)
+                if auto_name_graphs:
+                    # Check if this is a graph creation command that might need a name
+                    # Match: scatter, histogram, twoway, kdensity, graph bar/box/dot/etc (but not graph export)
+                    graph_match = re.match(r'^(\s*)(scatter|histogram|twoway|kdensity|graph\s+(bar|box|dot|pie|matrix|hbar|hbox|combine))\s+(.*)$', line, re.IGNORECASE)
 
-                if graph_match:
-                    indent = graph_match.group(1)
-                    graph_cmd = graph_match.group(2)
-                    rest = graph_match.group(4) if graph_match.lastindex >= 4 else ""
+                    if graph_match:
+                        indent = str(graph_match.group(1) or "")
+                        graph_cmd = str(graph_match.group(2) or "")
 
-                    # Check if it already has name() option
-                    if not re.search(r'\bname\s*\(', rest, re.IGNORECASE):
-                        # Add automatic unique name
-                        graph_counter += 1
-                        graph_name = f"graph{graph_counter}"
+                        # Extract and ensure rest is a string
+                        rest_raw = graph_match.group(4) if graph_match.lastindex >= 4 else ""
+                        if rest_raw is None:
+                            rest_raw = ""
+                        # Force conversion to string to handle any edge cases
+                        rest = str(rest_raw)
 
-                        # Add name option - if there's a comma, add after it; otherwise add with comma
-                        if ',' in rest:
-                            # Insert name option right after the first comma
-                            rest = re.sub(r',', f', name({graph_name}, replace)', 1)
-                        else:
-                            # No comma yet, add it
-                            rest = rest.rstrip() + f', name({graph_name}, replace)'
+                        # Double-check rest is a string before any operations
+                        if not isinstance(rest, str):
+                            logging.warning(f"rest is not a string, type: {type(rest)}, value: {rest}, converting to string")
+                            rest = str(rest)
 
-                        modified_content += f"{indent}{graph_cmd} {rest}\n"
-                        logging.debug(f"Auto-named graph: {graph_name}")
-                        continue
+                        # Check if it already has name() option
+                        if not re.search(r'\bname\s*\(', rest, re.IGNORECASE):
+                            # Add automatic unique name
+                            graph_counter += 1
+                            graph_name = f"graph{graph_counter}"
+
+                            # Add name option - if there's a comma, add after it; otherwise add with comma
+                            if ',' in rest:
+                                # Insert name option right after the first comma
+                                # Ensure rest is definitely a string before re.sub
+                                rest = str(rest)
+                                rest = re.sub(r',', f', name({graph_name}, replace)', rest, 1)
+                            else:
+                                # No comma yet, add it
+                                rest = rest.rstrip() + f', name({graph_name}, replace)'
+
+                            modified_content += f"{indent}{graph_cmd} {rest}\n"
+                            logging.debug(f"Auto-named graph: {graph_name}")
+                            continue
 
                 # Keep line as-is (including graph export commands)
                 modified_content += f"{line}\n"
@@ -1077,8 +1133,15 @@ def run_stata_file(file_path: str, timeout=600):
             logging.info(f"Created modified do file at {modified_do_file}")
                 
         except Exception as e:
+            import traceback
             error_msg = f"Error processing do file: {str(e)}"
             logging.error(error_msg)
+            logging.error(f"Traceback: {traceback.format_exc()}")
+            # Include line number and more details
+            tb = traceback.extract_tb(e.__traceback__)
+            if tb:
+                last_frame = tb[-1]
+                error_msg += f"\n  at line {last_frame.lineno} in {last_frame.name}"
             return error_msg
             
         # Prepare command entry for history
@@ -1297,12 +1360,14 @@ def run_stata_file(file_path: str, timeout=600):
                             
                             # Process the content
                             for i in range(start_index, len(lines)):
-                                line = lines[i].rstrip()
-                                
+                                # Ensure line is a string (defensive programming)
+                                line = str(lines[i]) if lines[i] is not None else ""
+                                line = line.rstrip()
+
                                 # Skip empty lines at beginning or redundant empty lines
                                 if not line.strip() and (not result_lines or not result_lines[-1].strip()):
                                     continue
-                                    
+
                                 # Clean up SMCL formatting if present
                                 if '{' in line:
                                     line = re.sub(r'\{[^}]*\}', '', line)  # Remove {...} codes
@@ -1317,29 +1382,31 @@ def run_stata_file(file_path: str, timeout=600):
                             # Replace the result with a clean summary
                             result = f">>> {command_entry}\n{completion_msg}"
 
-                            # Detect and export any graphs created by the do file
-                            # Using interactive mode which should work because inline=True keeps graphs in memory
-                            try:
-                                logging.debug("Attempting to detect graphs from do file (interactive mode)...")
-                                graphs = display_graphs_interactive(graph_format='png', width=800, height=600)
-                                logging.debug(f"Graph detection returned: {graphs}")
-                                if graphs:
-                                    graph_info = "\n\n" + "="*60 + "\n"
-                                    graph_info += f"GRAPHS DETECTED: {len(graphs)} graph(s) created\n"
-                                    graph_info += "="*60 + "\n"
-                                    for graph in graphs:
-                                        # Include command if available, using special format for JavaScript parsing
-                                        if 'command' in graph and graph['command']:
-                                            graph_info += f"  • {graph['name']}: {graph['path']} [CMD: {graph['command']}]\n"
-                                        else:
-                                            graph_info += f"  • {graph['name']}: {graph['path']}\n"
-                                    result += graph_info
-                                    logging.info(f"Detected {len(graphs)} graphs from do file: {[g['name'] for g in graphs]}")
-                                else:
-                                    logging.debug("No graphs detected from do file")
-                            except Exception as e:
-                                logging.warning(f"Error detecting graphs: {str(e)}")
-                                logging.debug(f"Graph detection error details: {traceback.format_exc()}")
+                            # Only detect and export graphs if called from VS Code extension (not from LLM/MCP)
+                            if auto_name_graphs:
+                                # Detect and export any graphs created by the do file
+                                # Using interactive mode which should work because inline=True keeps graphs in memory
+                                try:
+                                    logging.debug("Attempting to detect graphs from do file (interactive mode)...")
+                                    graphs = display_graphs_interactive(graph_format='png', width=800, height=600)
+                                    logging.debug(f"Graph detection returned: {graphs}")
+                                    if graphs:
+                                        graph_info = "\n\n" + "="*60 + "\n"
+                                        graph_info += f"GRAPHS DETECTED: {len(graphs)} graph(s) created\n"
+                                        graph_info += "="*60 + "\n"
+                                        for graph in graphs:
+                                            # Include command if available, using special format for JavaScript parsing
+                                            if 'command' in graph and graph['command']:
+                                                graph_info += f"  • {graph['name']}: {graph['path']} [CMD: {graph['command']}]\n"
+                                            else:
+                                                graph_info += f"  • {graph['name']}: {graph['path']}\n"
+                                        result += graph_info
+                                        logging.info(f"Detected {len(graphs)} graphs from do file: {[g['name'] for g in graphs]}")
+                                    else:
+                                        logging.debug("No graphs detected from do file")
+                                except Exception as e:
+                                    logging.warning(f"Error detecting graphs: {str(e)}")
+                                    logging.debug(f"Graph detection error details: {traceback.format_exc()}")
 
                             # Log the final file location
                             result += f"\n\nLog file saved to: {custom_log_file}"
@@ -1485,11 +1552,24 @@ class ToolResponse(BaseModel):
     result: Optional[str] = None
     message: Optional[str] = None
 
-# Create the FastAPI app
+# Define lifespan context manager for startup/shutdown events
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle application lifespan events"""
+    # Startup: Log startup
+    logging.info("FastAPI application starting up")
+
+    yield  # Application runs
+
+    # Shutdown: cleanup if needed
+    logging.info("FastAPI application shutting down")
+
+# Create the FastAPI app with lifespan handler
 app = FastAPI(
     title=SERVER_NAME,
     version=SERVER_VERSION,
-    description="Stata MCP Server - Exposes Stata functionality to AI models via MCP protocol"
+    description="Stata MCP Server - Exposes Stata functionality to AI models via MCP protocol",
+    lifespan=lifespan
 )
 
 # Define regular FastAPI routes for Stata functions
@@ -1565,7 +1645,8 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
                 )
             # Get optional working_dir parameter
             working_dir = request.parameters.get("working_dir", None)
-            result = run_stata_selection(request.parameters["selection"], working_dir=working_dir)
+            # Enable auto_detect_graphs for VS Code extension calls
+            result = run_stata_selection(request.parameters["selection"], working_dir=working_dir, auto_detect_graphs=True)
             # Format output for better display
             result = result.replace("\\n", "\n")
             
@@ -1600,7 +1681,8 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
                 file_path = file_path.replace('/', '\\')
             
             # Run the file through the run_stata_file function with timeout
-            result = run_stata_file(file_path, timeout=timeout)
+            # Enable auto_name_graphs for VS Code extension calls
+            result = run_stata_file(file_path, timeout=timeout, auto_name_graphs=True)
             
             # Format output for better display
             result = result.replace("\\n", "\n")
@@ -2518,7 +2600,12 @@ def main():
 
         # Mount the MCP server to the FastAPI app
         mcp.mount()
-        
+
+        # Mark MCP as initialized (will also be set in startup event)
+        global mcp_initialized
+        mcp_initialized = True
+        logging.info("MCP server mounted and initialized")
+
         try:
             # Start the server
             logging.info(f"Starting Stata MCP Server on {args.host}:{port}")
