@@ -8,19 +8,18 @@ gen category = . if 行业代码 == 1
 summarize
 gen clss = 1 
 regress y x
-twoway (scatter y x,  name(graph1,replace) mcolor(blue)) ///
+twoway (scatter y x, mcolor(blue)) ///
 (scatter x y), ///
 title("test") ///
 legend(off)
-graph export "test3a.png", name(graph1) replace 
-graph export "test3.png", replace 
+graph export "test3.pdf", replace 
 
 
 twoway (scatter y x, mcolor(blue)) ///
 (scatter x y), ///
 title("test") ///
 legend(off)
-graph export "test4.png", replace 
+graph export "test4.pdf", replace 
 
 
 

@@ -33,6 +33,21 @@ if platform.system() == 'Windows':
     # Set environment variable for Python to use UTF-8
     os.environ['PYTHONIOENCODING'] = 'utf-8'
 
+# Hide Python process from Mac Dock (server should be background process)
+if platform.system() == 'Darwin':
+    try:
+        from AppKit import NSApplication
+        # Set activation policy to accessory - hides dock icon but allows functionality
+        # This must be called early, before any GUI operations (like Stata's JVM graphics)
+        app = NSApplication.sharedApplication()
+        # NSApplicationActivationPolicyAccessory = 1 (hidden from dock, can show windows)
+        # NSApplicationActivationPolicyProhibited = 2 (completely hidden)
+        app.setActivationPolicy_(1)  # Use Accessory to allow Stata's GUI operations
+    except Exception:
+        # Silently ignore if AppKit not available or fails
+        # This is just a UI improvement, not critical for functionality
+        pass
+
 # Check if running as a module (using -m flag)
 is_running_as_module = __name__ == "__main__" and not sys.argv[0].endswith('stata_mcp_server.py')
 if is_running_as_module:
@@ -180,7 +195,14 @@ def try_init_stata(stata_path):
                     # This doesn't always work on Windows, but at least we're trying
                     logging.debug("Attempting to suppress Stata banner on re-initialization")
                     os.environ['STATA_QUIETLY'] = '1'  # Add this environment variable
-                
+
+                # Set Java headless mode to prevent Dock icon on Mac (must be before config.init)
+                # When Stata's embedded JVM initializes for graphics, it normally creates a Dock icon
+                # Setting headless=true prevents this GUI behavior
+                if platform.system() == 'Darwin':
+                    os.environ['JAVA_TOOL_OPTIONS'] = '-Djava.awt.headless=true'
+                    logging.debug("Set Java headless mode to prevent Dock icon")
+
                 # Initialize with the specified Stata edition
                 config.init(stata_edition)
                 logging.info(f"Stata initialized successfully with {stata_edition.upper()} edition")
@@ -205,7 +227,43 @@ def try_init_stata(stata_path):
                 # Successfully initialized Stata
                 has_stata = True
                 stata_available = True
-                
+
+                # Initialize PNG export capability to prevent JVM crash in daemon threads (Mac-specific)
+                #
+                # Root cause: On Mac, Stata's graphics use embedded JVM. When PNG export is first
+                # called from a daemon thread, the JVM initialization fails with SIGBUS error in
+                # CodeHeap::allocate(). This is Mac-specific due to different JVM/threading model
+                # in libstata-mp.dylib compared to Windows stata-mp-64.dll.
+                #
+                # Solution: Initialize JVM in main thread by doing one PNG export at startup.
+                # All subsequent daemon thread PNG exports will reuse the initialized JVM.
+                #
+                # See: tests/MAC_SPECIFIC_ANALYSIS.md for detailed technical analysis
+                try:
+                    from pystata.config import stlib, get_encode_str
+                    import tempfile
+
+                    # Create minimal dataset and graph (2 obs, 1 var)
+                    stlib.StataSO_Execute(get_encode_str("qui clear"), False)
+                    stlib.StataSO_Execute(get_encode_str("qui set obs 2"), False)
+                    stlib.StataSO_Execute(get_encode_str("qui gen x=1"), False)
+                    stlib.StataSO_Execute(get_encode_str("qui twoway scatter x x, name(_init, replace)"), False)
+
+                    # Export tiny PNG (10x10px) to initialize JVM in main thread
+                    # This prevents SIGBUS crash when daemon threads later export PNG
+                    png_init = os.path.join(tempfile.gettempdir(), "_stata_png_init.png")
+                    stlib.StataSO_Execute(get_encode_str(f'qui graph export "{png_init}", name(_init) replace width(10) height(10)'), False)
+                    stlib.StataSO_Execute(get_encode_str("qui graph drop _init"), False)
+
+                    # Cleanup temporary files
+                    if os.path.exists(png_init):
+                        os.unlink(png_init)
+
+                    logging.debug("PNG export initialized successfully (Mac JVM fix)")
+                except Exception as png_init_error:
+                    # Non-fatal: log but continue - PNG may still work on some platforms
+                    logging.warning(f"PNG initialization failed (non-fatal): {str(png_init_error)}")
+
                 return True
             except Exception as init_error:
                 error_msg = f"Failed to initialize Stata: {str(init_error)}"
