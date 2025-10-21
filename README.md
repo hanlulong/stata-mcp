@@ -8,7 +8,10 @@
 [![GitHub license](https://img.shields.io/github/license/hanlulong/stata-mcp)](https://github.com/hanlulong/stata-mcp/blob/main/LICENSE) 
 
 
-This extension provides Stata integration for Visual Studio Code and Cursor IDE using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/docs/getting-started/intro). The extension allows you to:
+This extension provides Stata integration for Visual Studio Code and Cursor IDE using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/docs/getting-started/intro).
+[DeepEcon.ai](https://deepecon.ai/)
+
+The extension allows you to:
 
 - Run Stata commands directly from VS Code or Cursor
 - Execute selections or entire .do files
@@ -68,11 +71,11 @@ Or:
 
 #### Option 2: From .vsix file
 
-1. Download the extension package `stata-mcp-0.3.0.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
+1. Download the extension package `stata-mcp-0.3.1.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
 2. Install using one of these methods:
 
 ```bash
-code --install-extension path/to/stata-mcp-0.3.0.vsix
+code --install-extension path/to/stata-mcp-0.3.1.vsix
 ```
 
 Or:
@@ -84,11 +87,11 @@ Or:
 
 ### Cursor Installation
 
-1. Download the extension package `stata-mcp-0.3.0.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
+1. Download the extension package `stata-mcp-0.3.1.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
 2. Install using one of these methods:
 
 ```bash
-cursor --install-extension path/to/stata-mcp-0.3.0.vsix
+cursor --install-extension path/to/stata-mcp-0.3.1.vsix
 ```
 
 Or:
