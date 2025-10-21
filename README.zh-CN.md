@@ -9,7 +9,6 @@
 
 
 此扩展通过[模型上下文协议（MCP）](https://modelcontextprotocol.io/docs/getting-started/intro)为 Visual Studio Code 和 Cursor IDE 提供 Stata 集成。
-[DeepEcon.ai](https://deepecon.ai/)
 
 该扩展允许您：
 
@@ -70,11 +69,11 @@ code --install-extension DeepEcon.stata-mcp
 
 #### 选项 2：从 .vsix 文件安装
 
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.3.1.vsix`。
+1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.3.3.vsix`。
 2. 使用以下方法之一安装：
 
 ```bash
-code --install-extension path/to/stata-mcp-0.3.1.vsix
+code --install-extension path/to/stata-mcp-0.3.3.vsix
 ```
 
 或：
@@ -86,11 +85,11 @@ code --install-extension path/to/stata-mcp-0.3.1.vsix
 
 ### Cursor 安装
 
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.3.1.vsix`。
+1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.3.3.vsix`。
 2. 使用以下方法之一安装：
 
 ```bash
-cursor --install-extension path/to/stata-mcp-0.3.1.vsix
+cursor --install-extension path/to/stata-mcp-0.3.3.vsix
 ```
 
 或：
