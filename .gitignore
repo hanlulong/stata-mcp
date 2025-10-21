@@ -22,6 +22,7 @@ archive/
 # Local development files (keep local, exclude from GitHub)
 .cursorindexingignore
 package-lock.json
+RELEASE_WORKFLOW.md
 
 # Build outputs
 dist/
