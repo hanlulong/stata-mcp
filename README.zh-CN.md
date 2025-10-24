@@ -34,7 +34,7 @@
 
 ![Stata MCP 扩展演示](images/demo_2x.gif)
 
-**[🎬 完整视频版本](https://github.com/hanlulong/stata-mcp/raw/main/images/demo.mp4)** &nbsp;&nbsp;|&nbsp;&nbsp; **[📄 查看生成的 PDF 报告](examples/auto_report.pdf)**
+**[🎬 完整视频版本](https://github.com/hanlulong/stata-mcp/raw/main/images/demo.mp4)** &nbsp;&nbsp;|&nbsp;&nbsp; **[📄 查看生成的 PDF 报告](docs/examples/auto_report.pdf)**
 
 <sub>*演示提示："编写并执行 Stata do 文件，确保在所有情况下都使用完整的绝对文件路径。加载 auto 数据集（webuse auto）并为每个变量生成汇总统计信息。识别并提取数据集中的关键特征，制作相关图表并保存在名为 plots 的文件夹中。进行回归分析以检查汽车价格的主要决定因素。将所有输出导出到 LaTeX 文件并编译。自动解决任何编译错误，并确保 LaTeX 编译时间不超过 10 秒。作为工作流程的一部分，应识别并解决所有代码错误。"*</sub>
 
@@ -69,11 +69,11 @@ code --install-extension DeepEcon.stata-mcp
 
 #### 选项 2：从 .vsix 文件安装
 
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.3.3.vsix`。
+1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.3.4.vsix`。
 2. 使用以下方法之一安装：
 
 ```bash
-code --install-extension path/to/stata-mcp-0.3.3.vsix
+code --install-extension path/to/stata-mcp-0.3.4.vsix
 ```
 
 或：
@@ -85,11 +85,11 @@ code --install-extension path/to/stata-mcp-0.3.3.vsix
 
 ### Cursor 安装
 
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.3.3.vsix`。
+1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.3.4.vsix`。
 2. 使用以下方法之一安装：
 
 ```bash
-cursor --install-extension path/to/stata-mcp-0.3.3.vsix
+cursor --install-extension path/to/stata-mcp-0.3.4.vsix
 ```
 
 或：

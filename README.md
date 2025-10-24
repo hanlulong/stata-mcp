@@ -34,7 +34,7 @@ Watch how this extension enhances your Stata workflow with Cursor (or VS Code) a
 
 ![Stata MCP Extension Demo](images/demo_2x.gif)
 
-**[🎬 Full Video Version](https://github.com/hanlulong/stata-mcp/raw/main/images/demo.mp4)** &nbsp;&nbsp;|&nbsp;&nbsp; **[📄 View Generated PDF Report](examples/auto_report.pdf)**
+**[🎬 Full Video Version](https://github.com/hanlulong/stata-mcp/raw/main/images/demo.mp4)** &nbsp;&nbsp;|&nbsp;&nbsp; **[📄 View Generated PDF Report](docs/examples/auto_report.pdf)**
 
 <sub>*Demo prompt: "Write and execute Stata do-files, ensuring that full absolute file paths are used in all cases. Load the auto dataset (webuse auto) and generate summary statistics for each variable. Identify and extract key features from the dataset, produce relevant plots, and save them in a folder named plots. Conduct a regression analysis to examine the main determinants of car prices. Export all outputs to a LaTeX file and compile it. Address any compilation errors automatically, and ensure that LaTeX compilation does not exceed 10 seconds. All code errors should be identified and resolved as part of the workflow."*</sub>
 
@@ -70,11 +70,11 @@ Or:
 
 #### Option 2: From .vsix file
 
-1. Download the extension package `stata-mcp-0.3.3.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
+1. Download the extension package `stata-mcp-0.3.4.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
 2. Install using one of these methods:
 
 ```bash
-code --install-extension path/to/stata-mcp-0.3.3.vsix
+code --install-extension path/to/stata-mcp-0.3.4.vsix
 ```
 
 Or:
@@ -86,11 +86,11 @@ Or:
 
 ### Cursor Installation
 
-1. Download the extension package `stata-mcp-0.3.3.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
+1. Download the extension package `stata-mcp-0.3.4.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
 2. Install using one of these methods:
 
 ```bash
-cursor --install-extension path/to/stata-mcp-0.3.3.vsix
+cursor --install-extension path/to/stata-mcp-0.3.4.vsix
 ```
 
 Or:
@@ -515,6 +515,13 @@ This extension uses [uv](https://github.com/astral-sh/uv), a fast Python package
 2. Follow the [Troubleshooting](#common-installation-issues) steps to reinstall the extension
 
 Starting with version 0.1.8, this extension integrates the fast Python package installer [uv](https://github.com/astral-sh/uv) to set up the environment. If uv is not found on your system, the extension will attempt to install it automatically.
+
+## Repository Reference
+
+Looking for internal architecture notes?
+- See `docs/REPO_STRUCTURE.md` for a quick map of directories and build artefacts.
+- See `docs/incidents/README.md` for an index of historical debugging write-ups (streaming, notifications, timeouts, etc.).
+- See `tests/README.md` for the current set of diagnostics and accompanying Stata fixtures.
 
 ## Troubleshooting
 
