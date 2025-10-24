@@ -3,7 +3,6 @@
 *.vsix binary
 
 # Exclude specific folders from language statistics
-examples/* linguist-vendored
 .github/* linguist-vendored
 
 # Exclude documentation from language statistics

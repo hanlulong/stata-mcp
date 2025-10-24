@@ -15,11 +15,11 @@ This guide explains how to run and use the Stata Model Context Protocol (MCP) se
 
 ### Option 1: Using the Included Script
 
-The extension provides a script to start the server manually:
+The extension provides a Node script to start the server manually:
 
 ```bash
 cd /path/to/extension
-node ./scripts/start-server.js
+node ./src/start-server.js
 ```
 
 This will start the MCP server on the default port (4000).

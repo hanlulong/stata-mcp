@@ -14,10 +14,10 @@ import argparse
 import logging
 import platform
 import signal
-import importlib.util
 import subprocess
 import traceback
 import socket
+import asyncio
 from typing import Dict, Any, Optional
 import warnings
 import re
@@ -63,10 +63,12 @@ if platform.system() == 'Windows':
         # Log this but don't exit immediately so logs can be written
 
 try:
-    from fastapi import FastAPI, Request, Response
+    from fastapi import FastAPI, Request, Response, Query
+    from fastapi.responses import StreamingResponse
     from fastapi_mcp import FastApiMCP
     from pydantic import BaseModel, Field
     from contextlib import asynccontextmanager
+    import httpx
 except ImportError as e:
     print(f"ERROR: Required Python packages not found: {str(e)}")
     print("Please install the required packages:")
@@ -131,12 +133,6 @@ except ImportError:
     has_pandas = False
     logging.warning("pandas not available, data transfer functionality will be limited")
     warnings.warn("pandas not available, data transfer functionality will be limited")
-
-# Function to update Stata availability
-def set_stata_available(value):
-    """Update the module-level stata_available variable"""
-    global stata_available
-    stata_available = value
 
 # Try to initialize Stata with the given path
 def try_init_stata(stata_path):
@@ -372,6 +368,74 @@ def get_log_file_path(do_file_path, do_file_base):
         do_file_dir = os.path.dirname(do_file_path)
         log_path = os.path.join(do_file_dir, f"{do_file_base}_mcp.log")
         return os.path.abspath(log_path)
+
+def resolve_do_file_path(file_path: str) -> tuple[Optional[str], list[str]]:
+    """Resolve a .do file path to an absolute location, mirroring run_stata_file logic.
+
+    Returns:
+        A tuple of (resolved_path, tried_paths). resolved_path is None if the file
+        could not be located. tried_paths contains the normalized paths that were examined.
+    """
+    original_path = file_path
+    normalized_path = os.path.normpath(file_path)
+
+    # Normalize Windows paths to use backslashes for consistency
+    if platform.system() == "Windows" and '/' in normalized_path:
+        normalized_path = normalized_path.replace('/', '\\')
+        logging.info(f"Converted path for Windows: {normalized_path}")
+
+    candidates: list[str] = []
+    tried_paths: list[str] = []
+
+    if not os.path.isabs(normalized_path):
+        cwd = os.getcwd()
+        logging.info(f"File path is not absolute. Current working directory: {cwd}")
+
+        candidates.extend([
+            normalized_path,
+            os.path.join(cwd, normalized_path),
+            os.path.join(cwd, os.path.basename(normalized_path)),
+        ])
+
+        if platform.system() == "Windows":
+            if '/' in original_path:
+                win_path = original_path.replace('/', '\\')
+                candidates.append(win_path)
+                candidates.append(os.path.join(cwd, win_path))
+            elif '\\' in original_path:
+                unix_path = original_path.replace('\\', '/')
+                candidates.append(unix_path)
+                candidates.append(os.path.join(cwd, unix_path))
+
+        # Search subdirectories up to two levels deep for the file
+        for root, dirs, files in os.walk(cwd, topdown=True, followlinks=False):
+            if os.path.basename(normalized_path) in files and root != cwd:
+                subdir_path = os.path.join(root, os.path.basename(normalized_path))
+                candidates.append(subdir_path)
+
+            # Limit depth to two levels
+            if root.replace(cwd, '').count(os.sep) >= 2:
+                dirs[:] = []
+    else:
+        candidates.append(normalized_path)
+
+    # Deduplicate while preserving order
+    seen = set()
+    unique_candidates = []
+    for candidate in candidates:
+        normalized_candidate = os.path.normpath(candidate)
+        if normalized_candidate not in seen:
+            seen.add(normalized_candidate)
+            unique_candidates.append(normalized_candidate)
+
+    for candidate in unique_candidates:
+        tried_paths.append(candidate)
+        if os.path.isfile(candidate) and candidate.lower().endswith('.do'):
+            resolved = os.path.abspath(candidate)
+            logging.info(f"Found file at: {resolved}")
+            return resolved, tried_paths
+
+    return None, tried_paths
 
 def get_stata_path():
     """Get the Stata executable path based on the platform and configured path"""
@@ -982,74 +1046,23 @@ def run_stata_file(file_path: str, timeout=600, auto_name_graphs=False):
     
     try:
         original_path = file_path
-        
-        # Normalize path separators for the current OS
-        file_path = os.path.normpath(file_path)
-        
-        # On Windows, convert forward slashes to backslashes if needed
-        if platform.system() == "Windows" and '/' in file_path:
-            file_path = file_path.replace('/', '\\')
-            logging.info(f"Converted path for Windows: {file_path}")
-        
-        # Path resolution logic for relative paths
-        if not os.path.isabs(file_path):
-            # Get the current working directory
-            cwd = os.getcwd()
-            logging.info(f"File path is not absolute. Current working directory: {cwd}")
+
+        resolved_path, tried_paths = resolve_do_file_path(file_path)
+        if not resolved_path:
+            tried_display = ', '.join(tried_paths) if tried_paths else os.path.normpath(file_path)
+            error_msg = f"Error: File not found: {original_path}. Tried these paths: {tried_display}"
+            logging.error(error_msg)
             
-            # Try paths in this order - add more specific path resolution for Windows
-            possible_paths = [
-                file_path,  # As provided
-                os.path.join(cwd, file_path),  # Relative to CWD
-                os.path.join(cwd, os.path.basename(file_path)),  # Just filename in CWD
-            ]
-            
-            # Add Windows-specific path checks
+            # Add more helpful error message for Windows
             if platform.system() == "Windows":
-                # Try both forward and backward slashes on Windows
-                if '/' in file_path:
-                    win_path = file_path.replace('/', '\\')
-                    possible_paths.append(win_path)
-                    possible_paths.append(os.path.join(cwd, win_path))
-                elif '\\' in file_path:
-                    unix_path = file_path.replace('\\', '/')
-                    possible_paths.append(unix_path)
-                    possible_paths.append(os.path.join(cwd, unix_path))
+                error_msg += "\n\nCommon Windows path issues:\n"
+                error_msg += "1. Make sure the file path uses correct separators (use \\ instead of /)\n"
+                error_msg += "2. Check if the file exists in the specified location\n"
+                error_msg += "3. If using relative paths, the current working directory is: " + os.getcwd()
             
-            # Check for file in subdirectories (up to 2 levels)
-            for root, dirs, files in os.walk(cwd, topdown=True, followlinks=False):
-                if os.path.basename(file_path) in files and root != cwd:
-                    subdir_path = os.path.join(root, os.path.basename(file_path))
-                    if subdir_path not in possible_paths:
-                        possible_paths.append(subdir_path)
-                
-                # Limit depth to 2 levels
-                if root.replace(cwd, '').count(os.sep) >= 2:
-                    dirs[:] = []  # Don't go deeper
-            
-            # Try to find the file in one of the possible paths
-            found = False
-            for test_path in possible_paths:
-                # Normalize path for comparison
-                test_path = os.path.normpath(test_path)
-                if os.path.exists(test_path) and test_path.lower().endswith('.do'):
-                    file_path = test_path
-                    found = True
-                    logging.info(f"Found file at: {file_path}")
-                    break
-            
-            if not found:
-                error_msg = f"Error: File not found: {original_path}. Tried these paths: {', '.join(possible_paths)}"
-                logging.error(error_msg)
-                
-                # Add more helpful error message for Windows
-                if platform.system() == "Windows":
-                    error_msg += "\n\nCommon Windows path issues:\n"
-                    error_msg += "1. Make sure the file path uses correct separators (use \\ instead of /)\n"
-                    error_msg += "2. Check if the file exists in the specified location\n"
-                    error_msg += "3. If using relative paths, the current working directory is: " + os.getcwd()
-                
-                return error_msg
+            return error_msg
+        
+        file_path = resolved_path
         
         # Verify file exists (final check)
         if not os.path.exists(file_path):
@@ -1062,7 +1075,7 @@ def run_stata_file(file_path: str, timeout=600, auto_name_graphs=False):
                 error_msg += "1. Make sure the file path uses correct separators (use \\ instead of /)\n"
                 error_msg += "2. Check if the file exists in the specified location\n"
                 error_msg += "3. If using relative paths, the current working directory is: " + os.getcwd()
-                
+            
             return error_msg
             
         # Check file extension
@@ -1175,6 +1188,11 @@ def run_stata_file(file_path: str, timeout=600, auto_name_graphs=False):
             ) as temp_do:
                 # First close any existing log files
                 temp_do.write(f"capture log close _all\n")
+                # Clean up Stata session state to prevent pollution from interrupted executions
+                # Drop all temporary programs (especially loop programs like 1while, 2while, etc.)
+                temp_do.write(f"capture program drop _all\n")
+                # Clear all macros to prevent conflicts
+                temp_do.write(f"capture macro drop _all\n")
                 # Change working directory to the .do file's directory
                 # This ensures the .do file executes in its workspace (relative paths work correctly)
                 # The log file uses an absolute path, so it's saved to the configured location
@@ -1241,7 +1259,7 @@ def run_stata_file(file_path: str, timeout=600, auto_name_graphs=False):
                 # Record start time for timeout tracking
                 start_time = time.time()
                 last_update_time = start_time
-                update_interval = 10  # Update every 10 seconds initially
+                update_interval = 60  # Update every 60 seconds (1 minute) initially
                 
                 # Initialize log tracking
                 log_file_exists = False
@@ -1343,48 +1361,54 @@ def run_stata_file(file_path: str, timeout=600, auto_name_graphs=False):
                     
                     # Check if it's time for an update
                     if current_time - last_update_time >= update_interval:
+                        # IMPORTANT: Log progress frequently to keep SSE connection alive for long-running scripts
+                        logging.info(f"⏱️  Execution in progress: {elapsed_time:.0f}s elapsed ({elapsed_time/60:.1f} minutes) of {MAX_TIMEOUT}s timeout")
+
                         # Check if log file exists and has been updated
                         if os.path.exists(custom_log_file):
                             log_file_exists = True
-                            
+
                             # Check log file size
                             current_log_size = os.path.getsize(custom_log_file)
-                            
+
                             # If log has grown, report progress
                             if current_log_size > last_log_size:
                                 try:
                                     with open(custom_log_file, 'r', encoding='utf-8', errors='replace') as log:
                                         log_content = log.read()
                                         lines = log_content.splitlines()
-                                        
+
                                         # Report only new lines since last update
                                         if last_reported_lines < len(lines):
                                             new_lines = lines[last_reported_lines:]
-                                            
+
                                             # Only report meaningful lines (skip empty lines and headers)
                                             meaningful_lines = [line for line in new_lines if line.strip() and not line.startswith('-')]
-                                            
+
                                             # If we have meaningful content, add it to result
                                             if meaningful_lines:
                                                 progress_update = f"\n*** Progress update ({elapsed_time:.0f} seconds) ***\n"
                                                 progress_update += "\n".join(meaningful_lines[-10:])  # Show last 10 lines
                                                 result += progress_update
-                                            
+                                                # Also log the progress for SSE keep-alive
+                                                logging.info(f"📊 Progress: Log file grew to {current_log_size} bytes, {len(meaningful_lines)} new meaningful lines")
+
                                             last_reported_lines = len(lines)
                                 except Exception as e:
                                     logging.warning(f"Error reading log for progress update: {str(e)}")
-                            
+
                             last_log_size = current_log_size
-                        
+
                         last_update_time = current_time
                         
-                        # Adaptive polling - increase interval as the process runs longer
+                        # Adaptive polling - keep interval at 60 seconds to maintain SSE connection
+                        # This ensures we send at least one log message every 60 seconds (1 minute) to keep the connection alive
                         if elapsed_time > 600:  # After 10 minutes
-                            update_interval = 60  # Check every minute
+                            update_interval = 60  # Check every 60 seconds (1 minute)
                         elif elapsed_time > 300:  # After 5 minutes
-                            update_interval = 30  # Check every 30 seconds
+                            update_interval = 60  # Check every 60 seconds (1 minute)
                         elif elapsed_time > 60:  # After 1 minute
-                            update_interval = 20  # Check every 20 seconds
+                            update_interval = 60  # Check every 60 seconds (1 minute)
                     
                     # Sleep briefly to avoid consuming too much CPU
                     time.sleep(0.5)
@@ -1617,9 +1641,19 @@ async def lifespan(app: FastAPI):
     # Startup: Log startup
     logging.info("FastAPI application starting up")
 
+    # Start HTTP session manager if it exists
+    if hasattr(app.state, '_http_session_manager_starter'):
+        logging.debug("Calling HTTP session manager startup handler")
+        await app.state._http_session_manager_starter()
+
     yield  # Application runs
 
-    # Shutdown: cleanup if needed
+    # Shutdown: Stop HTTP session manager if it exists
+    if hasattr(app.state, '_http_session_manager_stopper'):
+        logging.debug("Calling HTTP session manager shutdown handler")
+        await app.state._http_session_manager_stopper()
+
+    # Cleanup if needed
     logging.info("FastAPI application shutting down")
 
 # Create the FastAPI app with lifespan handler
@@ -1640,13 +1674,96 @@ async def stata_run_selection_endpoint(selection: str) -> Response:
     formatted_result = result.replace("\\n", "\n")
     return Response(content=formatted_result, media_type="text/plain")
 
-@app.post("/run_file", operation_id="stata_run_file", response_class=Response)
-async def stata_run_file_endpoint(file_path: str, timeout: int = 600) -> Response:
-    """Run a Stata .do file and return the output
-    
+async def stata_run_file_stream(file_path: str, timeout: int = 600):
+    """Async generator that runs Stata file and yields SSE progress events
+
+    Args:
+        file_path: Path to the .do file
+        timeout: Timeout in seconds
+
+    Yields:
+        SSE formatted events with progress updates
+    """
+    import threading
+    import queue
+
+    # Queue to communicate between threads
+    progress_queue = queue.Queue()
+    result_queue = queue.Queue()
+
+    def run_with_progress():
+        """Run Stata file in thread, sending progress to queue"""
+        try:
+            # Run the file and collect result
+            result = run_stata_file(file_path, timeout=timeout)
+            result_queue.put(('success', result))
+        except Exception as e:
+            result_queue.put(('error', str(e)))
+
+    # Start execution thread
+    thread = threading.Thread(target=run_with_progress, daemon=True)
+    thread.start()
+
+    # Yield initial event
+    yield f"data: Starting execution of {os.path.basename(file_path)}...\n\n"
+
+    start_time = time.time()
+    last_check = start_time
+    check_interval = 2.0  # Check every 2 seconds for responsive streaming
+
+    # Monitor progress
+    while thread.is_alive():
+        current_time = time.time()
+        elapsed = current_time - start_time
+
+        # Check if it's time for an update
+        if current_time - last_check >= check_interval:
+            # Yield progress event
+            yield f"data: Executing... {elapsed:.1f}s elapsed\n\n"
+            last_check = current_time
+
+        # Sleep briefly to avoid busy waiting
+        await asyncio.sleep(0.1)
+
+        # Check if execution exceeded timeout
+        if elapsed > timeout:
+            yield f"data: ERROR: Execution timed out after {timeout}s\n\n"
+            break
+
+    # Get final result
+    try:
+        status, result = result_queue.get(timeout=1.0)
+        if status == 'error':
+            yield f"data: ERROR: {result}\n\n"
+        else:
+            # Format and send final output
+            formatted_result = result.replace("\\n", "\n")
+            # Split into chunks to avoid overwhelming SSE
+            lines = formatted_result.split('\n')
+            for i in range(0, len(lines), 10):
+                chunk = '\n'.join(lines[i:i+10])
+                # Escape newlines in SSE data field
+                escaped_chunk = chunk.replace('\n', '\\n')
+                yield f"data: {escaped_chunk}\n\n"
+                await asyncio.sleep(0.05)  # Small delay between chunks
+
+            yield "data: *** Execution completed ***\n\n"
+    except queue.Empty:
+        yield "data: ERROR: Failed to get execution result\n\n"
+
+@app.get("/run_file", operation_id="stata_run_file", response_class=Response)
+async def stata_run_file_endpoint(
+    file_path: str,
+    timeout: int = 600
+) -> Response:
+    """Run a Stata .do file and return the output (MCP-compatible endpoint)
+
     Args:
         file_path: Path to the .do file
         timeout: Timeout in seconds (default: 600 seconds / 10 minutes)
+
+    Returns:
+        Response with plain text output
     """
     # Ensure timeout is a valid integer
     try:
@@ -1657,17 +1774,56 @@ async def stata_run_file_endpoint(file_path: str, timeout: int = 600) -> Respons
     except (ValueError, TypeError):
         logging.warning(f"Non-integer timeout value: {timeout}, using default 600")
         timeout = 600
-    
+
     logging.info(f"Running file: {file_path} with timeout {timeout} seconds ({timeout/60:.1f} minutes)")
-    result = run_stata_file(file_path, timeout=timeout)
-    
+    result = await asyncio.to_thread(run_stata_file, file_path, timeout=timeout)
+
     # Format output for better display - replace escaped newlines with actual newlines
     formatted_result = result.replace("\\n", "\n")
-    
+
     # Log the output (truncated) for debugging
     logging.debug(f"Run file output (first 100 chars): {formatted_result[:100]}...")
-    
+
     return Response(content=formatted_result, media_type="text/plain")
+
+@app.get("/run_file/stream")
+async def stata_run_file_stream_endpoint(
+    file_path: str,
+    timeout: int = 600
+):
+    """Run a Stata .do file and stream the output via Server-Sent Events (SSE)
+
+    This is a separate endpoint for HTTP clients that want real-time streaming updates.
+    For MCP clients, use the regular /run_file endpoint.
+
+    Args:
+        file_path: Path to the .do file
+        timeout: Timeout in seconds (default: 600 seconds / 10 minutes)
+
+    Returns:
+        StreamingResponse with text/event-stream content type
+    """
+    # Ensure timeout is a valid integer
+    try:
+        timeout = int(timeout)
+        if timeout <= 0:
+            logging.warning(f"Invalid timeout value: {timeout}, using default 600")
+            timeout = 600
+    except (ValueError, TypeError):
+        logging.warning(f"Non-integer timeout value: {timeout}, using default 600")
+        timeout = 600
+
+    logging.info(f"[STREAM] Running file: {file_path} with timeout {timeout} seconds ({timeout/60:.1f} minutes)")
+
+    return StreamingResponse(
+        stata_run_file_stream(file_path, timeout),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        }
+    )
 
 # MCP server will be initialized in main() after args are parsed
 
@@ -2402,6 +2558,7 @@ async def interactive_window(file: str = None, code: str = None):
 
     return Response(content=html_content, media_type="text/html")
 
+
 def main():
     """Main function to set up and run the server"""
     try:
@@ -2642,22 +2799,439 @@ def main():
         # Create and mount the MCP server
         # Only expose run_selection and run_file to LLMs
         # Other endpoints are still accessible via direct HTTP calls from VS Code extension
+        # Configure HTTP client with ASGI transport and extended timeout for long-running Stata operations
+        http_client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://apiserver",
+            timeout=1200.0  # 20 minutes timeout for long Stata operations
+        )
+
         mcp = FastApiMCP(
             app,
             name=SERVER_NAME,
             description="This server provides tools for running Stata commands and scripts. Use stata_run_selection for running code snippets and stata_run_file for executing .do files.",
+            http_client=http_client,
             exclude_operations=[
                 "call_tool_v1_tools_post",  # Legacy VS Code extension endpoint
                 "health_check_health_get",  # Health check endpoint
                 "view_data_endpoint_view_data_get",  # Data viewer endpoint (VS Code only)
                 "get_graph_graphs_graph_name_get",  # Graph serving endpoint (VS Code only)
                 "clear_history_endpoint_clear_history_post",  # History clearing (VS Code only)
-                "interactive_window_interactive_get"  # Interactive window (VS Code only)
+                "interactive_window_interactive_get",  # Interactive window (VS Code only)
+                "stata_run_file_stream_endpoint_run_file_stream_get"  # SSE streaming endpoint (HTTP clients only)
             ]
         )
 
-        # Mount the MCP server to the FastAPI app
-        mcp.mount()
+        # Mount SSE transport at /mcp for backward compatibility
+        mcp.mount(mount_path="/mcp", transport="sse")
+
+        # ========================================================================
+        # HTTP (Streamable) Transport - Separate Server Instance
+        # ========================================================================
+        # Create a SEPARATE MCP server instance for HTTP to avoid session conflicts
+        # This ensures notifications go to the correct transport
+        from mcp.server import Server as MCPServer
+        from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+        from starlette.responses import StreamingResponse as StarletteStreamingResponse
+
+        logging.info("Creating separate MCP server instance for HTTP transport...")
+        http_mcp_server = MCPServer(SERVER_NAME)
+
+        # Register list_tools handler to expose the same tools
+        @http_mcp_server.list_tools()
+        async def list_tools_http():
+            """List available tools - delegate to main server"""
+            # Get tools from the main fastapi_mcp server
+            import mcp.types as types
+
+            tools_list = []
+            # stata_run_selection tool
+            tools_list.append(types.Tool(
+                name="stata_run_selection",
+                description="Stata Run Selection Endpoint\n\nRun selected Stata code and return the output\n\n### Responses:\n\n**200**: Successful Response (Success Response)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "selection": {"type": "string", "title": "selection"}
+                    },
+                    "title": "stata_run_selectionArguments",
+                    "required": ["selection"]
+                }
+            ))
+            # stata_run_file tool
+            tools_list.append(types.Tool(
+                name="stata_run_file",
+                description="Stata Run File Endpoint\n\nRun a Stata .do file and return the output (MCP-compatible endpoint)\n\nArgs:\n    file_path: Path to the .do file\n    timeout: Timeout in seconds (default: 600 seconds / 10 minutes)\n\nReturns:\n    Response with plain text output\n\n### Responses:\n\n**200**: Successful Response (Success Response)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "file_path": {"type": "string", "title": "file_path"},
+                        "timeout": {"type": "integer", "default": 600, "title": "timeout"}
+                    },
+                    "title": "stata_run_fileArguments",
+                    "required": ["file_path"]
+                }
+            ))
+            return tools_list
+
+        # Register call_tool handler to execute tools with HTTP server's context
+        @http_mcp_server.call_tool()
+        async def call_tool_http(name: str, arguments: dict) -> list:
+            """Execute tools using HTTP server's own context for proper notification routing"""
+            import mcp.types as types
+
+            logging.debug(f"HTTP server executing tool: {name}")
+
+            # Call the fastapi_mcp's execute method, which has the streaming wrapper
+            # The streaming wrapper will check http_mcp_server.request_context (which is set by StreamableHTTPSessionManager)
+            result = await mcp._execute_api_tool(
+                client=http_client,
+                tool_name=name,
+                arguments=arguments,
+                operation_map=mcp.operation_map,  # Correct attribute name
+                http_request_info=None
+            )
+
+            return result
+
+        logging.debug("Registered tool handlers with HTTP server")
+
+        # Create HTTP session manager with dedicated server
+        http_session_manager = StreamableHTTPSessionManager(
+            app=http_mcp_server,  # Use dedicated HTTP server, not shared
+            event_store=None,
+            json_response=False,  # Use SSE format for responses
+            stateless=False,  # Maintain session state
+        )
+        logging.info("HTTP transport configured with dedicated MCP server")
+
+        # Create a custom Response class that properly handles ASGI streaming
+        class ASGIPassthroughResponse(StarletteStreamingResponse):
+            """Response that passes through ASGI calls without buffering"""
+            def __init__(self, asgi_handler, scope, receive):
+                # Initialize the parent class with a dummy streaming function
+                # We need this to set up all required attributes like background, headers, etc.
+                super().__init__(content=iter([]), media_type="text/event-stream")
+
+                # Store our ASGI handler
+                self.asgi_handler = asgi_handler
+                self.scope_data = scope
+                self.receive_func = receive
+
+            async def __call__(self, scope, receive, send):
+                """Handle ASGI request/response cycle"""
+                # Call the ASGI handler directly with the provided send callback
+                # This allows SSE events to be sent immediately without buffering
+                await self.asgi_handler(self.scope_data, self.receive_func, send)
+
+        @app.api_route(
+            "/mcp-streamable",
+            methods=["GET", "POST", "DELETE"],
+            include_in_schema=False,
+            operation_id="mcp_http_streamable"
+        )
+        async def handle_mcp_streamable(request: Request):
+            """Handle MCP Streamable HTTP requests with proper ASGI passthrough"""
+            # Return a response that directly passes through to the ASGI handler
+            # This avoids any buffering by FastAPI/Starlette
+            return ASGIPassthroughResponse(
+                asgi_handler=http_session_manager.handle_request,
+                scope=request.scope,
+                receive=request.receive
+            )
+
+        # Store the session manager for startup/shutdown
+        app.state.http_session_manager = http_session_manager
+        app.state.http_session_manager_cm = None
+
+        # Define startup handler for the HTTP session manager
+        async def _start_http_session_manager():
+            """Start the HTTP session manager task group"""
+            try:
+                logging.info("Starting StreamableHTTP session manager...")
+                # Enter the context manager
+                app.state.http_session_manager_cm = http_session_manager.run()
+                await app.state.http_session_manager_cm.__aenter__()
+                logging.info("✓ StreamableHTTP session manager started successfully")
+            except Exception as e:
+                logging.error(f"Failed to start StreamableHTTP session manager: {e}", exc_info=True)
+                raise
+
+        # Define shutdown handler for the HTTP session manager
+        async def _stop_http_session_manager():
+            """Stop the HTTP session manager"""
+            if app.state.http_session_manager_cm:
+                try:
+                    logging.info("Stopping StreamableHTTP session manager...")
+                    await app.state.http_session_manager_cm.__aexit__(None, None, None)
+                    logging.info("✓ StreamableHTTP session manager stopped")
+                except Exception as e:
+                    logging.error(f"Error stopping HTTP session manager: {e}", exc_info=True)
+
+        # Store handlers on app.state for the lifespan manager to call
+        app.state._http_session_manager_starter = _start_http_session_manager
+        app.state._http_session_manager_stopper = _stop_http_session_manager
+        logging.debug("HTTP session manager startup/shutdown handlers registered with lifespan")
+
+        # Store reference
+        mcp._http_transport = http_session_manager
+        logging.info("MCP HTTP Streamable transport mounted at /mcp-streamable with TRUE SSE streaming (ASGI direct)")
+
+        LOG_LEVEL_RANK = {
+            "debug": 0,
+            "info": 1,
+            "notice": 2,
+            "warning": 3,
+            "error": 4,
+            "critical": 5,
+            "alert": 6,
+            "emergency": 7,
+        }
+        DEFAULT_LOG_LEVEL = "notice"
+
+        @mcp.server.set_logging_level()
+        async def handle_set_logging_level(level: str):
+            """Persist client-requested log level for the current session."""
+            try:
+                ctx = mcp.server.request_context
+            except LookupError:
+                logging.debug("logging/setLevel received outside of request context")
+                return
+
+            session = getattr(ctx, "session", None)
+            if session is not None:
+                setattr(session, "_stata_log_level", (level or "info").lower())
+                logging.debug(f"Set MCP log level for session to {level}")
+
+        # Enhance stata_run_file with MCP-native streaming updates
+        original_execute = mcp._execute_api_tool
+
+        async def execute_with_streaming(*call_args, **call_kwargs):
+            """Wrap tool execution to stream progress for long-running Stata jobs."""
+            if not call_args:
+                raise TypeError("execute_with_streaming requires bound 'self'")
+
+            bound_self = call_args[0]
+            original_args = call_args[1:]
+            original_kwargs = dict(call_kwargs)
+
+            # Extract known keyword arguments
+            working_kwargs = dict(call_kwargs)
+            client = working_kwargs.pop("client", None)
+            tool_name = working_kwargs.pop("tool_name", None)
+            arguments = working_kwargs.pop("arguments", None)
+            operation_map = working_kwargs.pop("operation_map", None)
+            http_request_info = working_kwargs.pop("http_request_info", None)
+
+            # Log and discard unexpected kwargs to stay forwards-compatible
+            for extra_key in list(working_kwargs.keys()):
+                extra_val = working_kwargs.pop(extra_key, None)
+                logging.debug(f"Ignoring unexpected MCP execute kwarg: {extra_key}={extra_val!r}")
+
+            remaining = list(original_args)
+
+            # Fill from positional args if any are missing
+            if client is None and remaining:
+                client = remaining.pop(0)
+            if tool_name is None and remaining:
+                tool_name = remaining.pop(0)
+            if arguments is None and remaining:
+                arguments = remaining.pop(0)
+            if operation_map is None and remaining:
+                operation_map = remaining.pop(0)
+            if http_request_info is None and remaining:
+                http_request_info = remaining.pop(0)
+
+            # If not our tool or required data missing, fall back to original implementation
+            if (
+                tool_name != "stata_run_file"
+                or client is None
+                or operation_map is None
+            ):
+                return await original_execute(*original_args, **original_kwargs)
+
+            arguments_dict = dict(arguments or {})
+
+            # Try to get request context from either HTTP or SSE server
+            # IMPORTANT: Check HTTP first! If we check SSE first, we might get stale SSE context
+            # even when the request came through HTTP.
+            ctx = None
+            server_type = "unknown"
+            try:
+                ctx = http_mcp_server.request_context
+                server_type = "HTTP"
+                logging.debug(f"Using HTTP server request context: {ctx}")
+            except (LookupError, NameError):
+                # HTTP server has no context, try SSE server
+                try:
+                    ctx = bound_self.server.request_context
+                    server_type = "SSE"
+                    logging.debug(f"Using SSE server request context: {ctx}")
+                except LookupError:
+                    logging.debug("No MCP request context available; skipping streaming wrapper")
+                    return await original_execute(
+                        client=client,
+                        tool_name=tool_name,
+                        arguments=arguments_dict,
+                        operation_map=operation_map,
+                        http_request_info=http_request_info,
+                    )
+
+            session = getattr(ctx, "session", None)
+            request_id = getattr(ctx, "request_id", None)
+            progress_token = getattr(getattr(ctx, "meta", None), "progressToken", None)
+
+            # DEBUG: Log session information
+            logging.info(f"✓ Streaming enabled via {server_type} server - Tool: {tool_name}")
+            if session:
+                session_attrs = [attr for attr in dir(session) if not attr.startswith('__')]
+                logging.debug(f"Session type: {type(session)}, Attributes: {session_attrs[:10]}")
+                session_id = getattr(session, "_session_id", getattr(session, "session_id", getattr(session, "id", None)))
+            else:
+                session_id = None
+            logging.debug(f"Tool execution - Server: {server_type}, Session ID: {session_id}, Request ID: {request_id}, Progress Token: {progress_token}")
+
+            if session is None:
+                logging.debug("MCP session not available; falling back to default execution")
+                return await original_execute(
+                    client=client,
+                    tool_name=tool_name,
+                    arguments=arguments_dict,
+                    operation_map=operation_map,
+                    http_request_info=http_request_info,
+                )
+
+            if not hasattr(session, "_stata_log_level"):
+                setattr(session, "_stata_log_level", DEFAULT_LOG_LEVEL)
+
+            file_path = arguments_dict.get("file_path", "")
+
+            try:
+                timeout = int(arguments_dict.get("timeout", 600))
+            except (TypeError, ValueError):
+                timeout = 600
+
+            resolved_path, resolution_candidates = resolve_do_file_path(file_path)
+            effective_path = resolved_path or os.path.abspath(file_path)
+            base_name = os.path.splitext(os.path.basename(effective_path))[0]
+            log_file_path = get_log_file_path(effective_path, base_name)
+
+            logging.info(f"📡 MCP streaming enabled for {os.path.basename(file_path)}")
+            logging.debug(f"MCP log streaming monitoring: {log_file_path}")
+            if not resolved_path:
+                logging.debug(f"Resolution attempts: {resolution_candidates}")
+
+            import asyncio as _asyncio
+            import time as _time
+
+            async def send_log(level: str, message: str):
+                level = (level or "info").lower()
+                session_level = getattr(session, "_stata_log_level", DEFAULT_LOG_LEVEL)
+                if LOG_LEVEL_RANK.get(level, 0) < LOG_LEVEL_RANK.get(session_level, LOG_LEVEL_RANK[DEFAULT_LOG_LEVEL]):
+                    return
+                logging.debug(f"MCP streaming log [{level}] (session level {session_level}): {message}")
+                try:
+                    await session.send_log_message(
+                        level=level,
+                        data=message,
+                        logger="stata-mcp",
+                        related_request_id=request_id,
+                    )
+                except Exception as send_exc:  # noqa: BLE001
+                    logging.debug(f"Unable to send MCP log message: {send_exc}")
+
+            async def send_progress(elapsed: float, message: str | None = None):
+                if progress_token is None:
+                    return
+                try:
+                    await session.send_progress_notification(
+                        progress_token=progress_token,
+                        progress=elapsed,
+                        total=timeout,
+                        message=message,
+                        related_request_id=request_id,
+                    )
+                except Exception as send_exc:  # noqa: BLE001
+                    logging.debug(f"Unable to send MCP progress notification: {send_exc}")
+
+            task = _asyncio.create_task(
+                original_execute(
+                    client=client,
+                    tool_name=tool_name,
+                    arguments=arguments_dict,
+                    operation_map=operation_map,
+                    http_request_info=http_request_info,
+                )
+            )
+
+            start_time = _time.time()
+            stream_interval = 5
+            poll_interval = 2
+            last_stream = 0.0
+            last_offset = 0
+
+            start_message = f"▶️  Starting Stata execution: {os.path.basename(effective_path)}"
+            await send_log("notice", start_message)
+            await send_progress(0.0, start_message)
+
+            try:
+                while not task.done():
+                    await _asyncio.sleep(poll_interval)
+                    now = _time.time()
+                    elapsed = now - start_time
+
+                    if now - last_stream >= stream_interval:
+                        progress_msg = f"⏱️  {elapsed:.0f}s elapsed / {timeout}s timeout"
+                        await send_progress(elapsed, progress_msg)
+
+                        if os.path.exists(log_file_path):
+                            await send_log(
+                                "notice",
+                                f"{progress_msg}\n\n(📁 Inspecting Stata log for new output...)",
+                            )
+                            try:
+                                with open(log_file_path, "r", encoding="utf-8", errors="replace") as log_file:
+                                    log_file.seek(last_offset)
+                                    new_content = log_file.read()
+                                    last_offset = log_file.tell()
+
+                                snippet = ""
+                                if new_content.strip():
+                                    lines = new_content.strip().splitlines()
+                                    snippet = "\n".join(lines[-3:])
+
+
+                                if snippet:
+                                    progress_msg = f"{progress_msg}\n\n📝 Recent output:\n{snippet}"
+
+                                await send_log("notice", progress_msg)
+                            except Exception as read_exc:  # noqa: BLE001
+                                logging.debug(f"Error reading log for streaming: {read_exc}")
+                                await send_log(
+                                    "notice",
+                                    f"{progress_msg} (waiting for output...)",
+                                )
+                        else:
+                            await send_log(
+                                "notice",
+                                f"{progress_msg} (initializing...)",
+                            )
+
+                        last_stream = now
+
+                result = await task
+                total_time = _time.time() - start_time
+                await send_log("notice", f"✅ Execution completed in {total_time:.1f}s")
+                return result
+            except Exception as exc:
+                logging.error(f"❌ Error during MCP streaming: {exc}", exc_info=True)
+                await send_log("error", f"Error during execution: {exc}")
+                raise
+
+        import types as _types
+
+        mcp._execute_api_tool = _types.MethodType(execute_with_streaming, mcp)
+        logging.info("📡 MCP streaming wrapper installed for stata_run_file")
 
         # Mark MCP as initialized (will also be set in startup event)
         global mcp_initialized

@@ -79,7 +79,7 @@ By the way, if you use the python kenrel, you can use not only stata, but also p
 
 
 ## An example usage (with python kernel)
-- [example](../examples/jupyter.ipynb) 
+- [example](./examples/jupyter.ipynb) 
 
 
 ## Wraning!

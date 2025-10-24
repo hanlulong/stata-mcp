@@ -58,7 +58,7 @@ npm run start-mcp-server
 
 - `extension.js` - The main VS Code extension code
 - `stata_mcp_server.py` - The FastAPI-based MCP server
-- `scripts/` - Helper scripts for development and testing
+- `src/devtools/` - Helper scripts for packaging and development maintenance
 - `.github/workflows/` - CI/CD workflow definitions
 
 ## Pull Request Process

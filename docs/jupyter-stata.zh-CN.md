@@ -79,7 +79,7 @@ reg price mpg rep78 trunk weight length
 
 
 ## 使用示例（使用 python 内核）
-- [示例](../examples/jupyter.ipynb) 
+- [示例](./examples/jupyter.ipynb) 
 
 
 ## 警告！

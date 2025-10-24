@@ -1,5 +1,7 @@
-fastapi==0.115.12
-uvicorn==0.34.0
-fastapi-mcp==0.3.4
+fastapi==0.119.1
+uvicorn==0.38.0
+fastapi-mcp==0.4.0
+mcp==1.18.0
 pydantic==2.11.1
-pandas==2.2.3 
+pandas==2.3.3
+httpx==0.28.1 

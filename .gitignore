@@ -70,10 +70,6 @@ stata-mcp-*.vsix
 !.github/
 !.github/workflows/
 !.github/workflows/release.yml
-!examples/
-!examples/**
-!examples/auto_report.pdf
-
 !jupyter-stata.md
 # SpecStory explanation file
 .specstory/.what-is-this.md

@@ -12,7 +12,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const rootDir = path.resolve(__dirname, '..');
+const rootDir = path.resolve(__dirname, '..', '..');
 
 // File paths
 const vscodePackageJson = path.join(rootDir, 'package.json');
@@ -83,7 +83,7 @@ try {
     console.log('1. Review the package contents: npm pack --dry-run');
     console.log('2. Test locally: npm link');
     console.log('3. Publish to npm: npm publish');
-    console.log('4. Restore VS Code files: node scripts/restore-vscode-package.js');
+    console.log('4. Restore VS Code files: node src/devtools/restore-vscode-package.js');
 
 } catch (error) {
     console.error('✗ Error preparing package:', error.message);

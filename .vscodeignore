@@ -52,10 +52,10 @@ run_server.sh
 # Exclude large media files
 images/demo.mp4
 images/demo_2x.gif
-examples/demo.mov
-examples/**/*.mp4
-examples/**/*.gif
-examples/**/*.mov
+docs/examples/demo.mov
+docs/examples/**/*.mp4
+docs/examples/**/*.gif
+docs/examples/**/*.mov
 **/*.mp4
 **/*.mov
 **/*.gif
