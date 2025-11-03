@@ -263,7 +263,14 @@ async function startServer() {
                 }
                 if (serverProcess.stderr) {
                     serverProcess.stderr.on('data', (data) => {
-                        console.error(`[MCP Server Error] ${data.toString().trim()}`);
+                        const message = data.toString().trim();
+                        // Filter out Java initialization messages (informational, not errors)
+                        if (message.includes('Picked up _JAVA_OPTIONS') ||
+                            message.includes('Picked up JAVA_TOOL_OPTIONS')) {
+                            // Silently ignore Java options messages
+                            return;
+                        }
+                        console.error(`[MCP Server Error] ${message}`);
                     });
                 }
             }

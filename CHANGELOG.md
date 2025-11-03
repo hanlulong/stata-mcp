@@ -2,6 +2,21 @@
 
 All notable changes to the Stata MCP extension will be documented in this file.
 
+## [0.3.5] - 2025-11-03
+
+### Fixed
+- **Java initialization messages suppressed**: Filtered out Java options messages from extension output
+  - Added filter in stderr handlers to silently ignore "Picked up _JAVA_OPTIONS" and "Picked up JAVA_TOOL_OPTIONS" messages
+  - These are informational messages from JVM, not actual errors
+  - Updated `Logger.mcpServerError` in `extension.js` (lines 76-81)
+  - Updated stderr handler in `start-server.js` (lines 267-272)
+  - Changed to use `_JAVA_OPTIONS` instead of `JAVA_TOOL_OPTIONS` in `stata_mcp_server.py` (line 201)
+
+- **Deprecated mount() method**: Updated to use new fastapi-mcp 0.4.0 API
+  - Replaced deprecated `mcp.mount(mount_path="/mcp", transport="sse")` with `mcp.mount_sse(mount_path="/mcp")`
+  - Eliminates DeprecationWarning message in extension output
+  - Line 2828 in `stata_mcp_server.py`
+
 ## [0.3.4] - 2025-10-23
 
 ### Added

@@ -196,7 +196,9 @@ def try_init_stata(stata_path):
                 # When Stata's embedded JVM initializes for graphics, it normally creates a Dock icon
                 # Setting headless=true prevents this GUI behavior
                 if platform.system() == 'Darwin':
-                    os.environ['JAVA_TOOL_OPTIONS'] = '-Djava.awt.headless=true'
+                    # Use _JAVA_OPTIONS instead of JAVA_TOOL_OPTIONS to suppress the informational message
+                    # _JAVA_OPTIONS is picked up by the JVM but doesn't print "Picked up..." to stderr
+                    os.environ['_JAVA_OPTIONS'] = '-Djava.awt.headless=true'
                     logging.debug("Set Java headless mode to prevent Dock icon")
 
                 # Initialize with the specified Stata edition
@@ -2823,7 +2825,7 @@ def main():
         )
 
         # Mount SSE transport at /mcp for backward compatibility
-        mcp.mount(mount_path="/mcp", transport="sse")
+        mcp.mount_sse(mount_path="/mcp")
 
         # ========================================================================
         # HTTP (Streamable) Transport - Separate Server Instance

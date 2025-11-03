@@ -73,6 +73,12 @@ const Logger = {
     },
     mcpServerError: (message) => {
         const output = message.toString().trim();
+        // Filter out Java initialization messages (informational, not errors)
+        if (output.includes('Picked up _JAVA_OPTIONS') ||
+            output.includes('Picked up JAVA_TOOL_OPTIONS')) {
+            // Silently ignore Java options messages
+            return;
+        }
         stataOutputChannel.appendLine(`[MCP Server Error] ${output}`);
         console.error(`[MCP Server Error] ${output}`);
     }
