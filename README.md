@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/hanlulong-stata-mcp-badge.png)](https://mseep.ai/app/hanlulong-stata-mcp)
+
 # Stata MCP Extension for VS Code and Cursor
 
 [![en](https://img.shields.io/badge/lang-English-red.svg)](./README.md)
