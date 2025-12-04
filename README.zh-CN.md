@@ -69,11 +69,11 @@ code --install-extension DeepEcon.stata-mcp
 
 #### 选项 2：从 .vsix 文件安装
 
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.3.5.vsix`。
+1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.3.6.vsix`。
 2. 使用以下方法之一安装：
 
 ```bash
-code --install-extension path/to/stata-mcp-0.3.5.vsix
+code --install-extension path/to/stata-mcp-0.3.6.vsix
 ```
 
 或：
@@ -85,11 +85,11 @@ code --install-extension path/to/stata-mcp-0.3.5.vsix
 
 ### Cursor 安装
 
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.3.5.vsix`。
+1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.3.6.vsix`。
 2. 使用以下方法之一安装：
 
 ```bash
-cursor --install-extension path/to/stata-mcp-0.3.5.vsix
+cursor --install-extension path/to/stata-mcp-0.3.6.vsix
 ```
 
 或：
@@ -184,6 +184,21 @@ cursor --install-extension path/to/stata-mcp-0.3.5.vsix
 | `stata-vscode.runFileTimeout` | "运行文件"操作的超时时间（秒） | `600`（10 分钟） |
 | `stata-vscode.debugMode` | 在输出面板中显示详细的调试信息 | `false` |
 | `stata-vscode.clineConfigPath` | Cline 配置文件的自定义路径（可选） | 自动检测 |
+
+### MCP 输出设置
+
+这些设置控制通过 MCP 协议返回给 AI 助手（LLM）的 Stata 输出，有助于减少 token 使用量：
+
+| 设置 | 描述 | 默认值 |
+|------|------|--------|
+| `stata-vscode.resultDisplayMode` | MCP 返回的输出模式：`compact`（过滤冗余输出以节省 token）或 `full`（返回完整输出） | `compact` |
+| `stata-vscode.maxOutputTokens` | MCP 输出的最大 token 数（0 = 无限制）。大输出将保存到文件并返回路径 | `10000` |
+
+**Compact 模式过滤内容：**
+- 循环代码回显（foreach/forvalues/while 块）- 仅保留实际输出
+- 程序定义和 Mata 块
+- 命令回显和续行符（仅适用于 `run_file`）
+- 详细消息如 "(N real changes made)" 和 "(N missing values generated)"
 
 ### 如何更改设置
 

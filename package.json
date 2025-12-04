@@ -3,7 +3,7 @@
 	"displayName": "Stata MCP",
 	"description": "Stata MCP Extension for VS Code and Cursor IDE",
 	"publisher": "DeepEcon",
-	"version": "0.3.5",
+	"version": "0.3.6",
 	"icon": "images/Stata_MCP_logo_400x400.png",
 	"engines": {
 		"vscode": "^1.75.0"
@@ -199,6 +199,17 @@
 					"type": "string",
 					"default": "",
 					"description": "Custom directory for Stata log files (only used when logFileLocation is set to 'custom')"
+				},
+				"stata-vscode.resultDisplayMode": {
+					"type": "string",
+					"enum": ["compact", "full"],
+					"default": "compact",
+					"description": "Result display mode for MCP returns: 'compact' (filters verbose output to save tokens) or 'full' (complete output). Compact mode removes program definitions, Mata blocks, change messages, and compresses whitespace."
+				},
+				"stata-vscode.maxOutputTokens": {
+					"type": "number",
+					"default": 10000,
+					"description": "Maximum tokens (approx. 4 chars each) for MCP output. When exceeded, output is saved to file and path is returned instead. Set to 0 for unlimited."
 				}
 			}
 		},

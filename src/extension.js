@@ -325,12 +325,19 @@ function handleConfigurationChange(event) {
             Logger.info(`Debug mode ${debugMode ? 'enabled' : 'disabled'}`);
         }
         
+        // Settings that require server restart
         if (event.affectsConfiguration('stata-vscode.mcpServerPort') ||
             event.affectsConfiguration('stata-vscode.mcpServerHost') ||
             event.affectsConfiguration('stata-vscode.stataPath') ||
-            event.affectsConfiguration('stata-vscode.debugMode')) {
-            
+            event.affectsConfiguration('stata-vscode.debugMode') ||
+            event.affectsConfiguration('stata-vscode.stataEdition') ||
+            event.affectsConfiguration('stata-vscode.logFileLocation') ||
+            event.affectsConfiguration('stata-vscode.customLogDirectory') ||
+            event.affectsConfiguration('stata-vscode.resultDisplayMode') ||
+            event.affectsConfiguration('stata-vscode.maxOutputTokens')) {
+
             if (mcpServerRunning && mcpServerProcess) {
+                Logger.info('Configuration changed, restarting MCP server...');
                 mcpServerProcess.kill();
                 mcpServerRunning = false;
                 updateStatusBar();
@@ -438,9 +445,13 @@ async function startMcpServer() {
     const stataEdition = config.get('stataEdition') || 'mp';
     const logFileLocation = config.get('logFileLocation') || 'extension';
     const customLogDirectory = config.get('customLogDirectory') || '';
-    
+    const resultDisplayMode = config.get('resultDisplayMode') || 'compact';
+    const maxOutputTokens = config.get('maxOutputTokens') || 10000;
+
     Logger.info(`Using Stata edition: ${stataEdition}`);
     Logger.info(`Log file location: ${logFileLocation}`);
+    Logger.info(`Result display mode: ${resultDisplayMode}`);
+    Logger.info(`Max output tokens: ${maxOutputTokens}`);
     
     if (!stataPath) {
         stataPath = await detectStataPath();
@@ -598,6 +609,7 @@ async function startMcpServer() {
             cmdString += ` --log-file "${logFile}" --stata-edition ${stataEdition} --log-level ${logLevel}`;
             cmdString += ` --log-file-location ${logFileLocation}`;
             if (customLogDirectory) cmdString += ` --custom-log-directory "${customLogDirectory}"`;
+            cmdString += ` --result-display-mode ${resultDisplayMode} --max-output-tokens ${maxOutputTokens}`;
             
             Logger.info(`Starting server with command: ${cmdString}`);
             
@@ -610,6 +622,7 @@ async function startMcpServer() {
             args.push('--log-file', logFile, '--stata-edition', stataEdition, '--log-level', logLevel);
             args.push('--log-file-location', logFileLocation);
             if (customLogDirectory) args.push('--custom-log-directory', customLogDirectory);
+            args.push('--result-display-mode', resultDisplayMode, '--max-output-tokens', maxOutputTokens.toString());
             
             cmdString = `${pythonCommand} ${args.join(' ')}`;
             Logger.info(`Starting server with command: ${cmdString}`);

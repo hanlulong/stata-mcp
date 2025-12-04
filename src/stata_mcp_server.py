@@ -124,6 +124,10 @@ log_file_location = 'extension'  # Default to extension directory
 custom_log_directory = ''  # Custom log directory
 extension_path = None  # Path to the extension directory
 
+# Result display settings for MCP returns (token-saving mode)
+result_display_mode = 'compact'  # 'compact' or 'full'
+max_output_tokens = 10000  # Maximum tokens (approx 4 chars each), 0 for unlimited
+
 # Try to import pandas
 try:
     import pandas as pd
@@ -519,6 +523,434 @@ def check_stata_installed():
         return False
         
     return True
+
+# ============================================================================
+# Compact Mode Filtering Functions (for token-saving in MCP returns)
+# ============================================================================
+
+def apply_compact_mode_filter(output: str, filter_command_echo: bool = False) -> str:
+    """Apply compact mode filtering to Stata output to reduce token usage.
+
+    Filters out (always):
+    - Program definitions (capture program drop through end)
+    - Mata blocks (mata: through end)
+    - Loop code echoes (foreach/forvalues/while) - keeps actual output only
+    - SMCL formatting tags
+    - Compresses multiple spaces and blank lines
+    - Truncates long variable lists (>100 items)
+
+    Filters out (only when filter_command_echo=True, i.e., for run_file):
+    - Command echo lines (lines starting with ". " that echo Stata commands)
+    - Line continuation markers ("> " for multi-line commands)
+    - Log header/footer lines (log type, opened on, Log file saved, etc.)
+    - MCP execution header lines (">>> [timestamp] do 'filepath'")
+
+    Args:
+        output: Raw Stata output string
+        filter_command_echo: Whether to filter command echo lines (for run_file only)
+
+    Returns:
+        Filtered output string
+    """
+    if not output:
+        return output
+
+    # Normalize line endings (Windows CRLF to LF) to ensure regex patterns match
+    output = output.replace('\r\n', '\n').replace('\r', '\n')
+
+    lines = output.split('\n')
+    filtered_lines = []
+
+    # State tracking for variable list truncation
+    variable_list_count = 0
+    in_variable_list = False
+
+    # Patterns for command echo lines (redundant - LLM already knows the commands)
+    # ". command" - main command echo (dot + space + command or just lone ".")
+    command_echo_pattern = re.compile(r'^\.\s*$|^\.\s+\S')
+    # "  2. command" or " 99. command" - numbered continuation lines inside loops/programs
+    numbered_line_pattern = re.compile(r'^\s*\d+\.\s')
+    # "> continuation" - line continuation for multi-line commands
+    continuation_pattern = re.compile(r'^>\s')
+    # MCP execution header like ">>> [2025-12-04 11:44:02] do '/path/to/file.do'"
+    mcp_header_pattern = re.compile(r'^>>>\s+\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\]')
+    # Execution time line "*** Execution completed in X.X seconds ***"
+    exec_time_pattern = re.compile(r'^\*\*\*\s+Execution completed in')
+    # "Final output:" header
+    final_output_pattern = re.compile(r'^Final output:\s*$')
+    # Log file info lines (log opening/closing)
+    log_info_pattern = re.compile(r'^\s*(name:|log:|log type:|opened on:|closed on:|Log file saved to:)', re.IGNORECASE)
+    # capture log close line
+    capture_log_pattern = re.compile(r'^\.\s*capture\s+log\s+close', re.IGNORECASE)
+
+    # Patterns for program/mata/loop blocks
+    # Program block start: capture program drop / cap program drop / cap prog drop
+    program_drop_pattern = re.compile(r'^\s*\.?\s*(capture\s+program\s+drop|cap\s+program\s+drop|cap\s+prog\s+drop|capt\s+program\s+drop|capt\s+prog\s+drop)\s+\w+', re.IGNORECASE)
+    # Program define - must have "define" keyword or just "program <name>" but NOT "program version/dir/drop/list"
+    program_define_pattern = re.compile(r'^\s*\.?\s*program\s+(define\s+)?(?!version|dir|drop|list|describe)\w+', re.IGNORECASE)
+    # Mata block start
+    mata_start_pattern = re.compile(r'^\s*(\d+\.)?\s*\.?\s*mata\s*:?\s*$|^-+\s*mata\s*\(', re.IGNORECASE)
+    # End statement (for program and mata)
+    end_pattern = re.compile(r'^\s*(\d+\.)?\s*[.:]*\s*end\s*$', re.IGNORECASE)
+    # Mata separator lines (dashes)
+    mata_separator_pattern = re.compile(r'^-{20,}$')
+
+    # Loop start patterns: ". foreach ...", ". forvalues ...", ". while ..." ending with {
+    # Also matches numbered lines inside loops like "  2.     forvalues j = 1/2 {"
+    loop_start_pattern = re.compile(r'^(\s*\d+\.)?\s*\.?\s*(foreach|forvalues|while)\s+.*\{\s*$', re.IGNORECASE)
+    # Loop closing brace on numbered line: "99. }" or " 112. }"
+    loop_end_pattern = re.compile(r'^\s*\d+\.\s*\}\s*$')
+
+    # Verbose output patterns to filter (always)
+    # "(N real change made)" or "(N real changes made)" - numbers may have commas like "1,234"
+    real_changes_pattern = re.compile(r'^\s*\([\d,]+\s+real\s+changes?\s+made\)\s*$', re.IGNORECASE)
+    # "(N missing values generated)" or "(N missing value generated)"
+    missing_values_pattern = re.compile(r'^\s*\([\d,]+\s+missing\s+values?\s+generated\)\s*$', re.IGNORECASE)
+
+    # SMCL formatting tags
+    smcl_pattern = re.compile(r'\{(txt|res|err|inp|com|bf|it|sf|hline|c\s+\||\-+|break|col\s+\d+|right|center|ul|/ul)\}')
+    # Variable list detection
+    var_list_pattern = re.compile(r'^\s*(\d+\.\s+)?\w+\s+\w+\s+%')
+
+    # Track block state
+    in_program_block = False
+    in_mata_block = False
+    in_loop_block = False
+    program_end_depth = 0
+    loop_brace_depth = 0  # Track nested braces in loops
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        # =====================================================================
+        # Handle PROGRAM blocks (filter entirely)
+        # =====================================================================
+        if in_program_block:
+            if mata_start_pattern.match(line):
+                program_end_depth += 1
+            if end_pattern.match(line):
+                if program_end_depth > 0:
+                    program_end_depth -= 1
+                else:
+                    in_program_block = False
+            i += 1
+            continue
+
+        # =====================================================================
+        # Handle MATA blocks (filter entirely)
+        # =====================================================================
+        if in_mata_block:
+            if end_pattern.match(line):
+                in_mata_block = False
+                # Skip closing separator if present
+                if i + 1 < len(lines) and mata_separator_pattern.match(lines[i + 1]):
+                    i += 1
+            i += 1
+            continue
+
+        # =====================================================================
+        # Handle LOOP blocks (filter code echoes, keep actual output)
+        # =====================================================================
+        if in_loop_block:
+            # Check for nested loop start (increase depth)
+            if loop_start_pattern.match(line):
+                loop_brace_depth += 1
+                i += 1
+                continue
+
+            # Check for loop end: "N. }"
+            if loop_end_pattern.match(line):
+                if loop_brace_depth > 0:
+                    loop_brace_depth -= 1
+                else:
+                    in_loop_block = False
+                i += 1
+                continue
+
+            # Inside loop: filter code echoes but keep actual output
+            # Filter: ". command", "  N. command", "> continuation"
+            if command_echo_pattern.match(line):
+                i += 1
+                continue
+            if numbered_line_pattern.match(line):
+                i += 1
+                continue
+            if continuation_pattern.match(line):
+                i += 1
+                continue
+
+            # Filter verbose messages inside loops
+            if real_changes_pattern.match(line):
+                i += 1
+                continue
+            if missing_values_pattern.match(line):
+                i += 1
+                continue
+
+            # This line is actual output inside the loop - keep it!
+            # But still apply SMCL cleanup
+            line = smcl_pattern.sub('', line)
+            if line.strip():  # Only keep non-empty lines
+                filtered_lines.append(line)
+            i += 1
+            continue
+
+        # =====================================================================
+        # Check for block starts (when not inside any block)
+        # =====================================================================
+
+        # Check for loop start: ". foreach ... {", ". forvalues ... {", ". while ... {"
+        if loop_start_pattern.match(line):
+            in_loop_block = True
+            loop_brace_depth = 0
+            i += 1
+            continue
+
+        # Check for program drop (single-line, just filter it)
+        if program_drop_pattern.match(line):
+            i += 1
+            continue
+
+        # Check for program define (starts program block)
+        if program_define_pattern.match(line):
+            in_program_block = True
+            program_end_depth = 0
+            i += 1
+            continue
+
+        # Check for mata block start
+        if mata_start_pattern.match(line):
+            in_mata_block = True
+            i += 1
+            continue
+
+        # =====================================================================
+        # Filter verbose messages (always, both inside and outside loops)
+        # =====================================================================
+        if real_changes_pattern.match(line):
+            i += 1
+            continue
+        if missing_values_pattern.match(line):
+            i += 1
+            continue
+
+        # =====================================================================
+        # Command echo filtering (only when filter_command_echo=True)
+        # =====================================================================
+        if filter_command_echo:
+            if mcp_header_pattern.match(line):
+                i += 1
+                continue
+            if exec_time_pattern.match(line):
+                i += 1
+                continue
+            if final_output_pattern.match(line):
+                i += 1
+                continue
+            if log_info_pattern.match(line):
+                i += 1
+                continue
+            if capture_log_pattern.match(line):
+                i += 1
+                continue
+            if command_echo_pattern.match(line):
+                i += 1
+                continue
+            if numbered_line_pattern.match(line):
+                i += 1
+                continue
+            if continuation_pattern.match(line):
+                i += 1
+                continue
+
+        # =====================================================================
+        # Clean up and keep the line
+        # =====================================================================
+
+        # Remove SMCL formatting tags
+        line = smcl_pattern.sub('', line)
+
+        # Compress excessive spaces (more than 3) but preserve some for table alignment
+        leading_space = len(line) - len(line.lstrip())
+        line_content = re.sub(r' {4,}', '  ', line.strip())
+        line = ' ' * min(leading_space, 4) + line_content
+
+        # Track variable lists and truncate after 100 items
+        if var_list_pattern.match(line):
+            if not in_variable_list:
+                in_variable_list = True
+                variable_list_count = 0
+            variable_list_count += 1
+            if variable_list_count > 100:
+                if variable_list_count == 101:
+                    filtered_lines.append("    ... (output truncated, showing first 100 variables)")
+                i += 1
+                continue
+        else:
+            in_variable_list = False
+            variable_list_count = 0
+
+        filtered_lines.append(line)
+        i += 1
+
+    # Final cleanup: remove orphaned numbered lines with no content (e.g., "  2. " or "  41.")
+    # These can remain after SMCL cleanup strips the actual command
+    # Pattern: whitespace + digits + period + optional whitespace + end of line
+    empty_numbered_line_pattern = re.compile(r'^\s*\d+\.\s*$')
+
+    cleaned_lines = []
+    for line in filtered_lines:
+        # Skip empty numbered lines (no content after the number)
+        if empty_numbered_line_pattern.match(line):
+            continue
+        cleaned_lines.append(line)
+
+    # Collapse multiple consecutive blank lines to single blank line
+    result_lines = []
+    prev_blank = False
+    for line in cleaned_lines:
+        is_blank = not line.strip()
+        if is_blank:
+            if not prev_blank:
+                result_lines.append(line)
+            prev_blank = True
+        else:
+            result_lines.append(line)
+            prev_blank = False
+
+    # Remove trailing blank lines
+    while result_lines and not result_lines[-1].strip():
+        result_lines.pop()
+
+    return '\n'.join(result_lines)
+
+
+def check_token_limit_and_save(output: str, original_log_path: str = None) -> tuple[str, bool]:
+    """Check if output exceeds token limit and save to file if needed.
+
+    Args:
+        output: The output string to check
+        original_log_path: Optional path to original log file for context
+
+    Returns:
+        Tuple of (output_or_message, was_truncated)
+        If truncated, returns a message with file path instead of content
+    """
+    global max_output_tokens, extension_path
+
+    # If unlimited (0), return as-is
+    if max_output_tokens <= 0:
+        return output, False
+
+    # Estimate tokens (roughly 4 chars per token)
+    estimated_tokens = len(output) / 4
+
+    if estimated_tokens <= max_output_tokens:
+        return output, False
+
+    # Output exceeds limit - save to file and return path
+    try:
+        # Determine save location with fallback options
+        logs_dir = None
+        tried_paths = []
+
+        # Try extension path first
+        if extension_path and extension_path.strip():
+            candidate = os.path.join(extension_path, 'logs')
+            tried_paths.append(candidate)
+            try:
+                os.makedirs(candidate, exist_ok=True)
+                # Test if writable
+                test_file = os.path.join(candidate, '.write_test')
+                with open(test_file, 'w') as f:
+                    f.write('test')
+                os.unlink(test_file)
+                logs_dir = candidate
+            except (OSError, IOError):
+                logging.debug(f"Cannot use extension logs dir: {candidate}")
+
+        # Fall back to temp directory
+        if not logs_dir:
+            candidate = os.path.join(tempfile.gettempdir(), 'stata_mcp_logs')
+            tried_paths.append(candidate)
+            try:
+                os.makedirs(candidate, exist_ok=True)
+                logs_dir = candidate
+            except (OSError, IOError):
+                logging.debug(f"Cannot use temp logs dir: {candidate}")
+
+        # Last resort: current directory
+        if not logs_dir:
+            logs_dir = os.getcwd()
+            tried_paths.append(logs_dir)
+
+        # Generate unique filename
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        log_filename = f"stata_output_{timestamp}.log"
+        log_path = os.path.join(logs_dir, log_filename)
+
+        # Save the full output
+        with open(log_path, 'w', encoding='utf-8') as f:
+            f.write(output)
+
+        # Return message with path
+        actual_tokens = int(estimated_tokens)
+        message = (
+            f"Output exceeded token limit ({actual_tokens} tokens > {max_output_tokens} max).\n"
+            f"Full output saved to: {log_path}\n\n"
+            f"Please investigate the log file for complete results.\n"
+            f"You can read this file to see the full Stata output."
+        )
+
+        # Include a preview (first ~1000 chars)
+        preview_chars = min(1000, len(output))
+        if preview_chars > 0:
+            preview = output[:preview_chars]
+            if len(output) > preview_chars:
+                preview += "\n... [truncated]"
+            message += f"\n\n--- Preview ---\n{preview}"
+
+        logging.info(f"Output exceeded token limit ({actual_tokens} tokens). Saved to: {log_path}")
+        return message, True
+
+    except Exception as e:
+        logging.error(f"Failed to save large output to file: {e}")
+        # Fall back to truncating inline
+        max_chars = max_output_tokens * 4
+        truncated = output[:max_chars] + f"\n\n... [Output truncated at {max_output_tokens} tokens]"
+        return truncated, True
+
+
+def process_mcp_output(output: str, log_path: str = None, for_mcp: bool = True, filter_command_echo: bool = False) -> str:
+    """Process output for MCP returns, applying compact mode and token limits.
+
+    Args:
+        output: Raw Stata output
+        log_path: Optional path to original log file
+        for_mcp: Whether this is for MCP return (applies filters) or VS Code display (no filters)
+        filter_command_echo: Whether to filter command echo lines (". command", "> continuation", etc.)
+                            Set to True for run_file (LLM already knows the commands in the file)
+                            Set to False for run_selection (echo helps verify what was executed)
+
+    Returns:
+        Processed output string
+    """
+    global result_display_mode
+
+    if not for_mcp:
+        # For VS Code extension, return full output
+        return output
+
+    # Apply compact mode filtering if enabled
+    if result_display_mode == 'compact':
+        output = apply_compact_mode_filter(output, filter_command_echo=filter_command_echo)
+
+    # Check token limit and save if needed
+    output, was_truncated = check_token_limit_and_save(output, log_path)
+
+    return output
+
 
 # Function to run a Stata command
 def run_stata_command(command: str, clear_history=False, auto_detect_graphs=False):
@@ -1669,11 +2101,13 @@ app = FastAPI(
 # Define regular FastAPI routes for Stata functions
 @app.post("/run_selection", operation_id="stata_run_selection", response_class=Response)
 async def stata_run_selection_endpoint(selection: str) -> Response:
-    """Run selected Stata code and return the output"""
+    """Run selected Stata code and return the output (MCP endpoint - applies compact mode filtering)"""
     logging.info(f"Running selection: {selection}")
     result = run_stata_selection(selection)
     # Format output for better display - replace escaped newlines with actual newlines
     formatted_result = result.replace("\\n", "\n")
+    # Apply MCP output processing (compact mode filtering and token limit)
+    formatted_result = process_mcp_output(formatted_result, for_mcp=True)
     return Response(content=formatted_result, media_type="text/plain")
 
 async def stata_run_file_stream(file_path: str, timeout: int = 600):
@@ -1740,6 +2174,9 @@ async def stata_run_file_stream(file_path: str, timeout: int = 600):
         else:
             # Format and send final output
             formatted_result = result.replace("\\n", "\n")
+            # Apply MCP output processing (compact mode filtering and token limit)
+            # filter_command_echo=True for run_file (LLM already knows the file contents)
+            formatted_result = process_mcp_output(formatted_result, for_mcp=True, filter_command_echo=True)
             # Split into chunks to avoid overwhelming SSE
             lines = formatted_result.split('\n')
             for i in range(0, len(lines), 10):
@@ -1758,14 +2195,14 @@ async def stata_run_file_endpoint(
     file_path: str,
     timeout: int = 600
 ) -> Response:
-    """Run a Stata .do file and return the output (MCP-compatible endpoint)
+    """Run a Stata .do file and return the output (MCP endpoint - applies compact mode filtering)
 
     Args:
         file_path: Path to the .do file
         timeout: Timeout in seconds (default: 600 seconds / 10 minutes)
 
     Returns:
-        Response with plain text output
+        Response with plain text output (filtered in compact mode)
     """
     # Ensure timeout is a valid integer
     try:
@@ -1782,6 +2219,10 @@ async def stata_run_file_endpoint(
 
     # Format output for better display - replace escaped newlines with actual newlines
     formatted_result = result.replace("\\n", "\n")
+
+    # Apply MCP output processing (compact mode filtering and token limit)
+    # filter_command_echo=True for run_file (LLM already knows the file contents)
+    formatted_result = process_mcp_output(formatted_result, for_mcp=True, filter_command_echo=True)
 
     # Log the output (truncated) for debugging
     logging.debug(f"Run file output (first 100 chars): {formatted_result[:100]}...")
@@ -2579,6 +3020,10 @@ def main():
                           help='Location for .do file logs (extension, workspace, custom) - default: extension')
         parser.add_argument('--custom-log-directory', type=str, default='',
                           help='Custom directory for .do file logs (when location is custom)')
+        parser.add_argument('--result-display-mode', type=str, choices=['compact', 'full'], default='compact',
+                          help='Result display mode for MCP returns: compact (filters verbose output) or full - default: compact')
+        parser.add_argument('--max-output-tokens', type=int, default=10000,
+                          help='Maximum tokens for MCP output (0 for unlimited) - default: 10000')
         
         # Special handling when running as a module
         if is_running_as_module:
@@ -2711,10 +3156,13 @@ def main():
         
         # Set Stata edition
         global stata_edition, log_file_location, custom_log_directory, extension_path
+        global result_display_mode, max_output_tokens
         stata_edition = args.stata_edition.lower()
         log_file_location = args.log_file_location
         custom_log_directory = args.custom_log_directory
-        
+        result_display_mode = args.result_display_mode
+        max_output_tokens = args.max_output_tokens
+
         # Try to determine extension path from the log file path
         if args.log_file:
             # If log file is in a logs subdirectory, the parent of that is the extension path
@@ -2723,9 +3171,11 @@ def main():
                 extension_path = os.path.dirname(log_file_dir)
             else:
                 extension_path = log_file_dir
-        
+
         logging.info(f"Using Stata {stata_edition.upper()} edition")
         logging.info(f"Log file location setting: {log_file_location}")
+        logging.info(f"Result display mode: {result_display_mode}")
+        logging.info(f"Max output tokens: {max_output_tokens}")
         if custom_log_directory:
             logging.info(f"Custom log directory: {custom_log_directory}")
         if extension_path:

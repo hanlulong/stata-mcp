@@ -2,6 +2,27 @@
 
 All notable changes to the Stata MCP extension will be documented in this file.
 
+## [0.3.6] - 2025-12-04
+
+### Added
+- **MCP Output Settings**: New settings to optimize token usage when AI assistants call Stata via MCP
+  - `stata-vscode.resultDisplayMode`: Choose between `compact` (default) or `full` output mode
+  - `stata-vscode.maxOutputTokens`: Limit output tokens (default: 10000, 0 = unlimited)
+  - Large outputs are automatically saved to file with path returned instead
+
+### Improved
+- **Compact mode filtering**: Significantly reduces token usage for MCP returns
+  - Filters loop code echoes (foreach/forvalues/while) while preserving actual output
+  - Filters program definitions and Mata blocks
+  - Filters command echoes and line continuations for `run_file` operations
+  - Filters verbose messages like "(N real changes made)" and "(N missing values generated)"
+  - Cleans up orphaned numbered lines with no content
+  - Preserves all error messages and important output
+
+### Fixed
+- **Windows CRLF handling**: Normalized line endings to ensure regex patterns work correctly on Windows
+- **Nested loop detection**: Fixed pattern to correctly identify nested loops with line numbers (e.g., `  2.     forvalues j = 1/2 {`)
+
 ## [0.3.5] - 2025-11-03
 
 ### Fixed

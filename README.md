@@ -70,11 +70,11 @@ Or:
 
 #### Option 2: From .vsix file
 
-1. Download the extension package `stata-mcp-0.3.5.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
+1. Download the extension package `stata-mcp-0.3.6.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
 2. Install using one of these methods:
 
 ```bash
-code --install-extension path/to/stata-mcp-0.3.5.vsix
+code --install-extension path/to/stata-mcp-0.3.6.vsix
 ```
 
 Or:
@@ -86,11 +86,11 @@ Or:
 
 ### Cursor Installation
 
-1. Download the extension package `stata-mcp-0.3.5.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
+1. Download the extension package `stata-mcp-0.3.6.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
 2. Install using one of these methods:
 
 ```bash
-cursor --install-extension path/to/stata-mcp-0.3.5.vsix
+cursor --install-extension path/to/stata-mcp-0.3.6.vsix
 ```
 
 Or:
@@ -185,6 +185,21 @@ Customize the extension behavior through VS Code settings. Access these settings
 | `stata-vscode.runFileTimeout` | Timeout in seconds for 'Run File' operations | `600` (10 minutes) |
 | `stata-vscode.debugMode` | Show detailed debug information in output panel | `false` |
 | `stata-vscode.clineConfigPath` | Custom path to Cline configuration file (optional) | Auto-detected |
+
+### MCP Output Settings
+
+These settings control how Stata output is returned to AI assistants (LLMs) via the MCP protocol, helping to reduce token usage:
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `stata-vscode.resultDisplayMode` | Output mode for MCP returns: `compact` (filters redundant output to save tokens) or `full` (returns complete output) | `compact` |
+| `stata-vscode.maxOutputTokens` | Maximum tokens for MCP output (0 = unlimited). Large outputs are saved to file with a path returned instead | `10000` |
+
+**Compact mode filters:**
+- Loop code echoes (foreach/forvalues/while blocks) - keeps actual output only
+- Program definitions and Mata blocks
+- Command echoes and line continuations (for `run_file` only)
+- Verbose messages like "(N real changes made)" and "(N missing values generated)"
 
 ### How to Change Settings
 
