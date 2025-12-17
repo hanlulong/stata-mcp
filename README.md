@@ -304,7 +304,7 @@ You can use this extension with [Claude Desktop](https://claude.ai/download) thr
    pip install mcp-proxy
 
    # Or using uv (faster)
-   uv install mcp-proxy
+   uv pip install mcp-proxy --system
    ```
 
 3. Find the path to mcp-proxy:
@@ -362,7 +362,7 @@ You can use this extension with [OpenAI Codex](https://github.com/openai/codex) 
    pip install mcp-proxy
 
    # Or using uv (faster)
-   uv install mcp-proxy
+   uv pip install mcp-proxy --system
    ```
 
 3. Configure Codex by editing the config file at `~/.codex/config.toml`:
