@@ -606,13 +606,20 @@ process_mcp_output = _local_process_mcp_output
 
 
 # Function to run a Stata command
-def run_stata_command(command: str, clear_history=False, auto_detect_graphs=False):
-    """Run a Stata command
+def run_stata_command(
+    command: str,
+    clear_history: bool = False,
+    auto_detect_graphs: bool = False
+) -> str:
+    """Run a Stata command.
 
     Args:
         command: The Stata command to run
         clear_history: Whether to clear command history
-        auto_detect_graphs: Whether to detect and export graphs after execution (default: False for MCP/LLM calls)
+        auto_detect_graphs: Whether to detect and export graphs after execution
+
+    Returns:
+        Stata output as a string
 
     Note: This function manually enables _gr_list on before execution and detects graphs after.
     We do NOT use inline=True because it calls _gr_list off at the end, clearing our graph list!
@@ -1096,13 +1103,20 @@ def display_graphs_interactive(graph_format='png', width=800, height=600):
         logging.debug(f"Interactive display error details: {traceback.format_exc()}")
         return []
 
-def run_stata_selection(selection, working_dir=None, auto_detect_graphs=False):
-    """Run selected Stata code
+def run_stata_selection(
+    selection: str,
+    working_dir: Optional[str] = None,
+    auto_detect_graphs: bool = False
+) -> str:
+    """Run selected Stata code.
 
     Args:
         selection: The Stata code to run
         working_dir: Optional working directory to change to before execution
-        auto_detect_graphs: Whether to detect and export graphs (default: False for MCP/LLM calls)
+        auto_detect_graphs: Whether to detect and export graphs
+
+    Returns:
+        Stata output as a string
     """
     # If a working directory is provided, prepend a cd command
     if working_dir and os.path.isdir(working_dir):
@@ -1120,8 +1134,13 @@ def run_stata_selection(selection, working_dir=None, auto_detect_graphs=False):
     else:
         return run_stata_command(selection, auto_detect_graphs=auto_detect_graphs)
 
-def run_stata_file(file_path: str, timeout=600, auto_name_graphs=False, working_dir=None):
-    """Run a Stata .do file with improved handling for long-running processes
+def run_stata_file(
+    file_path: str,
+    timeout: int = 600,
+    auto_name_graphs: bool = False,
+    working_dir: Optional[str] = None
+) -> str:
+    """Run a Stata .do file with improved handling for long-running processes.
 
     Args:
         file_path: The path to the .do file to run
