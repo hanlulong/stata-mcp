@@ -25,6 +25,14 @@ import re
 # Import utility functions
 from utils import get_windows_path_help_message, normalize_path_for_platform
 
+# Import API models
+from api_models import (
+    RunSelectionParams,
+    RunFileParams,
+    ToolRequest,
+    ToolResponse,
+)
+
 # Fix encoding issues on Windows for Unicode characters
 if platform.system() == 'Windows':
     # Force UTF-8 encoding for stdout and stderr on Windows
@@ -2167,23 +2175,8 @@ def find_available_port(start_port, max_attempts=10):
     logging.warning(f"Could not find an available port after {max_attempts} attempts")
     return None
 
-# Parameter models for the MCP tools
-class RunSelectionParams(BaseModel):
-    selection: str = Field(..., description="The Stata code to execute")
-
-class RunFileParams(BaseModel):
-    file_path: str = Field(..., description="The full path to the .do file")
-    timeout: int = Field(600, description="Timeout in seconds (default: 600 seconds / 10 minutes)")
-
-# Define Legacy VS Code Extension Support
-class ToolRequest(BaseModel):
-    tool: str
-    parameters: Dict[str, Any]
-
-class ToolResponse(BaseModel):
-    status: str
-    result: Optional[str] = None
-    message: Optional[str] = None
+# Note: API models (RunSelectionParams, RunFileParams, ToolRequest, ToolResponse)
+# are now imported from api_models.py
 
 # Define lifespan context manager for startup/shutdown events
 @asynccontextmanager
