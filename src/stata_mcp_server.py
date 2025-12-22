@@ -2610,17 +2610,17 @@ async def create_session():
         }
 
     try:
-        success, session_id, error = session_manager.create_session()
-        if success:
+        result = session_manager.create_session()
+        if result["success"]:
             return {
                 "status": "success",
-                "session_id": session_id,
+                "session_id": result["session_id"],
                 "message": "Session created successfully"
             }
         else:
             return {
                 "status": "error",
-                "message": error
+                "message": result.get("error", "Unknown error")
             }
     except Exception as e:
         logging.error(f"Error creating session: {str(e)}")
