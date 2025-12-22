@@ -351,6 +351,8 @@ def get_log_file_path(do_file_path, do_file_base):
     """
     global log_file_location, custom_log_directory, extension_path
 
+    do_file_dir = os.path.dirname(do_file_path)
+
     if log_file_location == 'extension':
         # Use logs folder in extension directory
         if extension_path:
@@ -360,8 +362,21 @@ def get_log_file_path(do_file_path, do_file_base):
             log_path = os.path.join(logs_dir, f"{do_file_base}_mcp.log")
             return os.path.abspath(log_path)
         else:
-            # Fallback to workspace if extension path is not available
-            do_file_dir = os.path.dirname(do_file_path)
+            # Fallback to dofile if extension path is not available
+            log_path = os.path.join(do_file_dir, f"{do_file_base}_mcp.log")
+            return os.path.abspath(log_path)
+    elif log_file_location == 'dofile':
+        # Use same directory as .do file
+        log_path = os.path.join(do_file_dir, f"{do_file_base}_mcp.log")
+        return os.path.abspath(log_path)
+    elif log_file_location == 'parent':
+        # Use parent directory of .do file
+        parent_dir = os.path.dirname(do_file_dir)
+        if parent_dir and os.path.exists(parent_dir):
+            log_path = os.path.join(parent_dir, f"{do_file_base}_mcp.log")
+            return os.path.abspath(log_path)
+        else:
+            # Fallback to dofile directory if parent doesn't exist
             log_path = os.path.join(do_file_dir, f"{do_file_base}_mcp.log")
             return os.path.abspath(log_path)
     elif log_file_location == 'custom':
@@ -370,14 +385,12 @@ def get_log_file_path(do_file_path, do_file_base):
             log_path = os.path.join(custom_log_directory, f"{do_file_base}_mcp.log")
             return os.path.abspath(log_path)
         else:
-            # Fallback to workspace if custom directory is invalid
-            logging.warning(f"Custom log directory not valid: {custom_log_directory}, falling back to workspace")
-            do_file_dir = os.path.dirname(do_file_path)
+            # Fallback to dofile if custom directory is invalid
+            logging.warning(f"Custom log directory not valid: {custom_log_directory}, falling back to dofile directory")
             log_path = os.path.join(do_file_dir, f"{do_file_base}_mcp.log")
             return os.path.abspath(log_path)
-    else:  # workspace
-        # Use same directory as .do file (original behavior)
-        do_file_dir = os.path.dirname(do_file_path)
+    else:  # workspace (same as dofile for compatibility)
+        # Use same directory as .do file
         log_path = os.path.join(do_file_dir, f"{do_file_base}_mcp.log")
         return os.path.abspath(log_path)
 
@@ -3265,8 +3278,8 @@ def main():
         parser.add_argument('--log-file', type=str, help='Path to log file (default: stata_mcp_server.log in current directory)')
         parser.add_argument('--stata-edition', type=str, choices=['mp', 'se', 'be'], default='mp', 
                           help='Stata edition to use (mp, se, be) - default: mp')
-        parser.add_argument('--log-file-location', type=str, choices=['extension', 'workspace', 'custom'], default='extension',
-                          help='Location for .do file logs (extension, workspace, custom) - default: extension')
+        parser.add_argument('--log-file-location', type=str, choices=['dofile', 'parent', 'workspace', 'extension', 'custom'], default='extension',
+                          help='Location for .do file logs (dofile, parent, workspace, extension, custom) - default: extension')
         parser.add_argument('--custom-log-directory', type=str, default='',
                           help='Custom directory for .do file logs (when location is custom)')
         parser.add_argument('--result-display-mode', type=str, choices=['compact', 'full'], default='compact',

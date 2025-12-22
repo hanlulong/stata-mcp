@@ -2,6 +2,17 @@
 
 All notable changes to the Stata MCP extension will be documented in this file.
 
+## [0.3.8] - 2025-12-22
+
+### Added
+- **Log File Location Options**: Extended `logFileLocation` setting with new options
+  - `dofile`: Save log files in the same directory as the .do file
+  - `parent`: Save log files in the parent directory of the .do file
+  - Now matches the options available in `workingDirectory` setting
+
+### Changed
+- Default log file location remains `extension` (logs folder in extension directory)
+
 ## [0.3.7] - 2025-12-21
 
 ### Added

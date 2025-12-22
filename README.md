@@ -70,11 +70,11 @@ Or:
 
 #### Option 2: From .vsix file
 
-1. Download the extension package `stata-mcp-0.3.7.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
+1. Download the extension package `stata-mcp-0.3.8.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
 2. Install using one of these methods:
 
 ```bash
-code --install-extension path/to/stata-mcp-0.3.7.vsix
+code --install-extension path/to/stata-mcp-0.3.8.vsix
 ```
 
 Or:
@@ -86,11 +86,11 @@ Or:
 
 ### Cursor Installation
 
-1. Download the extension package `stata-mcp-0.3.7.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
+1. Download the extension package `stata-mcp-0.3.8.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
 2. Install using one of these methods:
 
 ```bash
-cursor --install-extension path/to/stata-mcp-0.3.7.vsix
+cursor --install-extension path/to/stata-mcp-0.3.8.vsix
 ```
 
 Or:
@@ -175,7 +175,7 @@ Customize the extension behavior through VS Code settings. Access these settings
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `stata-vscode.logFileLocation` | Location for Stata log files: `extension` (logs folder in extension directory), `workspace` (same directory as .do file), or `custom` (user-specified directory) | `extension` |
+| `stata-vscode.logFileLocation` | Location for Stata log files: `dofile` (same directory as .do file), `parent` (parent directory of .do file), `workspace` (VS Code workspace root), `extension` (logs folder in extension directory), or `custom` (user-specified directory) | `extension` |
 | `stata-vscode.customLogDirectory` | Custom directory for Stata log files (only used when logFileLocation is set to `custom`) | Empty |
 
 ### Advanced Settings
@@ -230,8 +230,10 @@ The extension automatically creates log files when running Stata .do files. You 
 ### Log File Locations
 
 1. **Extension Directory** (default): Log files are saved in a `logs` folder within the extension directory, keeping your workspace clean
-2. **Workspace Directory**: Log files are saved in the same directory as your .do file (original behavior)
-3. **Custom Directory**: Log files are saved to a directory you specify
+2. **Do-file Directory**: Log files are saved in the same directory as your .do file
+3. **Parent Directory**: Log files are saved in the parent directory of your .do file
+4. **Workspace Directory**: Log files are saved in the VS Code workspace root
+5. **Custom Directory**: Log files are saved to a directory you specify
 
 ### Changing Log File Location
 
@@ -239,14 +241,18 @@ The extension automatically creates log files when running Stata .do files. You 
 2. Search for "Stata MCP"
 3. Find "Log File Location" (`stata-vscode.logFileLocation`) and select your preferred option:
    - `extension`: Save to extension directory (default)
-   - `workspace`: Save to same directory as .do file
+   - `dofile`: Save to same directory as .do file
+   - `parent`: Save to parent directory of .do file
+   - `workspace`: Save to VS Code workspace root
    - `custom`: Save to a custom directory
 4. If using "Custom Directory", also set "Custom Log Directory" (`stata-vscode.customLogDirectory`) path
 
 ### Benefits of Each Option
 
-- **Extension Directory**: Keeps your project workspace clean and organized
-- **Workspace Directory**: Log files stay with your .do files for easy reference
+- **Extension Directory**: Keeps your project workspace clean and organized (default)
+- **Do-file Directory**: Log files stay with your .do files for easy reference
+- **Parent Directory**: Useful when .do files are in subdirectories but you want logs at project level
+- **Workspace Directory**: Centralizes all logs at the project root
 - **Custom Directory**: Centralize all logs in one location across projects
 
 <br>

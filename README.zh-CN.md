@@ -69,11 +69,11 @@ code --install-extension DeepEcon.stata-mcp
 
 #### 选项 2：从 .vsix 文件安装
 
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.3.7.vsix`。
+1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.3.8.vsix`。
 2. 使用以下方法之一安装：
 
 ```bash
-code --install-extension path/to/stata-mcp-0.3.7.vsix
+code --install-extension path/to/stata-mcp-0.3.8.vsix
 ```
 
 或：
@@ -85,11 +85,11 @@ code --install-extension path/to/stata-mcp-0.3.7.vsix
 
 ### Cursor 安装
 
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.3.7.vsix`。
+1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.3.8.vsix`。
 2. 使用以下方法之一安装：
 
 ```bash
-cursor --install-extension path/to/stata-mcp-0.3.7.vsix
+cursor --install-extension path/to/stata-mcp-0.3.8.vsix
 ```
 
 或：
@@ -174,7 +174,7 @@ cursor --install-extension path/to/stata-mcp-0.3.7.vsix
 
 | 设置 | 描述 | 默认值 |
 |------|------|--------|
-| `stata-vscode.logFileLocation` | Stata 日志文件的位置：`extension`（扩展目录中的 logs 文件夹）、`workspace`（与 .do 文件相同的目录）或 `custom`（用户指定的目录） | `extension` |
+| `stata-vscode.logFileLocation` | Stata 日志文件的位置：`dofile`（与 .do 文件相同的目录）、`parent`（.do 文件的父目录）、`workspace`（VS Code 工作区根目录）、`extension`（扩展目录中的 logs 文件夹）或 `custom`（用户指定的目录） | `extension` |
 | `stata-vscode.customLogDirectory` | Stata 日志文件的自定义目录（仅当 logFileLocation 设置为 `custom` 时使用） | 空 |
 
 ### 高级设置
@@ -229,8 +229,10 @@ cursor --install-extension path/to/stata-mcp-0.3.7.vsix
 ### 日志文件位置
 
 1. **扩展目录**（默认）：日志文件保存在扩展目录内的 `logs` 文件夹中，保持您的工作空间整洁
-2. **工作空间目录**：日志文件保存在与您的 .do 文件相同的目录中（原始行为）
-3. **自定义目录**：日志文件保存到您指定的目录
+2. **Do 文件目录**：日志文件保存在与您的 .do 文件相同的目录中
+3. **父目录**：日志文件保存在 .do 文件的父目录中
+4. **工作空间目录**：日志文件保存在 VS Code 工作区根目录中
+5. **自定义目录**：日志文件保存到您指定的目录
 
 ### 更改日志文件位置
 
@@ -238,14 +240,18 @@ cursor --install-extension path/to/stata-mcp-0.3.7.vsix
 2. 搜索"Stata MCP"
 3. 找到"日志文件位置"（`stata-vscode.logFileLocation`）并选择您首选的选项：
    - `extension`：保存到扩展目录（默认）
-   - `workspace`：保存到与 .do 文件相同的目录
+   - `dofile`：保存到与 .do 文件相同的目录
+   - `parent`：保存到 .do 文件的父目录
+   - `workspace`：保存到 VS Code 工作区根目录
    - `custom`：保存到自定义目录
 4. 如果使用"自定义目录"，还要设置"自定义日志目录"（`stata-vscode.customLogDirectory`）路径
 
 ### 各选项的优势
 
-- **扩展目录**：保持项目工作空间整洁有序
-- **工作空间目录**：日志文件与您的 .do 文件保持在一起，便于参考
+- **扩展目录**：保持项目工作空间整洁有序（默认）
+- **Do 文件目录**：日志文件与您的 .do 文件保持在一起，便于参考
+- **父目录**：当 .do 文件在子目录中但您希望日志在项目级别时很有用
+- **工作空间目录**：将所有日志集中在项目根目录
 - **自定义目录**：将所有项目的日志集中在一个位置
 
 <br>
