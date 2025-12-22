@@ -500,10 +500,11 @@ class SessionManager:
             }
 
         # Determine log file path if not provided
+        # Include session_id to prevent file locking conflicts in parallel execution
         if log_file is None:
             base_name = os.path.splitext(os.path.basename(file_path))[0]
             log_dir = os.path.dirname(os.path.abspath(file_path))
-            log_file = os.path.join(log_dir, f"{base_name}_mcp.log")
+            log_file = os.path.join(log_dir, f"{base_name}_{session.session_id}_mcp.log")
 
         return self._execute_command(
             session,

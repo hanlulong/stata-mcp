@@ -31,6 +31,7 @@ import platform
 import traceback
 import threading
 import tempfile
+import shutil
 from typing import Optional, Dict, Any, Tuple
 from enum import Enum
 
@@ -173,6 +174,7 @@ def worker_process(
     stata = None
     stlib = None
     cancelled = False
+    worker_temp_dir = None  # Track temp directory for cleanup
 
     def send_result(command_id: str, status: str, output: str = "", error: str = "",
                     execution_time: float = 0.0, extra: Dict = None):
@@ -191,7 +193,7 @@ def worker_process(
 
     def initialize_stata():
         """Initialize PyStata in this worker process with proper isolation for parallelism"""
-        nonlocal stata, stlib, worker_state
+        nonlocal stata, stlib, worker_state, worker_temp_dir
 
         worker_state = WorkerState.INITIALIZING
 
@@ -381,11 +383,15 @@ def worker_process(
             with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
                 original_code = f.read()
 
+            # Convert log file path to use forward slashes (works on all platforms in Stata)
+            # This prevents Windows backslash escape issues in Stata commands
+            log_file_stata = log_file.replace('\\', '/')
+
             # Wrap with log commands for streaming support
             wrapped_code = f"""capture log close _all
 capture program drop _all
 capture macro drop _all
-log using "{log_file}", replace text
+log using "{log_file_stata}", replace text
 {original_code}
 capture log close _all
 """
@@ -627,6 +633,13 @@ capture log close _all
         if monitor_thread is not None and monitor_thread.is_alive():
             monitor_thread.join(timeout=1.0)
         worker_state = WorkerState.STOPPED
+
+        # Clean up temporary directory to prevent disk space leakage
+        if worker_temp_dir and os.path.exists(worker_temp_dir):
+            try:
+                shutil.rmtree(worker_temp_dir, ignore_errors=True)
+            except Exception:
+                pass  # Best effort cleanup
 
 
 # =============================================================================
