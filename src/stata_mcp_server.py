@@ -232,17 +232,13 @@ def try_init_stata(stata_path):
                 config.init(stata_edition)
                 logging.info(f"Stata initialized successfully with {stata_edition.upper()} edition")
 
-                # Fix encoding for PyStata output on Windows
+                # On Windows, redirect PyStata's output to devnull
+                # to prevent duplicate output (we capture output via log files, not stdout)
                 if platform.system() == 'Windows':
                     import io
-                    # Replace PyStata's output file handle with UTF-8 encoded version
-                    config.stoutputf = io.TextIOWrapper(
-                        sys.stdout.buffer,
-                        encoding='utf-8',
-                        errors='replace',
-                        line_buffering=True
-                    )
-                    logging.debug("Configured PyStata output with UTF-8 encoding for Windows")
+                    devnull_file = open(os.devnull, 'w', encoding='utf-8')
+                    config.stoutputf = devnull_file
+                    logging.debug("Redirected PyStata output to devnull on Windows")
 
                 # Now import stata after initialization
                 from pystata import stata as stata_module

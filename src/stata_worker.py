@@ -204,14 +204,12 @@ def worker_process(
             from pystata.config import stlib as stlib_module
             stlib = stlib_module
 
-            # Fix encoding on Windows - use original stdout's buffer since we redirected stdout
-            if platform.system() == 'Windows' and hasattr(original_stdout, 'buffer'):
-                config.stoutputf = io.TextIOWrapper(
-                    original_stdout.buffer,
-                    encoding='utf-8',
-                    errors='replace',
-                    line_buffering=True
-                )
+            # On Windows, redirect PyStata's output to devnull as well
+            # to prevent duplicate output (we capture output via log files, not stdout)
+            if platform.system() == 'Windows':
+                # Create a devnull text wrapper for PyStata output
+                devnull_file = open(os.devnull, 'w', encoding='utf-8')
+                config.stoutputf = devnull_file
 
             worker_state = WorkerState.READY
             return True
