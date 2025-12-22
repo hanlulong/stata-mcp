@@ -1961,6 +1961,50 @@ async def stata_run_file_stream(file_path: str, timeout: int = 600, working_dir:
     """
     import threading
     import queue as queue_module
+    import re as re_module
+
+    # Line filter for streaming - removes command echoes and log metadata
+    # to prevent duplicate display (command + output)
+    def should_skip_line(line: str) -> bool:
+        """Check if a line should be skipped in streaming output.
+
+        Filters out command echoes, log metadata, and other noise
+        so users only see actual Stata output.
+        """
+        stripped = line.strip()
+        if not stripped:
+            return True
+
+        # Command echo lines (what user typed echoed back)
+        # Matches: ". ", ". di 1", ".", etc.
+        if re_module.match(r'^\.\s*$', line) or re_module.match(r'^\.\s+\S', line):
+            return True
+
+        # Numbered command echo from loops (e.g., "  2. di 1")
+        if re_module.match(r'^\s*\d+\.\s+\S', line):
+            return True
+
+        # Continuation marker for multi-line commands
+        if re_module.match(r'^>\s', line):
+            return True
+
+        # Log file metadata lines
+        if re_module.match(r'^\s*(name:|log:|log type:|opened on:|closed on:|Log file saved)', line, re_module.IGNORECASE):
+            return True
+
+        # MCP execution header (timestamp + do command)
+        if re_module.match(r'^>>>\s+\[', line):
+            return True
+
+        # capture log close command
+        if re_module.match(r'^\.\s*capture\s+log\s+close', line, re_module.IGNORECASE):
+            return True
+
+        # Log separator line (many dashes)
+        if re_module.match(r'^-{20,}$', stripped):
+            return True
+
+        return False
 
     # Queue to communicate between threads
     result_queue = queue_module.Queue()
@@ -2025,10 +2069,10 @@ async def stata_run_file_stream(file_path: str, timeout: int = 600, working_dir:
                         new_content = f.read()
                         last_read_pos = f.tell()
 
-                    # Send only new lines
+                    # Send only new lines (filtered to remove command echoes)
                     if new_content.strip():
                         for line in new_content.splitlines():
-                            if line.strip():
+                            if not should_skip_line(line):
                                 escaped = line.replace('\\', '\\\\')
                                 yield f"data: {escaped}\n\n"
             except Exception as e:
@@ -2055,7 +2099,7 @@ async def stata_run_file_stream(file_path: str, timeout: int = 600, working_dir:
                         remaining = f.read()
                     if remaining.strip():
                         for line in remaining.splitlines():
-                            if line.strip():
+                            if not should_skip_line(line):
                                 escaped = line.replace('\\', '\\\\')
                                 yield f"data: {escaped}\n\n"
             except Exception as e:
@@ -2393,6 +2437,14 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
                     status="error",
                     message=f"Unknown action: {action}. Valid actions: list, destroy"
                 )
+
+        # Apply output filtering for MCP returns
+        # For run_file: filter_command_echo=True because VS Code already knows the file contents
+        # For run_selection: filter_command_echo=False to preserve command context
+        if mcp_tool_name == "stata_run_file":
+            result = process_mcp_output(result, log_path=None, for_mcp=True, filter_command_echo=True)
+        elif mcp_tool_name == "stata_run_selection":
+            result = process_mcp_output(result, log_path=None, for_mcp=True, filter_command_echo=False)
 
         # Return successful response
         return ToolResponse(

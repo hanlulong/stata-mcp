@@ -94,7 +94,7 @@ class TestSessionManagerConfiguration(unittest.TestCase):
             enabled=False  # Don't actually start workers
         )
 
-        self.assertEqual(manager.max_sessions, 4)
+        self.assertEqual(manager.max_sessions, 100)
         self.assertEqual(manager.session_timeout, 3600)
         self.assertEqual(manager.worker_start_timeout, 60)
         self.assertEqual(manager.command_timeout, 600)

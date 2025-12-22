@@ -2,9 +2,21 @@
 # Graceful server restart script
 # This script restarts the Stata MCP server without disrupting active MCP connections too harshly
 
-EXTENSION_DIR="$HOME/.vscode/extensions/deepecon.stata-mcp-0.4.0"
 SRC_DIR="$(dirname "$0")/.."
 PORT=4000
+
+# Detect extension directory - check VS Code first (baseline), then Cursor
+if [ -d "$HOME/.vscode/extensions/deepecon.stata-mcp-0.4.0" ]; then
+    EXTENSION_DIR="$HOME/.vscode/extensions/deepecon.stata-mcp-0.4.0"
+    echo "Using VS Code extension directory"
+elif [ -d "$HOME/.cursor/extensions/deepecon.stata-mcp-0.4.0" ]; then
+    EXTENSION_DIR="$HOME/.cursor/extensions/deepecon.stata-mcp-0.4.0"
+    echo "Using Cursor extension directory"
+else
+    echo "ERROR: Extension not found in VS Code or Cursor"
+    echo "Please install the extension first."
+    exit 1
+fi
 
 echo "=== Stata MCP Server Graceful Restart ==="
 
@@ -13,6 +25,9 @@ echo "1. Copying updated source files..."
 cp "$SRC_DIR/src/stata_mcp_server.py" "$EXTENSION_DIR/src/"
 cp "$SRC_DIR/src/session_manager.py" "$EXTENSION_DIR/src/"
 cp "$SRC_DIR/src/stata_worker.py" "$EXTENSION_DIR/src/"
+cp "$SRC_DIR/src/api_models.py" "$EXTENSION_DIR/src/"
+cp "$SRC_DIR/src/output_filter.py" "$EXTENSION_DIR/src/"
+cp "$SRC_DIR/src/utils.py" "$EXTENSION_DIR/src/"
 echo "   Files copied."
 
 # 2. Send SIGTERM for graceful shutdown (not SIGKILL)
