@@ -1,7 +1,6 @@
 .vscode/**
 .vscode-test/**
 out/**
-node_modules/**
 src/**
 !src/stata_mcp_server.py
 !src/session_manager.py
@@ -19,6 +18,11 @@ config/**
 *.vsix
 **/.DS_Store
 .cursor/**
+.claude/**
+.specstory/**
+.pytest_cache/**
+archive/**
+scripts/**
 .python-path
 .python-path.backup
 .uv-path
@@ -29,11 +33,10 @@ config/**
 .github/**
 **/*.pyc
 **/__pycache__/**
-**/node_modules/**
-!**/node_modules/axios/**
-**/.DS_Store
+node_modules/**
+!node_modules/axios/**
+!node_modules/adm-zip/**
 test_samples/**
-.cursor/**
 stata-context/**
 **/*.log
 **/*.do
