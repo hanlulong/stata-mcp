@@ -16,6 +16,7 @@ Key Design Decisions:
 import os
 import sys
 import io
+import re
 import time
 import queue
 import platform
@@ -23,6 +24,16 @@ import traceback
 import threading
 from typing import Optional, Dict, Any
 from enum import Enum
+
+
+def deduplicate_break_messages(output: str) -> str:
+    """Remove duplicate --Break-- messages from Stata output."""
+    if not output or '--Break--' not in output:
+        return output
+    # Collapse multiple break messages into one
+    return re.sub(r'(--Break--\s*\n\s*r\(1\);\s*\n?)+', '--Break--\nr(1);\n', output)
+
+
 from contextlib import redirect_stdout
 from dataclasses import dataclass, field
 
@@ -252,6 +263,9 @@ def worker_process(
             execution_time = time.time() - start_time
             worker_state = WorkerState.READY
 
+            # Deduplicate break messages
+            output = deduplicate_break_messages(output)
+
             # Check if execution was cancelled
             if cancelled or "--Break--" in output:
                 return False, output, "Execution cancelled", execution_time
@@ -336,6 +350,9 @@ capture log close _all
                         output = log_output
                 except Exception:
                     pass  # Fall back to captured output
+
+            # Deduplicate break messages (Stata may output multiple when breaking nested commands)
+            output = deduplicate_break_messages(output)
 
             if cancelled or "--Break--" in output:
                 return False, output, "Execution cancelled", execution_time, log_file

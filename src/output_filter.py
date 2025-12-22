@@ -11,6 +11,7 @@ Key features:
 - Token limit checking with automatic file saving
 - SMCL formatting tag removal
 - Multiple blank line compression
+- Break message deduplication
 """
 
 import os
@@ -19,6 +20,32 @@ import time
 import tempfile
 import logging
 from typing import Tuple, Optional
+
+
+def deduplicate_break_messages(output: str) -> str:
+    """Remove duplicate --Break-- messages from Stata output.
+
+    When Stata is interrupted, it may output the break message multiple times
+    (e.g., once for each nested command level). This function collapses multiple
+    occurrences into a single break message.
+
+    Args:
+        output: Stata output that may contain duplicate break messages
+
+    Returns:
+        Output with duplicate break messages removed
+    """
+    if not output or '--Break--' not in output:
+        return output
+
+    # Pattern matches --Break-- followed by r(1); with optional whitespace
+    # We want to keep only the first occurrence
+    break_pattern = r'(--Break--\s*\n\s*r\(1\);\s*\n?)+'
+
+    # Replace multiple occurrences with a single one
+    output = re.sub(break_pattern, '--Break--\nr(1);\n', output)
+
+    return output
 
 
 def apply_compact_mode_filter(output: str, filter_command_echo: bool = False) -> str:
