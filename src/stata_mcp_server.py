@@ -1836,16 +1836,76 @@ async def lifespan(app: FastAPI):
     # Cleanup if needed
     logging.info("FastAPI application shutting down")
 
-# Create the FastAPI app with lifespan handler
+# API Tags for documentation organization
+tags_metadata = [
+    {
+        "name": "Execution",
+        "description": "Run Stata code and .do files. Core functionality for AI assistants.",
+    },
+    {
+        "name": "Sessions",
+        "description": "Multi-session management for parallel Stata execution.",
+    },
+    {
+        "name": "Control",
+        "description": "Server control, monitoring, and execution management.",
+    },
+    {
+        "name": "Utilities",
+        "description": "Helper endpoints for graphs, data viewing, and interactive mode.",
+    },
+]
+
+# Create the FastAPI app with comprehensive documentation
 app = FastAPI(
     title=SERVER_NAME,
     version=SERVER_VERSION,
-    description="Stata MCP Server - Exposes Stata functionality to AI models via MCP protocol",
-    lifespan=lifespan
+    description="""
+# Stata MCP Server
+
+Exposes Stata functionality to AI models via the Model Context Protocol (MCP).
+
+## Features
+
+- **Code Execution**: Run Stata code selections and .do files
+- **Multi-Session Support**: Parallel execution with isolated sessions
+- **Graph Export**: Automatic graph detection and PNG export
+- **Streaming Output**: Real-time output for long-running jobs
+- **Token Optimization**: Compact mode filtering for efficient AI communication
+
+## Authentication
+
+No authentication required for local development. For production, consider
+running behind a reverse proxy with appropriate security measures.
+
+## Rate Limiting
+
+No built-in rate limiting. Stata execution is inherently sequential per session.
+""",
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+    openapi_tags=tags_metadata,
+    contact={
+        "name": "Stata MCP Server",
+        "url": "https://github.com/hanlulong/stata-mcp",
+    },
+    license_info={
+        "name": "MIT",
+        "url": "https://opensource.org/licenses/MIT",
+    },
 )
 
 # Define regular FastAPI routes for Stata functions
-@app.post("/run_selection", operation_id="stata_run_selection", response_class=Response)
+@app.post(
+    "/run_selection",
+    operation_id="stata_run_selection",
+    response_class=Response,
+    tags=["Execution"],
+    summary="Run Stata code selection",
+    description="Execute Stata code and return the output. Supports multi-session mode for parallel execution.",
+)
 async def stata_run_selection_endpoint(selection: str, session_id: str = None, working_dir: str = None) -> Response:
     """Run selected Stata code and return the output (MCP endpoint - applies compact mode filtering)
 
@@ -2009,7 +2069,14 @@ async def stata_run_file_stream(file_path: str, timeout: int = 600, working_dir:
     except queue_module.Empty:
         yield "data: ERROR: Failed to get execution result (timeout)\n\n"
 
-@app.get("/run_file", operation_id="stata_run_file", response_class=Response)
+@app.get(
+    "/run_file",
+    operation_id="stata_run_file",
+    response_class=Response,
+    tags=["Execution"],
+    summary="Run Stata .do file",
+    description="Execute a Stata .do file and return the output. Supports timeout and multi-session mode.",
+)
 async def stata_run_file_endpoint(
     file_path: str,
     timeout: int = 600,
@@ -2080,7 +2147,12 @@ async def stata_run_file_endpoint(
 
     return Response(content=formatted_result, media_type="text/plain")
 
-@app.get("/run_file/stream")
+@app.get(
+    "/run_file/stream",
+    tags=["Execution"],
+    summary="Run Stata .do file with streaming output",
+    description="Execute a Stata .do file and stream output via Server-Sent Events (SSE) for real-time updates.",
+)
 async def stata_run_file_stream_endpoint(
     file_path: str,
     timeout: int = 600,
