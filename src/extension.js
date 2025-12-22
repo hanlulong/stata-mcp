@@ -350,7 +350,10 @@ function handleConfigurationChange(event) {
             event.affectsConfiguration('stata-vscode.logFileLocation') ||
             event.affectsConfiguration('stata-vscode.customLogDirectory') ||
             event.affectsConfiguration('stata-vscode.resultDisplayMode') ||
-            event.affectsConfiguration('stata-vscode.maxOutputTokens')) {
+            event.affectsConfiguration('stata-vscode.maxOutputTokens') ||
+            event.affectsConfiguration('stata-vscode.multiSession') ||
+            event.affectsConfiguration('stata-vscode.maxSessions') ||
+            event.affectsConfiguration('stata-vscode.sessionTimeout')) {
 
             if (mcpServerRunning && mcpServerProcess) {
                 Logger.info('Configuration changed, restarting MCP server...');
@@ -650,11 +653,17 @@ async function startMcpServer() {
         
         // Get log level based on debug mode setting
         const logLevel = debugMode ? 'DEBUG' : 'INFO';
-        
+
+        // Get workspace root for workspace-based log file location
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        const workspaceRoot = workspaceFolders && workspaceFolders.length > 0
+            ? workspaceFolders[0].uri.fsPath
+            : null;
+
         // Prepare command
         let args = [];
         let cmdString;
-        
+
         if (IS_WINDOWS) {
             const scriptDir = path.dirname(mcpServerPath);
             cmdString = `"${pythonCommand}" -m stata_mcp_server --port ${port}`;
@@ -664,6 +673,7 @@ async function startMcpServer() {
             cmdString += ` --log-file "${logFile}" --stata-edition ${stataEdition} --log-level ${logLevel}`;
             cmdString += ` --log-file-location ${logFileLocation}`;
             if (customLogDirectory) cmdString += ` --custom-log-directory "${customLogDirectory}"`;
+            if (workspaceRoot) cmdString += ` --workspace-root "${workspaceRoot}"`;
             cmdString += ` --result-display-mode ${resultDisplayMode} --max-output-tokens ${maxOutputTokens}`;
             if (multiSession) {
                 cmdString += ` --multi-session --max-sessions ${maxSessions} --session-timeout ${sessionTimeout}`;
@@ -680,6 +690,7 @@ async function startMcpServer() {
             args.push('--log-file', logFile, '--stata-edition', stataEdition, '--log-level', logLevel);
             args.push('--log-file-location', logFileLocation);
             if (customLogDirectory) args.push('--custom-log-directory', customLogDirectory);
+            if (workspaceRoot) args.push('--workspace-root', workspaceRoot);
             args.push('--result-display-mode', resultDisplayMode, '--max-output-tokens', maxOutputTokens.toString());
             if (multiSession) {
                 args.push('--multi-session', '--max-sessions', maxSessions.toString(), '--session-timeout', sessionTimeout.toString());

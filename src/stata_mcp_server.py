@@ -133,6 +133,7 @@ stata_edition = 'mp'  # Default to MP edition
 # Store log file settings
 log_file_location = 'extension'  # Default to extension directory
 custom_log_directory = ''  # Custom log directory
+workspace_root = ''  # VS Code workspace root directory
 extension_path = None  # Path to the extension directory
 
 # Result display settings for MCP returns (token-saving mode)
@@ -402,10 +403,16 @@ def get_log_file_path(do_file_path, do_file_base):
             logging.warning(f"Custom log directory not valid: {custom_log_directory}, falling back to dofile directory")
             log_path = os.path.join(do_file_dir, f"{do_file_base}_mcp.log")
             return os.path.abspath(log_path)
-    else:  # workspace (same as dofile for compatibility)
-        # Use same directory as .do file
-        log_path = os.path.join(do_file_dir, f"{do_file_base}_mcp.log")
-        return os.path.abspath(log_path)
+    else:  # workspace
+        # Use VS Code workspace root if available, otherwise fall back to dofile directory
+        if workspace_root and os.path.isdir(workspace_root):
+            log_path = os.path.join(workspace_root, f"{do_file_base}_mcp.log")
+            return os.path.abspath(log_path)
+        else:
+            # Fallback to dofile directory if workspace root not available
+            logging.warning(f"Workspace root not available, falling back to dofile directory")
+            log_path = os.path.join(do_file_dir, f"{do_file_base}_mcp.log")
+            return os.path.abspath(log_path)
 
 def resolve_do_file_path(file_path: str) -> tuple[Optional[str], list[str]]:
     """Resolve a .do file path to an absolute location, mirroring run_stata_file logic.
@@ -3380,6 +3387,8 @@ def main():
                           help='Location for .do file logs (dofile, parent, workspace, extension, custom) - default: extension')
         parser.add_argument('--custom-log-directory', type=str, default='',
                           help='Custom directory for .do file logs (when location is custom)')
+        parser.add_argument('--workspace-root', type=str, default='',
+                          help='VS Code workspace root directory (for workspace log file location)')
         parser.add_argument('--result-display-mode', type=str, choices=['compact', 'full'], default='compact',
                           help='Result display mode for MCP returns: compact (filters verbose output) or full - default: compact')
         parser.add_argument('--max-output-tokens', type=int, default=10000,
@@ -3524,12 +3533,13 @@ def main():
         logging.getLogger().setLevel(log_level)
         
         # Set Stata edition
-        global stata_edition, log_file_location, custom_log_directory, extension_path
+        global stata_edition, log_file_location, custom_log_directory, workspace_root, extension_path
         global result_display_mode, max_output_tokens
         global multi_session_enabled, multi_session_max_sessions, multi_session_timeout
         stata_edition = args.stata_edition.lower()
         log_file_location = args.log_file_location
         custom_log_directory = args.custom_log_directory
+        workspace_root = args.workspace_root
         result_display_mode = args.result_display_mode
         max_output_tokens = args.max_output_tokens
         # Multi-session is enabled by default, but can be disabled with --no-multi-session
