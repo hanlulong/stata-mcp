@@ -1961,50 +1961,6 @@ async def stata_run_file_stream(file_path: str, timeout: int = 600, working_dir:
     """
     import threading
     import queue as queue_module
-    import re as re_module
-
-    # Line filter for streaming - removes command echoes and log metadata
-    # to prevent duplicate display (command + output)
-    def should_skip_line(line: str) -> bool:
-        """Check if a line should be skipped in streaming output.
-
-        Filters out command echoes, log metadata, and other noise
-        so users only see actual Stata output.
-        """
-        stripped = line.strip()
-        if not stripped:
-            return True
-
-        # Command echo lines (what user typed echoed back)
-        # Matches: ". ", ". di 1", ".", etc.
-        if re_module.match(r'^\.\s*$', line) or re_module.match(r'^\.\s+\S', line):
-            return True
-
-        # Numbered command echo from loops (e.g., "  2. di 1")
-        if re_module.match(r'^\s*\d+\.\s+\S', line):
-            return True
-
-        # Continuation marker for multi-line commands
-        if re_module.match(r'^>\s', line):
-            return True
-
-        # Log file metadata lines
-        if re_module.match(r'^\s*(name:|log:|log type:|opened on:|closed on:|Log file saved)', line, re_module.IGNORECASE):
-            return True
-
-        # MCP execution header (timestamp + do command)
-        if re_module.match(r'^>>>\s+\[', line):
-            return True
-
-        # capture log close command
-        if re_module.match(r'^\.\s*capture\s+log\s+close', line, re_module.IGNORECASE):
-            return True
-
-        # Log separator line (many dashes)
-        if re_module.match(r'^-{20,}$', stripped):
-            return True
-
-        return False
 
     # Queue to communicate between threads
     result_queue = queue_module.Queue()
@@ -2069,10 +2025,10 @@ async def stata_run_file_stream(file_path: str, timeout: int = 600, working_dir:
                         new_content = f.read()
                         last_read_pos = f.tell()
 
-                    # Send only new lines (filtered to remove command echoes)
+                    # Send only new lines (no filtering for VS Code - full output)
                     if new_content.strip():
                         for line in new_content.splitlines():
-                            if not should_skip_line(line):
+                            if line.strip():
                                 escaped = line.replace('\\', '\\\\')
                                 yield f"data: {escaped}\n\n"
             except Exception as e:
@@ -2099,7 +2055,7 @@ async def stata_run_file_stream(file_path: str, timeout: int = 600, working_dir:
                         remaining = f.read()
                     if remaining.strip():
                         for line in remaining.splitlines():
-                            if not should_skip_line(line):
+                            if line.strip():
                                 escaped = line.replace('\\', '\\\\')
                                 yield f"data: {escaped}\n\n"
             except Exception as e:
@@ -2506,23 +2462,22 @@ async def stop_execution(session_id: str = None):
         except Exception as e:
             logging.debug(f"[STOP] Session manager stop failed: {str(e)}")
 
-    # Also try StataSO_SetBreak - only works if pystata is loaded in main process
-    # In multi-session mode, pystata is in worker processes, so this will fail
-    # but we try anyway as a fallback for single-session mode
-    # IMPORTANT: Only call SetBreak ONCE - multiple calls can crash Stata with SIGSEGV
-    try:
-        from pystata.config import stlib
-        if stlib is not None:
-            logging.info("[STOP] Trying StataSO_SetBreak() (single-session mode)")
-            stlib.StataSO_SetBreak()  # Call only ONCE to avoid crashes
-            stop_sent = True
-            method_used = method_used or "stata_setbreak"
-            logging.info("[STOP] StataSO_SetBreak() called successfully")
-    except ImportError:
-        # Expected in multi-session mode - pystata not loaded in main process
-        logging.debug("[STOP] pystata not available in main process (expected in multi-session mode)")
-    except Exception as e:
-        logging.debug(f"[STOP] StataSO_SetBreak() failed: {str(e)}")
+    # Only try StataSO_SetBreak if NOT using multi-session mode
+    # In multi-session mode, we already sent stop via session_manager above
+    # Calling SetBreak in BOTH places causes double break messages
+    if not multi_session_enabled:
+        try:
+            from pystata.config import stlib
+            if stlib is not None:
+                logging.info("[STOP] Trying StataSO_SetBreak() (single-session mode)")
+                stlib.StataSO_SetBreak()  # Call only ONCE to avoid crashes
+                stop_sent = True
+                method_used = method_used or "stata_setbreak"
+                logging.info("[STOP] StataSO_SetBreak() called successfully")
+        except ImportError:
+            logging.debug("[STOP] pystata not available in main process")
+        except Exception as e:
+            logging.debug(f"[STOP] StataSO_SetBreak() failed: {str(e)}")
 
     # Mark any tracked execution as cancelled
     exec_id = None
