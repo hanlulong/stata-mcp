@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Stata Worker Process - Independent PyStata instance for parallel session support
+Stata Worker Process - Two modes for different use cases
 
-Each worker runs in a separate process with its own PyStata instance, providing
-complete state isolation (data, variables, macros) between sessions.
+Mode 1: PyStata Mode (default session)
+- Uses PyStata library for direct Stata integration
+- Better performance, persistent state within session
+- Single instance due to PyStata's global state limitation
+
+Mode 2: Subprocess Mode (parallel sessions)
+- Launches independent Stata processes via command line
+- True parallelism with complete process isolation
+- Each session runs in its own Stata executable
+- Stateless: each command runs fresh (no persistent data between commands)
 
 Key Design Decisions:
 1. Uses multiprocessing.Queue for IPC (thread-safe, handles serialization)
-2. Requires 'spawn' start method for clean process isolation (set in session_manager)
+2. Subprocess mode uses `stata -b do file.do` for true isolation
 3. Worker lifecycle: CREATED -> INITIALIZING -> READY <-> BUSY -> STOPPED
-4. Output capture via stdout redirection during Stata execution
+4. Output capture via log files for reliable output handling
 """
 
 import os
@@ -22,7 +30,8 @@ import queue
 import platform
 import traceback
 import threading
-from typing import Optional, Dict, Any
+import tempfile
+from typing import Optional, Dict, Any, Tuple
 from enum import Enum
 
 
@@ -181,12 +190,24 @@ def worker_process(
         result_queue.put(result.__dict__)
 
     def initialize_stata():
-        """Initialize PyStata in this worker process"""
+        """Initialize PyStata in this worker process with proper isolation for parallelism"""
         nonlocal stata, stlib, worker_state
 
         worker_state = WorkerState.INITIALIZING
 
         try:
+            # === CRITICAL FOR PARALLELISM ===
+            # Create a unique temp directory for this worker to isolate Stata's temp files
+            # This prevents file locking conflicts between parallel workers
+            worker_temp_dir = tempfile.mkdtemp(prefix=f"stata_worker_{worker_id}_")
+
+            # Set environment variables for isolation BEFORE importing pystata
+            os.environ['SYSDIR_STATA'] = stata_path
+            os.environ['STATATMP'] = worker_temp_dir  # Stata temp directory
+            os.environ['TMPDIR'] = worker_temp_dir    # Unix temp
+            os.environ['TEMP'] = worker_temp_dir      # Windows temp
+            os.environ['TMP'] = worker_temp_dir       # Windows temp alt
+
             # Add Stata utilities paths - required for pystata import
             utilities_path = os.path.join(stata_path, "utilities", "pystata")
             utilities_parent = os.path.join(stata_path, "utilities")
@@ -195,9 +216,6 @@ def worker_process(
                 sys.path.insert(0, utilities_path)
             if os.path.exists(utilities_parent):
                 sys.path.insert(0, utilities_parent)
-
-            # Set environment variables
-            os.environ['SYSDIR_STATA'] = stata_path
 
             # Set Java headless mode on Mac to prevent Dock icon
             if platform.system() == 'Darwin':
@@ -221,6 +239,17 @@ def worker_process(
                 # Create a devnull text wrapper for PyStata output
                 devnull_file = open(os.devnull, 'w', encoding='utf-8')
                 config.stoutputf = devnull_file
+
+            # === SET UNIQUE RANDOM SEED FOR THIS WORKER ===
+            # This ensures each parallel session has independent random state
+            # Use worker_id hash + current time for uniqueness
+            import hashlib
+            seed_input = f"{worker_id}_{time.time()}_{os.getpid()}"
+            seed_hash = int(hashlib.md5(seed_input.encode()).hexdigest()[:8], 16)
+            try:
+                stata.run(f"set seed {seed_hash}", quietly=True)
+            except Exception:
+                pass  # Non-critical if seed setting fails
 
             worker_state = WorkerState.READY
             return True
@@ -254,6 +283,21 @@ def worker_process(
         cancelled = False
         stop_already_sent = False  # Reset for new execution
         start_time = time.time()
+
+        # === ENSURE UNIQUE RANDOM STATE FOR THIS SESSION ===
+        # Set seed at start of FIRST execution to ensure session isolation
+        # Use a session-specific flag to only set seed once per session
+        if not hasattr(execute_stata_code, '_seed_set'):
+            execute_stata_code._seed_set = {}
+        if worker_id not in execute_stata_code._seed_set:
+            try:
+                import hashlib
+                seed_input = f"{worker_id}_{time.time()}_{os.getpid()}"
+                seed_hash = int(hashlib.md5(seed_input.encode()).hexdigest()[:8], 16)
+                stata.run(f"set seed {seed_hash}")  # Don't use quietly
+                execute_stata_code._seed_set[worker_id] = seed_hash
+            except Exception:
+                pass  # Non-critical
 
         try:
             with OutputCapture() as capture:
@@ -301,12 +345,12 @@ def worker_process(
         if stata is None:
             return False, "", "Stata not initialized", 0.0, ""
 
-        # Determine log file path
+        # Determine log file path - INCLUDE SESSION ID to prevent locking conflicts
         if log_file is None:
-            # Create log file next to the do file
             base_name = os.path.splitext(os.path.basename(file_path))[0]
             log_dir = os.path.dirname(os.path.abspath(file_path))
-            log_file = os.path.join(log_dir, f"{base_name}_mcp.log")
+            # Include worker_id in log filename to prevent conflicts between parallel sessions
+            log_file = os.path.join(log_dir, f"{base_name}_{worker_id}_mcp.log")
 
         worker_state = WorkerState.BUSY
         # IMPORTANT: Clear stop_event FIRST to prevent race condition with monitor thread
@@ -317,6 +361,20 @@ def worker_process(
         cancelled = False
         stop_already_sent = False  # Reset for new execution
         start_time = time.time()
+
+        # === ENSURE UNIQUE RANDOM STATE FOR THIS SESSION ===
+        # Set seed at start of FIRST execution to ensure session isolation
+        if not hasattr(execute_stata_file, '_seed_set'):
+            execute_stata_file._seed_set = {}
+        if worker_id not in execute_stata_file._seed_set:
+            try:
+                import hashlib
+                seed_input = f"{worker_id}_{time.time()}_{os.getpid()}"
+                seed_hash = int(hashlib.md5(seed_input.encode()).hexdigest()[:8], 16)
+                stata.run(f"set seed {seed_hash}")  # Don't use quietly
+                execute_stata_file._seed_set[worker_id] = seed_hash
+            except Exception:
+                pass  # Non-critical
 
         try:
             # Read the original do file
@@ -569,6 +627,83 @@ capture log close _all
         if monitor_thread is not None and monitor_thread.is_alive():
             monitor_thread.join(timeout=1.0)
         worker_state = WorkerState.STOPPED
+
+
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
+
+def find_stata_executable(stata_path: str, stata_edition: str = "mp") -> Optional[str]:
+    """
+    Find the Stata executable path based on OS and edition.
+
+    Args:
+        stata_path: Base Stata installation path
+        stata_edition: Edition (mp, se, be)
+
+    Returns:
+        Full path to Stata executable, or None if not found
+    """
+    system = platform.system()
+    edition_lower = stata_edition.lower()
+
+    if system == 'Darwin':  # macOS
+        # Try different app bundle names
+        app_names = [
+            f"Stata{edition_lower.upper()}.app",  # StataMP.app
+            f"stata-{edition_lower}",              # stata-mp (command line)
+            "Stata.app",
+        ]
+
+        for app_name in app_names:
+            if app_name.endswith('.app'):
+                # macOS app bundle
+                exe_path = os.path.join(stata_path, app_name, "Contents", "MacOS", f"stata-{edition_lower}")
+                if os.path.exists(exe_path):
+                    return exe_path
+                # Try without edition suffix
+                exe_path = os.path.join(stata_path, app_name, "Contents", "MacOS", "stata")
+                if os.path.exists(exe_path):
+                    return exe_path
+            else:
+                # Direct executable
+                exe_path = os.path.join(stata_path, app_name)
+                if os.path.exists(exe_path):
+                    return exe_path
+
+        # Fallback: look for any stata executable in the path
+        for edition in ['mp', 'se', 'be', '']:
+            suffix = f"-{edition}" if edition else ""
+            exe_path = os.path.join(stata_path, f"stata{suffix}")
+            if os.path.exists(exe_path):
+                return exe_path
+
+    elif system == 'Windows':
+        # Windows executables
+        exe_names = [
+            f"Stata{edition_lower.upper()}-64.exe",  # StataMP-64.exe
+            f"Stata{edition_lower.upper()}.exe",      # StataMP.exe
+            "Stata-64.exe",
+            "Stata.exe",
+        ]
+
+        for exe_name in exe_names:
+            exe_path = os.path.join(stata_path, exe_name)
+            if os.path.exists(exe_path):
+                return exe_path
+
+    else:  # Linux
+        exe_names = [
+            f"stata-{edition_lower}",
+            "stata",
+        ]
+
+        for exe_name in exe_names:
+            exe_path = os.path.join(stata_path, exe_name)
+            if os.path.exists(exe_path):
+                return exe_path
+
+    return None
 
 
 # For testing worker independently
