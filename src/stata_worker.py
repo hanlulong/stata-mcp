@@ -404,8 +404,11 @@ capture log close _all
                 # Small sleep to avoid busy-waiting
                 time.sleep(0.1)
 
-            except Exception:
-                pass  # Ignore monitor thread errors
+            except Exception as e:
+                # Log but continue - monitor thread must stay alive for stop functionality
+                import traceback
+                traceback.print_exc()
+                time.sleep(0.5)  # Longer sleep on error to avoid spam
 
     # Start the stop monitor thread only if stop_event is provided
     monitor_thread = None

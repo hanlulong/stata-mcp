@@ -22,6 +22,9 @@ from typing import Dict, Any, Optional
 import warnings
 import re
 
+# Import utility functions
+from utils import get_windows_path_help_message, normalize_path_for_platform
+
 # Fix encoding issues on Windows for Unicode characters
 if platform.system() == 'Windows':
     # Force UTF-8 encoding for stdout and stderr on Windows
@@ -1514,28 +1517,20 @@ def run_stata_file(file_path: str, timeout=600, auto_name_graphs=False, working_
             logging.error(error_msg)
             
             # Add more helpful error message for Windows
-            if platform.system() == "Windows":
-                error_msg += "\n\nCommon Windows path issues:\n"
-                error_msg += "1. Make sure the file path uses correct separators (use \\ instead of /)\n"
-                error_msg += "2. Check if the file exists in the specified location\n"
-                error_msg += "3. If using relative paths, the current working directory is: " + os.getcwd()
-            
+            error_msg += get_windows_path_help_message()
+
             return error_msg
-        
+
         file_path = resolved_path
         
         # Verify file exists (final check)
         if not os.path.exists(file_path):
             error_msg = f"Error: File not found: {file_path}"
             logging.error(error_msg)
-            
+
             # Add more helpful error message for Windows
-            if platform.system() == "Windows":
-                error_msg += "\n\nCommon Windows path issues:\n"
-                error_msg += "1. Make sure the file path uses correct separators (use \\ instead of /)\n"
-                error_msg += "2. Check if the file exists in the specified location\n"
-                error_msg += "3. If using relative paths, the current working directory is: " + os.getcwd()
-            
+            error_msg += get_windows_path_help_message()
+
             return error_msg
             
         # Check file extension
@@ -2631,11 +2626,7 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
             # If file not found error, make the message more helpful
             if "File not found" in result:
                 # Add help text explaining common issues with Windows paths
-                if platform.system() == "Windows":
-                    result += "\n\nCommon Windows path issues:\n"
-                    result += "1. Make sure the file path uses correct separators (use \\ instead of /)\n"
-                    result += "2. Check if the file exists in the specified location\n"
-                    result += "3. If using relative paths, the current working directory is: " + os.getcwd()
+                result += get_windows_path_help_message()
 
         # Session management tool - unified with action parameter
         elif mcp_tool_name == "stata_session":
