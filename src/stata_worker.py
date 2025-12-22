@@ -143,6 +143,12 @@ def worker_process(
         init_timeout: Timeout for Stata initialization
         stop_event: Optional Event for signaling stop (avoids queue race condition)
     """
+    # CRITICAL: Redirect stdout to devnull immediately to prevent worker output
+    # from appearing in parent process stdout (which VS Code pipes to output channel).
+    # This prevents duplicate output - the SSE stream is the only output path.
+    original_stdout = sys.stdout
+    sys.stdout = open(os.devnull, 'w')
+
     worker_state = WorkerState.CREATED
     stata = None
     stlib = None
@@ -198,10 +204,10 @@ def worker_process(
             from pystata.config import stlib as stlib_module
             stlib = stlib_module
 
-            # Fix encoding on Windows
-            if platform.system() == 'Windows':
+            # Fix encoding on Windows - use original stdout's buffer since we redirected stdout
+            if platform.system() == 'Windows' and hasattr(original_stdout, 'buffer'):
                 config.stoutputf = io.TextIOWrapper(
-                    sys.stdout.buffer,
+                    original_stdout.buffer,
                     encoding='utf-8',
                     errors='replace',
                     line_buffering=True
