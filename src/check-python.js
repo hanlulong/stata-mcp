@@ -147,6 +147,7 @@ function isUvInstalled() {
         
         if (process.platform === 'win32') {
             commonPaths.push(
+                path.join(homeDir, '.local', 'bin', 'uv.exe'),  // Common install location
                 path.join(homeDir, '.cargo', 'bin', 'uv.exe'),
                 path.join(homeDir, 'AppData', 'Local', 'uv', 'uv.exe'),
                 path.join(homeDir, 'AppData', 'Local', 'Programs', 'uv', 'uv.exe'),

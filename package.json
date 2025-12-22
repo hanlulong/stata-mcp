@@ -3,7 +3,7 @@
 	"displayName": "Stata MCP",
 	"description": "Stata MCP Extension for VS Code and Cursor IDE",
 	"publisher": "DeepEcon",
-	"version": "0.3.6",
+	"version": "0.3.7",
 	"icon": "images/Stata_MCP_logo_400x400.png",
 	"engines": {
 		"vscode": "^1.75.0"
@@ -51,6 +51,11 @@
 				"icon": "$(run-all)"
 			},
 			{
+				"command": "stata-vscode.stopExecution",
+				"title": "Stata: Stop Execution",
+				"icon": "$(debug-stop)"
+			},
+			{
 				"command": "stata-vscode.viewData",
 				"title": "Stata: View Data",
 				"icon": "$(table)"
@@ -83,6 +88,11 @@
 				},
 				{
 					"when": "resourceExtname == .do || resourceExtname == .ado || resourceExtname == .mata || editorLangId == stata",
+					"command": "stata-vscode.stopExecution",
+					"group": "navigation"
+				},
+				{
+					"when": "resourceExtname == .do || resourceExtname == .ado || resourceExtname == .mata || editorLangId == stata",
 					"command": "stata-vscode.viewData",
 					"group": "navigation"
 				},
@@ -102,6 +112,11 @@
 					"when": "resourceExtname == .do || resourceExtname == .ado || resourceExtname == .mata || editorLangId == stata",
 					"command": "stata-vscode.runFile",
 					"group": "1_stata"
+				},
+				{
+					"when": "resourceExtname == .do || resourceExtname == .ado || resourceExtname == .mata || editorLangId == stata",
+					"command": "stata-vscode.stopExecution",
+					"group": "1_stata"
 				}
 			]
 		},
@@ -116,6 +131,12 @@
 				"command": "stata-vscode.runFile",
 				"key": "ctrl+shift+d",
 				"mac": "cmd+shift+d",
+				"when": "editorTextFocus && (editorLangId == stata || resourceExtname == .do || resourceExtname == .ado || resourceExtname == .mata)"
+			},
+			{
+				"command": "stata-vscode.stopExecution",
+				"key": "ctrl+shift+c",
+				"mac": "cmd+shift+c",
 				"when": "editorTextFocus && (editorLangId == stata || resourceExtname == .do || resourceExtname == .ado || resourceExtname == .mata)"
 			}
 		],
@@ -210,6 +231,17 @@
 					"type": "number",
 					"default": 10000,
 					"description": "Maximum tokens (approx. 4 chars each) for MCP output. When exceeded, output is saved to file and path is returned instead. Set to 0 for unlimited."
+				},
+				"stata-vscode.workingDirectory": {
+					"type": "string",
+					"enum": ["dofile", "parent", "workspace", "extension", "custom", "none"],
+					"default": "dofile",
+					"description": "Working directory when running .do files: 'dofile' (same as .do file - default), 'parent' (parent directory of .do file), 'workspace' (VS Code workspace root), 'extension' (logs folder in extension directory), 'custom' (user-specified), or 'none' (don't change directory)"
+				},
+				"stata-vscode.customWorkingDirectory": {
+					"type": "string",
+					"default": "",
+					"description": "Custom working directory path (only used when workingDirectory is set to 'custom')"
 				}
 			}
 		},

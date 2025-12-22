@@ -69,11 +69,11 @@ code --install-extension DeepEcon.stata-mcp
 
 #### 选项 2：从 .vsix 文件安装
 
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.3.6.vsix`。
+1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.3.7.vsix`。
 2. 使用以下方法之一安装：
 
 ```bash
-code --install-extension path/to/stata-mcp-0.3.6.vsix
+code --install-extension path/to/stata-mcp-0.3.7.vsix
 ```
 
 或：
@@ -85,11 +85,11 @@ code --install-extension path/to/stata-mcp-0.3.6.vsix
 
 ### Cursor 安装
 
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.3.6.vsix`。
+1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.3.7.vsix`。
 2. 使用以下方法之一安装：
 
 ```bash
-cursor --install-extension path/to/stata-mcp-0.3.6.vsix
+cursor --install-extension path/to/stata-mcp-0.3.7.vsix
 ```
 
 或：
@@ -184,6 +184,17 @@ cursor --install-extension path/to/stata-mcp-0.3.6.vsix
 | `stata-vscode.runFileTimeout` | "运行文件"操作的超时时间（秒） | `600`（10 分钟） |
 | `stata-vscode.debugMode` | 在输出面板中显示详细的调试信息 | `false` |
 | `stata-vscode.clineConfigPath` | Cline 配置文件的自定义路径（可选） | 自动检测 |
+
+### 工作目录设置
+
+控制运行 .do 文件时 Stata 使用的目录：
+
+| 设置 | 描述 | 默认值 |
+|------|------|--------|
+| `stata-vscode.workingDirectory` | 运行 .do 文件时的工作目录：`dofile`（与 .do 文件相同）、`parent`（.do 文件的父目录）、`workspace`（VS Code 工作区根目录）、`extension`（扩展目录中的 logs 文件夹）、`custom`（用户指定）或 `none`（不更改目录） | `dofile` |
+| `stata-vscode.customWorkingDirectory` | 自定义工作目录路径（仅当 workingDirectory 设置为 `custom` 时使用） | 空 |
+
+**示例：** 如果您的项目结构是 `project/code/analysis.do`，而您的 do 文件期望从 `project/` 运行，请将 `workingDirectory` 设置为 `parent`。
 
 ### MCP 输出设置
 

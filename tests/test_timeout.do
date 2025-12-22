@@ -20,8 +20,9 @@ forvalues i = 1(1)`iter' {
     * Pause for 1 second
     sleep 1000
 
+    di `i'
     * Do some computation to simulate work
-    quietly summarize x
+    * summarize x
 
     * Display progress every 10 iterations
     if mod(`i', 10) == 0 {

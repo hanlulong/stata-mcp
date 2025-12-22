@@ -128,6 +128,12 @@ extension_path = None  # Path to the extension directory
 result_display_mode = 'compact'  # 'compact' or 'full'
 max_output_tokens = 10000  # Maximum tokens (approx 4 chars each), 0 for unlimited
 
+# Execution tracking for stop/cancel functionality
+import threading
+execution_registry = {}  # Map: execution_id -> {'thread': thread, 'start_time': time, 'cancelled': bool, 'file': file}
+execution_lock = threading.Lock()  # Protect concurrent access to execution_registry
+current_execution_id = None  # Track the current execution ID
+
 # Try to import pandas
 try:
     import pandas as pd
@@ -1467,13 +1473,14 @@ def run_stata_selection(selection, working_dir=None, auto_detect_graphs=False):
     else:
         return run_stata_command(selection, auto_detect_graphs=auto_detect_graphs)
 
-def run_stata_file(file_path: str, timeout=600, auto_name_graphs=False):
+def run_stata_file(file_path: str, timeout=600, auto_name_graphs=False, working_dir=None):
     """Run a Stata .do file with improved handling for long-running processes
 
     Args:
         file_path: The path to the .do file to run
         timeout: Timeout in seconds (default: 600 seconds / 10 minutes)
         auto_name_graphs: Whether to automatically add names to graphs (default: False for MCP/LLM calls)
+        working_dir: Working directory to cd to before running (None = use do file's directory)
     """
     # Set timeout from parameter instead of hardcoding
     MAX_TIMEOUT = timeout
@@ -1627,10 +1634,19 @@ def run_stata_file(file_path: str, timeout=600, auto_name_graphs=False):
                 temp_do.write(f"capture program drop _all\n")
                 # Clear all macros to prevent conflicts
                 temp_do.write(f"capture macro drop _all\n")
-                # Change working directory to the .do file's directory
-                # This ensures the .do file executes in its workspace (relative paths work correctly)
+                # Change working directory based on working_dir parameter
+                # If working_dir is None, don't change directory (keep Stata's current directory)
+                # Otherwise, cd to the specified directory
                 # The log file uses an absolute path, so it's saved to the configured location
-                temp_do.write(f"cd \"{do_file_dir}\"\n")
+                if working_dir is not None:
+                    # Normalize path for the current platform
+                    wd = os.path.normpath(working_dir)
+                    if platform.system() == "Windows":
+                        wd = wd.replace('/', '\\')
+                    temp_do.write(f"cd \"{wd}\"\n")
+                    logging.info(f"Setting working directory to: {wd}")
+                else:
+                    logging.info("Working directory: not changing (none specified)")
                 # Note: _gr_list on is enabled externally before .do file execution
                 # Note: Graph names are auto-injected above into modified_content
                 # Then add our own log command with absolute path
@@ -1705,6 +1721,7 @@ def run_stata_file(file_path: str, timeout=600, auto_name_graphs=False):
                 stata_error = None
                 
                 def run_stata_thread():
+                    nonlocal stata_error
                     try:
                         # Make sure to properly quote the path - this is the key fix
                         # Use inline=False because inline=True calls _gr_list off!
@@ -1718,15 +1735,37 @@ def run_stata_file(file_path: str, timeout=600, auto_name_graphs=False):
                                 globals()['stata'].run(do_command_fixed, echo=False, inline=False)
                             else:
                                 globals()['stata'].run(do_command, echo=False, inline=False)
+                    except KeyboardInterrupt:
+                        stata_error = "cancelled"
+                        logging.debug("Stata thread received KeyboardInterrupt")
+                        # Try to call StataSO_SetBreak to clean up Stata state
+                        try:
+                            from pystata.config import stlib
+                            if stlib is not None:
+                                stlib.StataSO_SetBreak()
+                        except:
+                            pass
                     except Exception as e:
-                        nonlocal stata_error
                         stata_error = str(e)
                 
                 import threading
                 stata_thread = threading.Thread(target=run_stata_thread)
                 stata_thread.daemon = True
                 stata_thread.start()
-                
+
+                # Register execution for cancellation support
+                global current_execution_id
+                exec_id = f"exec_{int(time.time() * 1000)}"
+                with execution_lock:
+                    current_execution_id = exec_id
+                    execution_registry[exec_id] = {
+                        'thread': stata_thread,
+                        'start_time': start_time,
+                        'cancelled': False,
+                        'file': file_path
+                    }
+                logging.info(f"Registered execution {exec_id} for file {file_path}")
+
                 # Poll for progress while command is running
                 while stata_thread.is_alive():
                     # Check for timeout
@@ -1741,50 +1780,55 @@ def run_stata_file(file_path: str, timeout=600, auto_name_graphs=False):
                         termination_successful = False
 
                         try:
-                            # ATTEMPT 1: Send Stata break command
-                            logging.warning(f"TIMEOUT - Attempt 1: Sending Stata break command")
+                            # ATTEMPT 1: Use PyStata's native break mechanism (StataSO_SetBreak)
+                            logging.warning(f"TIMEOUT - Attempt 1: Using StataSO_SetBreak()")
                             try:
-                                globals()['stata'].run("break", echo=False)
-                                time.sleep(0.5)  # Give it a moment
-                                if not stata_thread.is_alive():
-                                    termination_successful = True
-                                    logging.warning("Thread terminated via Stata break command")
-                            except Exception as e:
-                                logging.warning(f"Stata break command failed: {str(e)}")
-
-                            # ATTEMPT 2: Try to forcibly raise an exception in the thread
-                            if not termination_successful and hasattr(stata_thread, "_stop"):
-                                logging.warning(f"TIMEOUT - Attempt 2: Forcing thread stop")
-                                try:
-                                    # This is a more aggressive approach
-                                    # The _stop method is not officially supported but often works
-                                    stata_thread._stop()
+                                from pystata.config import stlib
+                                if stlib is not None:
+                                    stlib.StataSO_SetBreak()
+                                    logging.warning("Called StataSO_SetBreak() to interrupt Stata")
                                     time.sleep(0.5)  # Give it a moment
                                     if not stata_thread.is_alive():
                                         termination_successful = True
-                                        logging.warning("Thread terminated via thread._stop")
-                                except Exception as e:
-                                    logging.warning(f"Thread stop failed: {str(e)}")
+                                        logging.warning("Thread terminated via StataSO_SetBreak()")
+                            except Exception as e:
+                                logging.warning(f"StataSO_SetBreak() failed: {str(e)}")
 
-                            # ATTEMPT 3: Try to find and kill the Stata process (last resort)
-                            if not termination_successful:
-                                logging.warning(f"TIMEOUT - Attempt 3: Looking for Stata process to terminate")
+                            # ATTEMPT 2: Try to raise KeyboardInterrupt in the thread using ctypes
+                            if not termination_successful and stata_thread.is_alive():
+                                logging.warning(f"TIMEOUT - Attempt 2: Raising KeyboardInterrupt in thread via ctypes")
                                 try:
-                                    # Find any Stata processes
-                                    if platform.system() == "Windows":
-                                        # Windows approach
-                                        subprocess.run(["taskkill", "/F", "/IM", "stata*.exe"], 
-                                                      stdout=subprocess.DEVNULL, 
-                                                      stderr=subprocess.DEVNULL)
-                                    else:
-                                        # macOS/Linux approach
-                                        subprocess.run(["pkill", "-f", "stata"], 
-                                                      stdout=subprocess.DEVNULL, 
-                                                      stderr=subprocess.DEVNULL)
-                                    
-                                    logging.warning("Sent kill signal to Stata processes")
+                                    import ctypes
+                                    thread_id = stata_thread.ident
+                                    if thread_id is not None:
+                                        # Raise KeyboardInterrupt in the target thread
+                                        res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                                            ctypes.c_ulong(thread_id),
+                                            ctypes.py_object(KeyboardInterrupt)
+                                        )
+                                        if res == 1:
+                                            logging.warning("KeyboardInterrupt raised in thread")
+                                            time.sleep(1.0)  # Give more time for interrupt to propagate
+                                            if not stata_thread.is_alive():
+                                                termination_successful = True
+                                                logging.warning("Thread terminated via KeyboardInterrupt")
+                                        else:
+                                            # Reset if more than one thread affected
+                                            if res > 1:
+                                                ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                                                    ctypes.c_ulong(thread_id),
+                                                    None
+                                                )
                                 except Exception as e:
-                                    logging.error(f"Process kill failed: {str(e)}")
+                                    logging.warning(f"Thread interrupt failed: {str(e)}")
+
+                            # Note: We do NOT try to kill processes because:
+                            # 1. Stata runs as a shared library within the Python process (not separate)
+                            # 2. pkill -f "stata" would match and kill stata_mcp_server.py itself!
+                            # StataSO_SetBreak() is the correct and only way to interrupt Stata
+                            if not termination_successful:
+                                logging.warning(f"TIMEOUT - StataSO_SetBreak did not terminate thread immediately")
+                                logging.warning("Stata will stop at the next break point in execution")
                         except Exception as term_error:
                             logging.error(f"Error during forced termination: {str(term_error)}")
                         
@@ -1792,7 +1836,14 @@ def run_stata_file(file_path: str, timeout=600, auto_name_graphs=False):
                         stata_error = f"Operation timed out after {MAX_TIMEOUT} seconds"
                         logging.warning(f"Setting timeout error: {stata_error}")
                         break
-                    
+
+                    # Check for user-initiated cancellation
+                    with execution_lock:
+                        if exec_id in execution_registry and execution_registry[exec_id].get('cancelled', False):
+                            logging.debug(f"Execution {exec_id} was cancelled by user")
+                            stata_error = "cancelled"
+                            break
+
                     # Check if it's time for an update
                     if current_time - last_update_time >= update_interval:
                         # IMPORTANT: Log progress frequently to keep SSE connection alive for long-running scripts
@@ -1849,13 +1900,50 @@ def run_stata_file(file_path: str, timeout=600, auto_name_graphs=False):
                 
                 # Thread completed or timed out
                 if stata_error:
-                    error_msg = f"Error executing Stata command: {stata_error}"
-                    logging.error(error_msg)
-                    result += f"\n*** ERROR: {stata_error} ***\n"
-                    
-                    # Add command to history and return
-                    command_history.append({"command": command_entry, "result": result})
-                    return result
+                    # Check if this was a user-initiated cancellation
+                    # Cancellation can be detected by:
+                    # 1. stata_error == "cancelled" (set in polling loop)
+                    # 2. "--Break--" in error message (Stata's break exception)
+                    # 3. execution was marked as cancelled in registry
+                    is_cancelled = (
+                        stata_error == "cancelled" or
+                        "--Break--" in str(stata_error) or
+                        (exec_id in execution_registry and execution_registry[exec_id].get('cancelled', False))
+                    )
+
+                    if is_cancelled:
+                        logging.debug("Execution was cancelled by user")
+                        # Read final log to include any output up to the break
+                        if os.path.exists(custom_log_file):
+                            try:
+                                with open(custom_log_file, 'r', encoding='utf-8', errors='replace') as log:
+                                    log_content = log.read()
+                                    # Extract just the output portion (after header)
+                                    lines = log_content.splitlines()
+                                    start_index = 0
+                                    for i, line in enumerate(lines):
+                                        if '-------------' in line and i < 20:
+                                            start_index = i + 1
+                                            break
+                                    if start_index < len(lines):
+                                        result = '\n'.join(lines[start_index:])
+                            except Exception as e:
+                                logging.debug(f"Could not read log file for cancelled execution: {e}")
+                        # Add clear cancellation indicator and print to stdout
+                        # (stdout is captured by VS Code extension for real-time display)
+                        print("\n=== Execution stopped ===", flush=True)
+                        result += "\n\n=== Execution stopped ==="
+                        # Return result without error wrapper
+                        command_history.append({"command": command_entry, "result": result})
+                        return result
+                    else:
+                        error_msg = f"Error executing Stata command: {stata_error}"
+                        logging.error(error_msg)
+                        result += f"\n*** ERROR: {stata_error} ***\n"
+
+                        # Add command to history and return
+                        command_history.append({"command": command_entry, "result": result})
+                        return result
                 
                 # Read final log output
                 if os.path.exists(custom_log_file):
@@ -1951,11 +2039,26 @@ def run_stata_file(file_path: str, timeout=600, auto_name_graphs=False):
         
         # Add to command history and return result
         command_history.append({"command": command_entry, "result": result})
+
+        # Cleanup: unregister execution
+        with execution_lock:
+            if 'exec_id' in dir() and exec_id in execution_registry:
+                del execution_registry[exec_id]
+                logging.info(f"Unregistered execution {exec_id}")
+            current_execution_id = None
+
         return result
-        
+
     except Exception as e:
         error_msg = f"Error in run_stata_file: {str(e)}"
         logging.error(error_msg)
+
+        # Cleanup on error: unregister execution
+        with execution_lock:
+            if 'exec_id' in dir() and exec_id in execution_registry:
+                del execution_registry[exec_id]
+            current_execution_id = None
+
         return error_msg
 
 # Function to kill any process using the specified port
@@ -2110,28 +2213,35 @@ async def stata_run_selection_endpoint(selection: str) -> Response:
     formatted_result = process_mcp_output(formatted_result, for_mcp=True)
     return Response(content=formatted_result, media_type="text/plain")
 
-async def stata_run_file_stream(file_path: str, timeout: int = 600):
+async def stata_run_file_stream(file_path: str, timeout: int = 600, working_dir: str = None):
     """Async generator that runs Stata file and yields SSE progress events
+
+    Streams output incrementally by monitoring the log file during execution.
 
     Args:
         file_path: Path to the .do file
         timeout: Timeout in seconds
+        working_dir: Optional working directory for execution
 
     Yields:
-        SSE formatted events with progress updates
+        SSE formatted events with incremental output
     """
     import threading
     import queue
 
     # Queue to communicate between threads
-    progress_queue = queue.Queue()
     result_queue = queue.Queue()
 
+    # Determine log file path (same logic as run_stata_file)
+    stata_path = os.path.abspath(file_path)
+    base_name = os.path.splitext(os.path.basename(stata_path))[0]
+    log_dir = os.path.dirname(stata_path)
+    log_file = os.path.join(log_dir, f"{base_name}_mcp.log")
+
     def run_with_progress():
-        """Run Stata file in thread, sending progress to queue"""
+        """Run Stata file in thread"""
         try:
-            # Run the file and collect result
-            result = run_stata_file(file_path, timeout=timeout)
+            result = run_stata_file(file_path, timeout=timeout, working_dir=working_dir)
             result_queue.put(('success', result))
         except Exception as e:
             result_queue.put(('error', str(e)))
@@ -2140,51 +2250,78 @@ async def stata_run_file_stream(file_path: str, timeout: int = 600):
     thread = threading.Thread(target=run_with_progress, daemon=True)
     thread.start()
 
-    # Yield initial event
+    # Yield initial event (debug info)
     yield f"data: Starting execution of {os.path.basename(file_path)}...\n\n"
 
     start_time = time.time()
     last_check = start_time
-    check_interval = 2.0  # Check every 2 seconds for responsive streaming
+    last_log_size = 0
+    last_log_content = ""
+    check_interval = 2.0
 
-    # Monitor progress
+    # Monitor progress by reading log file incrementally
     while thread.is_alive():
         current_time = time.time()
         elapsed = current_time - start_time
 
-        # Check if it's time for an update
+        # Send progress update (for debug mode on client)
         if current_time - last_check >= check_interval:
-            # Yield progress event
             yield f"data: Executing... {elapsed:.1f}s elapsed\n\n"
             last_check = current_time
 
-        # Sleep briefly to avoid busy waiting
+            # Check log file for new content
+            if os.path.exists(log_file):
+                try:
+                    current_size = os.path.getsize(log_file)
+                    if current_size > last_log_size:
+                        with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
+                            content = f.read()
+                        # Get only new content
+                        new_content = content[len(last_log_content):]
+                        if new_content.strip():
+                            # Clean up the content
+                            new_content = new_content.replace('\r\n', '\n').replace('\r', '\n')
+                            # Escape for SSE
+                            escaped = new_content.replace('\n', '\\n')
+                            yield f"data: {escaped}\n\n"
+                        last_log_content = content
+                        last_log_size = current_size
+                except Exception as e:
+                    logging.debug(f"Error reading log file: {e}")
+
         await asyncio.sleep(0.1)
 
-        # Check if execution exceeded timeout
+        # Check timeout
         if elapsed > timeout:
             yield f"data: ERROR: Execution timed out after {timeout}s\n\n"
             break
 
-    # Get final result
+    # Get final result and send any remaining output
     try:
-        status, result = result_queue.get(timeout=1.0)
+        status, result = result_queue.get(timeout=2.0)
         if status == 'error':
             yield f"data: ERROR: {result}\n\n"
         else:
-            # Format and send final output
-            formatted_result = result.replace("\\n", "\n")
-            # Apply MCP output processing (compact mode filtering and token limit)
-            # filter_command_echo=True for run_file (LLM already knows the file contents)
-            formatted_result = process_mcp_output(formatted_result, for_mcp=True, filter_command_echo=True)
-            # Split into chunks to avoid overwhelming SSE
-            lines = formatted_result.split('\n')
-            for i in range(0, len(lines), 10):
-                chunk = '\n'.join(lines[i:i+10])
-                # Escape newlines in SSE data field
-                escaped_chunk = chunk.replace('\n', '\\n')
-                yield f"data: {escaped_chunk}\n\n"
-                await asyncio.sleep(0.05)  # Small delay between chunks
+            # Check if there's any final content in the log we haven't sent
+            if os.path.exists(log_file):
+                try:
+                    with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
+                        final_content = f.read()
+                    remaining = final_content[len(last_log_content):]
+                    if remaining.strip():
+                        remaining = remaining.replace('\r\n', '\n').replace('\r', '\n')
+                        escaped = remaining.replace('\n', '\\n')
+                        yield f"data: {escaped}\n\n"
+                except Exception as e:
+                    logging.debug(f"Error reading final log: {e}")
+
+            # Check for errors or special messages in result
+            if 'ERROR' in result or 'TIMEOUT' in result or 'CANCELLED' in result:
+                # Extract just the error portion
+                for line in result.split('\n'):
+                    if 'ERROR' in line or 'TIMEOUT' in line or 'CANCELLED' in line or 'Break' in line:
+                        escaped = line.replace('\n', '\\n')
+                        yield f"data: {escaped}\n\n"
 
             yield "data: *** Execution completed ***\n\n"
     except queue.Empty:
@@ -2232,7 +2369,8 @@ async def stata_run_file_endpoint(
 @app.get("/run_file/stream")
 async def stata_run_file_stream_endpoint(
     file_path: str,
-    timeout: int = 600
+    timeout: int = 600,
+    working_dir: str = None
 ):
     """Run a Stata .do file and stream the output via Server-Sent Events (SSE)
 
@@ -2242,6 +2380,7 @@ async def stata_run_file_stream_endpoint(
     Args:
         file_path: Path to the .do file
         timeout: Timeout in seconds (default: 600 seconds / 10 minutes)
+        working_dir: Optional working directory for execution
 
     Returns:
         StreamingResponse with text/event-stream content type
@@ -2257,9 +2396,11 @@ async def stata_run_file_stream_endpoint(
         timeout = 600
 
     logging.info(f"[STREAM] Running file: {file_path} with timeout {timeout} seconds ({timeout/60:.1f} minutes)")
+    if working_dir:
+        logging.info(f"[STREAM] Working directory: {working_dir}")
 
     return StreamingResponse(
-        stata_run_file_stream(file_path, timeout),
+        stata_run_file_stream(file_path, timeout, working_dir),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -2303,7 +2444,8 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
             # Get optional working_dir parameter
             working_dir = request.parameters.get("working_dir", None)
             # Enable auto_detect_graphs for VS Code extension calls
-            result = run_stata_selection(request.parameters["selection"], working_dir=working_dir, auto_detect_graphs=True)
+            # Use asyncio.to_thread to allow concurrent stop requests
+            result = await asyncio.to_thread(run_stata_selection, request.parameters["selection"], working_dir, True)
             # Format output for better display
             result = result.replace("\\n", "\n")
             
@@ -2328,18 +2470,24 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
                 logging.warning(f"Non-integer timeout value: {timeout}, using default 600")
                 timeout = 600
                 
+            # Get optional working_dir parameter
+            working_dir = request.parameters.get("working_dir", None)
+
             logging.info(f"MCP run_file request for: {file_path} with timeout {timeout} seconds ({timeout/60:.1f} minutes)")
-            
+            if working_dir:
+                logging.info(f"Working directory: {working_dir}")
+
             # Normalize the path for cross-platform compatibility
             file_path = os.path.normpath(file_path)
-            
+
             # On Windows, convert forward slashes to backslashes if needed
             if platform.system() == "Windows" and '/' in file_path:
                 file_path = file_path.replace('/', '\\')
-            
+
             # Run the file through the run_stata_file function with timeout
             # Enable auto_name_graphs for VS Code extension calls
-            result = run_stata_file(file_path, timeout=timeout, auto_name_graphs=True)
+            # Use asyncio.to_thread to allow concurrent stop requests
+            result = await asyncio.to_thread(run_stata_file, file_path, timeout, True, working_dir)
             
             # Format output for better display
             result = result.replace("\\n", "\n")
@@ -2382,6 +2530,107 @@ async def health_check():
         "version": SERVER_VERSION,
         "stata_available": stata_available
     }
+
+# Endpoint to stop a running execution
+# Hidden from OpenAPI schema so it won't be exposed to LLMs via MCP
+@app.post("/stop_execution", include_in_schema=False)
+async def stop_execution():
+    """Stop the currently running Stata execution"""
+    global current_execution_id
+
+    # First, get execution info while holding the lock
+    with execution_lock:
+        if current_execution_id is None:
+            return {"status": "no_execution", "message": "No execution is currently running"}
+
+        exec_id = current_execution_id
+        if exec_id not in execution_registry:
+            return {"status": "not_found", "message": f"Execution {exec_id} not found in registry"}
+
+        execution = execution_registry[exec_id]
+        thread = execution.get('thread')
+
+        # Mark as cancelled
+        execution['cancelled'] = True
+        logging.debug(f"Stop requested for execution {exec_id}")
+
+    # Release lock before calling StataSO_SetBreak to avoid potential deadlock
+    # The Stata thread may be trying to acquire the lock in the polling loop
+
+    termination_successful = False
+    termination_method = None
+
+    try:
+        # Use PyStata's native break mechanism (StataSO_SetBreak)
+        # This is the ONLY reliable way to interrupt Stata since it runs in-process
+        # as a shared library (not as a separate process)
+        logging.debug("Using StataSO_SetBreak() to interrupt Stata")
+        try:
+            from pystata.config import stlib
+            if stlib is not None:
+                # Call SetBreak multiple times to ensure it takes effect
+                # Stata checks the break flag at various points during execution
+                for i in range(3):
+                    stlib.StataSO_SetBreak()
+                    logging.debug(f"Called StataSO_SetBreak() - attempt {i+1}")
+                    time.sleep(0.3)
+
+                    if thread and not thread.is_alive():
+                        termination_successful = True
+                        termination_method = "stata_setbreak"
+                        logging.debug("Thread terminated via StataSO_SetBreak()")
+                        break
+
+                # Wait a bit more and check again
+                if not termination_successful and thread:
+                    time.sleep(1.0)
+                    if not thread.is_alive():
+                        termination_successful = True
+                        termination_method = "stata_setbreak"
+                        logging.debug("Thread terminated via StataSO_SetBreak() (delayed)")
+            else:
+                logging.debug("stlib is None - cannot call StataSO_SetBreak()")
+        except Exception as e:
+            logging.debug(f"StataSO_SetBreak() failed: {str(e)}")
+
+        # Note: We do NOT try to kill processes because:
+        # 1. Stata runs as a shared library within the Python process (not separate)
+        # 2. pkill -f "stata" would match and kill stata_mcp_server.py itself!
+        # StataSO_SetBreak() is the correct and only way to interrupt Stata
+
+    except Exception as term_error:
+        logging.error(f"Error during stop execution: {str(term_error)}")
+        return {"status": "error", "message": str(term_error)}
+
+    return {
+        "status": "stopped" if termination_successful else "stop_requested",
+        "execution_id": exec_id,
+        "method": termination_method,
+        "message": "Execution stopped" if termination_successful else "Stop signal sent, Stata will stop at next break point"
+    }
+
+@app.get("/execution_status", include_in_schema=False)
+async def get_execution_status():
+    """Get the current execution status"""
+    global current_execution_id
+
+    with execution_lock:
+        if current_execution_id is None:
+            return {"status": "idle", "executing": False}
+
+        if current_execution_id in execution_registry:
+            execution = execution_registry[current_execution_id]
+            elapsed = time.time() - execution.get('start_time', time.time())
+            return {
+                "status": "running",
+                "executing": True,
+                "execution_id": current_execution_id,
+                "file": execution.get('file', 'unknown'),
+                "elapsed_seconds": round(elapsed, 1),
+                "cancelled": execution.get('cancelled', False)
+            }
+
+        return {"status": "idle", "executing": False}
 
 # Endpoint to serve graph images
 # Hidden from OpenAPI schema so it won't be exposed to LLMs via MCP

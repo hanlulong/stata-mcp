@@ -19,6 +19,10 @@ let globalContext;
 let detectedStataPath = null;
 let debugMode = false;
 
+// Execution tracking for stop functionality
+let isExecuting = false;
+let currentExecutionFile = null;
+
 // Configuration cache
 let configCache = null;
 let configCacheTime = 0;
@@ -68,8 +72,11 @@ const Logger = {
     },
     mcpServer: (message) => {
         const output = message.toString().trim();
-        stataOutputChannel.appendLine(`[MCP Server] ${output}`);
-        console.log(`[MCP Server] ${output}`);
+        // Skip empty output
+        if (!output) return;
+        // Show output without prefix
+        stataOutputChannel.appendLine(output);
+        console.log(output);
     },
     mcpServerError: (message) => {
         const output = message.toString().trim();
@@ -241,9 +248,8 @@ function activate(context) {
     const config = getConfig();
     debugMode = config.get('debugMode') || false;
 
-    // Create output channels
+    // Create output channels (don't show on startup to avoid stealing focus from terminal)
     stataOutputChannel = vscode.window.createOutputChannel('Stata');
-    stataOutputChannel.show(true);
     Logger.info('Stata extension activated.');
     
     stataAgentChannel = vscode.window.createOutputChannel('Stata Agent');
@@ -262,6 +268,7 @@ function activate(context) {
     context.subscriptions.push(
         vscode.commands.registerCommand('stata-vscode.runSelection', runSelection),
         vscode.commands.registerCommand('stata-vscode.runFile', runFile),
+        vscode.commands.registerCommand('stata-vscode.stopExecution', stopExecution),
         vscode.commands.registerCommand('stata-vscode.showInteractive', runInteractive),
         vscode.commands.registerCommand('stata-vscode.showOutput', showOutput),
         vscode.commands.registerCommand('stata-vscode.showOutputWebview', showStataOutputWebview),
@@ -296,6 +303,8 @@ function activate(context) {
     // Check Python dependencies
     const pythonPathFile = FileUtils.getExtensionFilePath(FILE_PATHS.PYTHON_PATH);
     if (!FileUtils.checkFileExists(pythonPathFile)) {
+        // Show output panel during first-time setup and steal focus so user sees installation progress
+        stataOutputChannel.show(false);
         Logger.info('Setting up Python dependencies during extension activation...');
         installDependencies();
     } else {
@@ -348,12 +357,27 @@ function handleConfigurationChange(event) {
 }
 
 // Update status bar
-function updateStatusBar() {
-    if (mcpServerRunning) {
+function updateStatusBar(state = null) {
+    // State can be: null (auto-detect), 'running', 'stopping'
+    if (state === 'running' || (state === null && isExecuting)) {
+        statusBarItem.text = "$(sync~spin) Stata: Running...";
+        statusBarItem.tooltip = `Executing: ${currentExecutionFile || 'command'}\nClick to stop`;
+        statusBarItem.command = 'stata-vscode.stopExecution';
+        statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+    } else if (state === 'stopping') {
+        statusBarItem.text = "$(sync~spin) Stata: Stopping...";
+        statusBarItem.tooltip = "Stopping execution...";
+        statusBarItem.command = undefined;
+        statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+    } else if (mcpServerRunning) {
         statusBarItem.text = "$(beaker) Stata: Connected";
+        statusBarItem.tooltip = "Stata MCP Server is connected";
+        statusBarItem.command = 'stata-vscode.showOutput';
         statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
     } else {
         statusBarItem.text = "$(beaker) Stata: Disconnected";
+        statusBarItem.tooltip = "Stata MCP Server is not connected";
+        statusBarItem.command = 'stata-vscode.showOutput';
         statusBarItem.backgroundColor = undefined;
     }
 }
@@ -439,7 +463,7 @@ async function startMcpServer() {
     const host = config.get('mcpServerHost') || 'localhost';
     const port = config.get('mcpServerPort') || 4000;
     const forcePort = config.get('forcePort') || false;
-    
+
     // Get Stata path and edition
     let stataPath = config.get('stataPath');
     const stataEdition = config.get('stataEdition') || 'mp';
@@ -506,14 +530,30 @@ async function startMcpServer() {
         mcpServerRunning = true;
         updateStatusBar();
 
-        // Server is already running - no notification needed
+        // Server is already running - don't reveal output panel to keep terminal visible
+        // Logs are written and viewable via "Stata: Show Output" command
         return;
     }
-    
+
     if (serverHealthy && !stataInitialized) {
         Logger.info(`Server is running but Stata is not properly initialized. Forcing restart...`);
         await ServerUtils.killProcessOnPort(port);
     }
+
+    // If server is not healthy, check if port is in use and kill any existing process
+    // This handles the case where a previous server didn't shut down properly
+    if (!serverHealthy) {
+        const portInUse = await ServerUtils.isPortInUse(port);
+        if (portInUse) {
+            Logger.info(`Port ${port} is in use but server is not responding. Killing existing process...`);
+            await ServerUtils.killProcessOnPort(port);
+            // Wait a moment for the port to be released
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+    }
+
+    // Don't reveal output panel during startup to keep terminal visible
+    // Logs are written and viewable via "Stata: Show Output" command
 
     try {
         const extensionPath = globalContext.extensionPath || __dirname;
@@ -761,6 +801,44 @@ async function runFile() {
     }
 
     await executeStataFile(filePath);
+}
+
+async function stopExecution() {
+    if (!isExecuting) {
+        return; // Silently ignore if no execution running
+    }
+
+    const config = getConfig();
+    const host = config.get('mcpServerHost') || 'localhost';
+    const port = config.get('mcpServerPort') || 4000;
+
+    try {
+        updateStatusBar('stopping');
+
+        // Send stop request to server
+        const response = await axios.post(
+            `http://${host}:${port}/stop_execution`,
+            {},
+            { timeout: 10000 }
+        );
+
+        if (response.data.status === 'stopped' || response.data.status === 'stop_requested') {
+            Logger.debug(`Execution stopped (${response.data.method || 'unknown'})`);
+        } else if (response.data.status === 'no_execution') {
+            Logger.debug('No execution was running on server');
+        }
+        // No user-facing messages for clean stops
+    } catch (error) {
+        Logger.error(`Error stopping execution: ${error.message}`);
+        // Only show error if it's a real failure, not just "no execution"
+        if (!error.message.includes('ECONNREFUSED')) {
+            vscode.window.showErrorMessage(`Failed to stop execution: ${error.message}`);
+        }
+    } finally {
+        isExecuting = false;
+        currentExecutionFile = null;
+        updateStatusBar();
+    }
 }
 
 let interactivePanel = null; // Global reference to interactive window
@@ -1193,7 +1271,7 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
         }
     }
 
-    stataOutputChannel.show(true);
+    stataOutputChannel.show(false);  // Steal focus when running Stata commands
     Logger.debug(`Executing Stata code: ${code}`);
 
     const paramName = toolName === 'run_selection' ? 'selection' : 'command';
@@ -1223,7 +1301,7 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
                 const outputContent = result.result || 'Command executed successfully (no output)';
                 stataOutputChannel.clear();
                 stataOutputChannel.appendLine(outputContent);
-                stataOutputChannel.show(true);
+                stataOutputChannel.show(false);  // Steal focus when running Stata commands
 
                 // Parse and display any graphs (VS Code only, not for MCP calls)
                 const autoDisplayGraphs = config.get('autoDisplayGraphs', true);
@@ -1238,14 +1316,14 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
             } else {
                 const errorMessage = result.message || 'Unknown error';
                 stataOutputChannel.appendLine(`Error: ${errorMessage}`);
-                stataOutputChannel.show(true);
+                stataOutputChannel.show(false);  // Steal focus on errors
                 vscode.window.showErrorMessage(`Stata error: ${errorMessage}`);
                 return null;
             }
         } else {
             const errorMessage = `HTTP error: ${response.status}`;
             stataOutputChannel.appendLine(errorMessage);
-            stataOutputChannel.show(true);
+            stataOutputChannel.show(false);  // Steal focus on errors
             vscode.window.showErrorMessage(errorMessage);
             return null;
         }
@@ -1253,42 +1331,112 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
         Logger.debug(`Error executing Stata code: ${error.message}`);
         const errorMessage = `Error executing Stata code: ${error.message}`;
         stataOutputChannel.appendLine(errorMessage);
-        stataOutputChannel.show(true);
+        stataOutputChannel.show(false);  // Steal focus on errors
         vscode.window.showErrorMessage(errorMessage);
         return null;
     }
 }
 
 async function executeStataFile(filePath) {
+    // Check if already executing
+    if (isExecuting) {
+        vscode.window.showWarningMessage('A Stata execution is already in progress. Please wait or stop it first.');
+        return;
+    }
+
     const config = getConfig();
     const host = config.get('mcpServerHost') || 'localhost';
     const port = config.get('mcpServerPort') || 4000;
     const runFileTimeout = config.get('runFileTimeout') || 600;
-    
-    stataOutputChannel.show(true);
+    const workingDirOption = config.get('workingDirectory') || 'dofile';
+    const customWorkingDir = config.get('customWorkingDirectory') || '';
+
+    // Set execution state
+    isExecuting = true;
+    currentExecutionFile = filePath;
+    updateStatusBar('running');
+
+    stataOutputChannel.show(false);  // Steal focus when running Stata commands
     Logger.debug(`Executing Stata file: ${filePath}`);
     Logger.debug(`Using timeout: ${runFileTimeout} seconds`);
-    
+    Logger.debug(`Working directory option: ${workingDirOption}`);
+
+    // Determine actual working directory based on setting
+    let workingDir = null;
+    const fileDir = path.dirname(filePath);
+
+    switch (workingDirOption) {
+        case 'dofile':
+            workingDir = fileDir;
+            break;
+        case 'parent':
+            workingDir = path.dirname(fileDir);
+            break;
+        case 'workspace':
+            // Get VS Code workspace root
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (workspaceFolders && workspaceFolders.length > 0) {
+                workingDir = workspaceFolders[0].uri.fsPath;
+            } else {
+                // Fall back to dofile directory if no workspace
+                workingDir = fileDir;
+                Logger.debug('No workspace folder found, falling back to dofile directory');
+            }
+            break;
+        case 'extension':
+            // Use logs folder in extension directory
+            const extensionPath = globalContext.extensionPath || __dirname;
+            workingDir = path.join(extensionPath, 'logs');
+            break;
+        case 'custom':
+            if (customWorkingDir && customWorkingDir.trim()) {
+                workingDir = customWorkingDir.trim();
+            } else {
+                // Fall back to dofile directory if custom not specified
+                workingDir = fileDir;
+                Logger.debug('Custom working directory not specified, falling back to dofile directory');
+            }
+            break;
+        case 'none':
+            workingDir = null;  // Don't change directory
+            break;
+        default:
+            workingDir = fileDir;
+    }
+
+    Logger.debug(`Resolved working directory: ${workingDir || '(none - keep current)'}`);
+
     if (!await isServerRunning(host, port)) {
         await startMcpServer();
         if (!await isServerRunning(host, port)) {
             const errorMessage = 'Failed to connect to MCP server';
             stataOutputChannel.appendLine(errorMessage);
-            stataOutputChannel.show(true);
+            stataOutputChannel.show(false);  // Steal focus on errors
             vscode.window.showErrorMessage(errorMessage);
+            // Cleanup on early exit
+            isExecuting = false;
+            currentExecutionFile = null;
+            updateStatusBar();
             return;
         }
     }
-    
+
     try {
+        // Use /v1/tools endpoint - PyStata streams output to stdout automatically
+        // which is captured by mcpServerProcess.stdout and displayed in real-time
         const requestBody = {
             tool: 'run_file',
             parameters: {
                 file_path: filePath,
-                timeout: runFileTimeout
+                timeout: runFileTimeout,
+                working_dir: workingDir
             }
         };
-        
+
+        Logger.debug(`Executing via /v1/tools: ${filePath}`);
+        stataOutputChannel.clear();
+        stataOutputChannel.show(false);  // Show output panel
+
         const response = await axios.post(
             `http://${host}:${port}/v1/tools`,
             requestBody,
@@ -1297,15 +1445,12 @@ async function executeStataFile(filePath) {
                 timeout: (runFileTimeout * 1000) + 10000
             }
         );
-        
+
         if (response.status === 200) {
             const result = response.data;
 
             if (result.status === 'success') {
                 const outputContent = result.result || 'File executed successfully (no output)';
-                stataOutputChannel.clear();
-                stataOutputChannel.appendLine(outputContent);
-                stataOutputChannel.show(true);
 
                 // Parse and display any graphs (VS Code only, not for MCP calls)
                 const autoDisplayGraphs = config.get('autoDisplayGraphs', true);
@@ -1320,14 +1465,14 @@ async function executeStataFile(filePath) {
             } else {
                 const errorMessage = result.message || 'Unknown error';
                 stataOutputChannel.appendLine(`Error: ${errorMessage}`);
-                stataOutputChannel.show(true);
+                stataOutputChannel.show(false);  // Steal focus on errors
                 vscode.window.showErrorMessage(`Error executing Stata file: ${errorMessage}`);
                 return null;
             }
         } else {
             const errorMessage = `HTTP error: ${response.status}`;
             stataOutputChannel.appendLine(errorMessage);
-            stataOutputChannel.show(true);
+            stataOutputChannel.show(false);  // Steal focus on errors
             vscode.window.showErrorMessage(errorMessage);
             return null;
         }
@@ -1335,9 +1480,14 @@ async function executeStataFile(filePath) {
         Logger.debug(`Error executing Stata file: ${error.message}`);
         const errorMessage = `Error executing Stata file: ${error.message}`;
         stataOutputChannel.appendLine(errorMessage);
-        stataOutputChannel.show(true);
+        stataOutputChannel.show(false);  // Steal focus on errors
         vscode.window.showErrorMessage(errorMessage);
         return null;
+    } finally {
+        // Always cleanup execution state
+        isExecuting = false;
+        currentExecutionFile = null;
+        updateStatusBar();
     }
 }
 
@@ -1952,7 +2102,7 @@ async function testMcpServer() {
             
             stataOutputChannel.appendLine('Test Command Result:');
             stataOutputChannel.appendLine(result);
-            stataOutputChannel.show();
+            stataOutputChannel.show(false);  // Steal focus when user explicitly tests server
             return true;
         } else {
             vscode.window.showErrorMessage(`MCP server returned status: ${testResponse.status}`);
@@ -2259,7 +2409,7 @@ async function detectAndUpdateStataPath() {
 
 function showOutput(content) {
     if (content) stataOutputChannel.append(content);
-    stataOutputChannel.show(true);
+    stataOutputChannel.show(false);  // Steal focus when user explicitly requests output
 }
 
 // Graph display functionality

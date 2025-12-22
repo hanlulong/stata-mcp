@@ -70,11 +70,11 @@ Or:
 
 #### Option 2: From .vsix file
 
-1. Download the extension package `stata-mcp-0.3.6.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
+1. Download the extension package `stata-mcp-0.3.7.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
 2. Install using one of these methods:
 
 ```bash
-code --install-extension path/to/stata-mcp-0.3.6.vsix
+code --install-extension path/to/stata-mcp-0.3.7.vsix
 ```
 
 Or:
@@ -86,11 +86,11 @@ Or:
 
 ### Cursor Installation
 
-1. Download the extension package `stata-mcp-0.3.6.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
+1. Download the extension package `stata-mcp-0.3.7.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
 2. Install using one of these methods:
 
 ```bash
-cursor --install-extension path/to/stata-mcp-0.3.6.vsix
+cursor --install-extension path/to/stata-mcp-0.3.7.vsix
 ```
 
 Or:
@@ -185,6 +185,17 @@ Customize the extension behavior through VS Code settings. Access these settings
 | `stata-vscode.runFileTimeout` | Timeout in seconds for 'Run File' operations | `600` (10 minutes) |
 | `stata-vscode.debugMode` | Show detailed debug information in output panel | `false` |
 | `stata-vscode.clineConfigPath` | Custom path to Cline configuration file (optional) | Auto-detected |
+
+### Working Directory Settings
+
+Control which directory Stata uses when running .do files:
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `stata-vscode.workingDirectory` | Working directory when running .do files: `dofile` (same as .do file), `parent` (parent directory of .do file), `workspace` (VS Code workspace root), `extension` (logs folder in extension directory), `custom` (user-specified), or `none` (don't change directory) | `dofile` |
+| `stata-vscode.customWorkingDirectory` | Custom working directory path (only used when workingDirectory is set to `custom`) | Empty |
+
+**Example:** If your project structure is `project/code/analysis.do` and your do-file expects to run from `project/`, set `workingDirectory` to `parent`.
 
 ### MCP Output Settings
 

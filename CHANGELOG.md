@@ -2,6 +2,38 @@
 
 All notable changes to the Stata MCP extension will be documented in this file.
 
+## [0.3.7] - 2025-12-21
+
+### Added
+- **Stop Execution**: New feature to cancel running Stata commands
+  - Stop button in editor title bar (stop icon)
+  - Right-click context menu option "Stata: Stop Execution"
+  - Keyboard shortcut: `Cmd+Shift+C` (Mac) / `Ctrl+Shift+C` (Windows/Linux)
+  - Status bar shows running state with spinner, click to stop
+  - Uses Stata's native `StataSO_SetBreak()` function for clean interruption
+  - New `/stop_execution` and `/execution_status` endpoints
+
+- **Working Directory Settings**: Control where Stata runs when executing .do files
+  - `stata-vscode.workingDirectory`: Choose from 6 options:
+    - `dofile` (default): Same directory as the .do file
+    - `parent`: Parent directory of the .do file
+    - `workspace`: VS Code workspace root folder
+    - `extension`: Logs folder in extension directory
+    - `custom`: User-specified directory
+    - `none`: Don't change directory
+  - `stata-vscode.customWorkingDirectory`: Path for custom option
+
+### Fixed
+- **Output panel no longer steals focus on startup**: Removed auto-show of Stata output panel when IDE starts
+  - Previously, the output panel would appear on every IDE/project startup, pushing terminal out of view
+  - Now the output panel only appears when running Stata commands or explicitly requested
+  - Improves experience for non-Stata projects
+
+- **Stop Execution implementation fixed**: Corrected the stop mechanism for Stata commands
+  - Removed dangerous process kill that would terminate the MCP server itself
+  - Now uses only `StataSO_SetBreak()` which is the correct way to interrupt Stata running as an in-process library
+  - Fixed potential deadlock by releasing execution lock before calling break function
+
 ## [0.3.6] - 2025-12-04
 
 ### Added
