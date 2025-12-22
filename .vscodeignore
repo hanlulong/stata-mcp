@@ -4,6 +4,8 @@ out/**
 node_modules/**
 src/**
 !src/stata_mcp_server.py
+!src/session_manager.py
+!src/stata_worker.py
 !src/requirements.txt
 !src/check-python.js
 !src/start-server.js

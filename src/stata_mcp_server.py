@@ -128,6 +128,12 @@ extension_path = None  # Path to the extension directory
 result_display_mode = 'compact'  # 'compact' or 'full'
 max_output_tokens = 10000  # Maximum tokens (approx 4 chars each), 0 for unlimited
 
+# Multi-session settings
+multi_session_enabled = True  # Whether multi-session mode is enabled (default: True)
+multi_session_max_sessions = 100  # Maximum concurrent sessions
+multi_session_timeout = 3600  # Session idle timeout in seconds
+session_manager = None  # Will be initialized if multi-session is enabled
+
 # Execution tracking for stop/cancel functionality
 import threading
 execution_registry = {}  # Map: execution_id -> {'thread': thread, 'start_time': time, 'cancelled': bool, 'file': file}
@@ -2216,144 +2222,189 @@ app = FastAPI(
 
 # Define regular FastAPI routes for Stata functions
 @app.post("/run_selection", operation_id="stata_run_selection", response_class=Response)
-async def stata_run_selection_endpoint(selection: str) -> Response:
-    """Run selected Stata code and return the output (MCP endpoint - applies compact mode filtering)"""
-    logging.info(f"Running selection: {selection}")
-    result = run_stata_selection(selection)
+async def stata_run_selection_endpoint(selection: str, session_id: str = None, working_dir: str = None) -> Response:
+    """Run selected Stata code and return the output (MCP endpoint - applies compact mode filtering)
+
+    Args:
+        selection: Stata code to execute
+        session_id: Optional session ID for multi-session mode (uses default session if not specified)
+        working_dir: Optional working directory to change to before execution
+    """
+    global multi_session_enabled, session_manager
+
+    logging.info(f"Running selection: {selection[:100]}...")
+    if session_id:
+        logging.info(f"Using session: {session_id}")
+    if working_dir:
+        logging.info(f"Working directory: {working_dir}")
+
+    # Route through session manager if multi-session is enabled
+    if multi_session_enabled and session_manager is not None:
+        # Run blocking session_manager.execute in thread pool to allow concurrent requests
+        # Note: Multi-session mode doesn't support working_dir yet - each session manages its own directory
+        result_dict = await asyncio.to_thread(
+            session_manager.execute,
+            selection,
+            session_id=session_id
+        )
+        if result_dict.get('status') == 'success':
+            result = result_dict.get('output', '')
+        else:
+            result = f"Error: {result_dict.get('error', 'Unknown error')}"
+    else:
+        result = run_stata_selection(selection, working_dir=working_dir)
+
     # Format output for better display - replace escaped newlines with actual newlines
     formatted_result = result.replace("\\n", "\n")
     # Apply MCP output processing (compact mode filtering and token limit)
     formatted_result = process_mcp_output(formatted_result, for_mcp=True)
     return Response(content=formatted_result, media_type="text/plain")
 
-async def stata_run_file_stream(file_path: str, timeout: int = 600, working_dir: str = None):
+async def stata_run_file_stream(file_path: str, timeout: int = 600, working_dir: str = None, session_id: str = None):
     """Async generator that runs Stata file and yields SSE progress events
 
     Streams output incrementally by monitoring the log file during execution.
+    Works with both single-session and multi-session modes.
 
     Args:
         file_path: Path to the .do file
         timeout: Timeout in seconds
         working_dir: Optional working directory for execution
+        session_id: Optional session ID for multi-session mode
 
     Yields:
         SSE formatted events with incremental output
     """
     import threading
-    import queue
+    import queue as queue_module
 
     # Queue to communicate between threads
-    result_queue = queue.Queue()
+    result_queue = queue_module.Queue()
 
-    # Determine log file path (same logic as run_stata_file)
-    stata_path = os.path.abspath(file_path)
-    base_name = os.path.splitext(os.path.basename(stata_path))[0]
-    log_dir = os.path.dirname(stata_path)
-    log_file = os.path.join(log_dir, f"{base_name}_mcp.log")
+    # Determine log file path - must match what run_stata_file/worker uses
+    abs_file_path = os.path.abspath(file_path)
+    base_name = os.path.splitext(os.path.basename(abs_file_path))[0]
+
+    # For single-session mode, use get_log_file_path() which respects user settings
+    # For multi-session mode, we pass this path to the worker
+    log_file = get_log_file_path(file_path, base_name)
+
+    logging.info(f"[STREAM] Monitoring log file: {log_file}")
 
     def run_with_progress():
         """Run Stata file in thread"""
         try:
-            result = run_stata_file(file_path, timeout=timeout, working_dir=working_dir)
+            # Route through session manager if multi-session is enabled
+            if multi_session_enabled and session_manager is not None:
+                logging.info(f"[STREAM] Using multi-session mode, session_id={session_id or 'default'}")
+                result_dict = session_manager.execute_file(
+                    file_path,
+                    session_id=session_id,
+                    timeout=float(timeout),
+                    log_file=log_file  # Pass log file path to worker
+                )
+                if result_dict.get('status') == 'success':
+                    result = result_dict.get('output', '')
+                else:
+                    result = f"Error: {result_dict.get('error', 'Unknown error')}"
+            else:
+                logging.info("[STREAM] Using single-session mode")
+                result = run_stata_file(file_path, timeout=timeout, working_dir=working_dir)
             result_queue.put(('success', result))
         except Exception as e:
+            logging.error(f"[STREAM] Execution error: {str(e)}")
             result_queue.put(('error', str(e)))
 
     # Start execution thread
     thread = threading.Thread(target=run_with_progress, daemon=True)
     thread.start()
 
-    # Yield initial event (debug info)
+    # Yield initial event
     yield f"data: Starting execution of {os.path.basename(file_path)}...\n\n"
 
     start_time = time.time()
-    last_check = start_time
-    last_log_size = 0
-    last_log_content = ""
-    check_interval = 2.0
+    last_read_pos = 0  # Track byte position in file for incremental reading
+    check_interval = 0.5  # Check every 500ms for responsive streaming
 
-    # Monitor progress by reading log file incrementally
+    # Monitor progress by reading log file incrementally using byte offset
     while thread.is_alive():
         current_time = time.time()
         elapsed = current_time - start_time
 
-        # Send progress update (for debug mode on client)
-        if current_time - last_check >= check_interval:
-            yield f"data: Executing... {elapsed:.1f}s elapsed\n\n"
-            last_check = current_time
+        # Check log file for new content
+        if os.path.exists(log_file):
+            try:
+                current_size = os.path.getsize(log_file)
+                if current_size > last_read_pos:
+                    with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
+                        f.seek(last_read_pos)
+                        new_content = f.read()
+                        last_read_pos = f.tell()
 
-            # Check log file for new content
-            if os.path.exists(log_file):
-                try:
-                    current_size = os.path.getsize(log_file)
-                    if current_size > last_log_size:
-                        with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
-                            content = f.read()
-                        # Get only new content
-                        new_content = content[len(last_log_content):]
-                        if new_content.strip():
-                            # Clean up the content
-                            new_content = new_content.replace('\r\n', '\n').replace('\r', '\n')
-                            # Escape for SSE
-                            escaped = new_content.replace('\n', '\\n')
-                            yield f"data: {escaped}\n\n"
-                        last_log_content = content
-                        last_log_size = current_size
-                except Exception as e:
-                    logging.debug(f"Error reading log file: {e}")
+                    # Send only new lines
+                    if new_content.strip():
+                        for line in new_content.splitlines():
+                            if line.strip():
+                                escaped = line.replace('\\', '\\\\')
+                                yield f"data: {escaped}\n\n"
+            except Exception as e:
+                logging.debug(f"Error reading log file: {e}")
 
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(check_interval)
 
         # Check timeout
         if elapsed > timeout:
             yield f"data: ERROR: Execution timed out after {timeout}s\n\n"
             break
 
-    # Get final result and send any remaining output
+    # Get final result - check for any remaining content
     try:
-        status, result = result_queue.get(timeout=2.0)
+        status, result = result_queue.get(timeout=5.0)
+
+        # Read any remaining log file content not yet sent
+        if os.path.exists(log_file):
+            try:
+                current_size = os.path.getsize(log_file)
+                if current_size > last_read_pos:
+                    with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
+                        f.seek(last_read_pos)
+                        remaining = f.read()
+                    if remaining.strip():
+                        for line in remaining.splitlines():
+                            if line.strip():
+                                escaped = line.replace('\\', '\\\\')
+                                yield f"data: {escaped}\n\n"
+            except Exception as e:
+                logging.debug(f"Error reading final log content: {e}")
+
         if status == 'error':
             yield f"data: ERROR: {result}\n\n"
         else:
-            # Check if there's any final content in the log we haven't sent
-            if os.path.exists(log_file):
-                try:
-                    with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
-                        final_content = f.read()
-                    remaining = final_content[len(last_log_content):]
-                    if remaining.strip():
-                        remaining = remaining.replace('\r\n', '\n').replace('\r', '\n')
-                        escaped = remaining.replace('\n', '\\n')
-                        yield f"data: {escaped}\n\n"
-                except Exception as e:
-                    logging.debug(f"Error reading final log: {e}")
-
-            # Check for errors or special messages in result
-            if 'ERROR' in result or 'TIMEOUT' in result or 'CANCELLED' in result:
-                # Extract just the error portion
-                for line in result.split('\n'):
-                    if 'ERROR' in line or 'TIMEOUT' in line or 'CANCELLED' in line or 'Break' in line:
-                        escaped = line.replace('\n', '\\n')
-                        yield f"data: {escaped}\n\n"
-
             yield "data: *** Execution completed ***\n\n"
-    except queue.Empty:
-        yield "data: ERROR: Failed to get execution result\n\n"
+
+    except queue_module.Empty:
+        yield "data: ERROR: Failed to get execution result (timeout)\n\n"
 
 @app.get("/run_file", operation_id="stata_run_file", response_class=Response)
 async def stata_run_file_endpoint(
     file_path: str,
-    timeout: int = 600
+    timeout: int = 600,
+    session_id: str = None,
+    working_dir: str = None
 ) -> Response:
     """Run a Stata .do file and return the output (MCP endpoint - applies compact mode filtering)
 
     Args:
         file_path: Path to the .do file
         timeout: Timeout in seconds (default: 600 seconds / 10 minutes)
+        session_id: Optional session ID for multi-session mode (uses default session if not specified)
+        working_dir: Optional working directory to change to before execution
 
     Returns:
         Response with plain text output (filtered in compact mode)
     """
+    global multi_session_enabled, session_manager
+
     # Ensure timeout is a valid integer
     try:
         timeout = int(timeout)
@@ -2365,7 +2416,33 @@ async def stata_run_file_endpoint(
         timeout = 600
 
     logging.info(f"Running file: {file_path} with timeout {timeout} seconds ({timeout/60:.1f} minutes)")
-    result = await asyncio.to_thread(run_stata_file, file_path, timeout=timeout)
+    if session_id:
+        logging.info(f"Using session: {session_id}")
+    if working_dir:
+        logging.info(f"Working directory: {working_dir}")
+
+    # Route through session manager if multi-session is enabled
+    if multi_session_enabled and session_manager is not None:
+        # Determine log file path based on user settings
+        abs_file_path = os.path.abspath(file_path)
+        base_name = os.path.splitext(os.path.basename(abs_file_path))[0]
+        log_file = get_log_file_path(file_path, base_name)
+
+        # Run blocking session_manager.execute_file in thread pool to allow concurrent requests
+        # Note: Multi-session mode doesn't support working_dir yet - each session manages its own directory
+        result_dict = await asyncio.to_thread(
+            session_manager.execute_file,
+            file_path,
+            session_id=session_id,
+            timeout=float(timeout),
+            log_file=log_file  # Pass log file path to respect logFileLocation setting
+        )
+        if result_dict.get('status') == 'success':
+            result = result_dict.get('output', '')
+        else:
+            result = f"Error: {result_dict.get('error', 'Unknown error')}"
+    else:
+        result = await asyncio.to_thread(run_stata_file, file_path, timeout=timeout, working_dir=working_dir)
 
     # Format output for better display - replace escaped newlines with actual newlines
     formatted_result = result.replace("\\n", "\n")
@@ -2383,7 +2460,8 @@ async def stata_run_file_endpoint(
 async def stata_run_file_stream_endpoint(
     file_path: str,
     timeout: int = 600,
-    working_dir: str = None
+    working_dir: str = None,
+    session_id: str = None
 ):
     """Run a Stata .do file and stream the output via Server-Sent Events (SSE)
 
@@ -2394,6 +2472,7 @@ async def stata_run_file_stream_endpoint(
         file_path: Path to the .do file
         timeout: Timeout in seconds (default: 600 seconds / 10 minutes)
         working_dir: Optional working directory for execution
+        session_id: Optional session ID for multi-session mode
 
     Returns:
         StreamingResponse with text/event-stream content type
@@ -2411,9 +2490,11 @@ async def stata_run_file_stream_endpoint(
     logging.info(f"[STREAM] Running file: {file_path} with timeout {timeout} seconds ({timeout/60:.1f} minutes)")
     if working_dir:
         logging.info(f"[STREAM] Working directory: {working_dir}")
+    if session_id:
+        logging.info(f"[STREAM] Using session: {session_id}")
 
     return StreamingResponse(
-        stata_run_file_stream(file_path, timeout, working_dir),
+        stata_run_file_stream(file_path, timeout, working_dir, session_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -2430,18 +2511,22 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
     try:
         # Map VS Code extension tool names to MCP tool names
         tool_name_map = {
-            "run_selection": "stata_run_selection", 
-            "run_file": "stata_run_file"
+            "run_selection": "stata_run_selection",
+            "run_file": "stata_run_file",
+            "session": "stata_session"
         }
-        
+
         # Get the actual tool name
         mcp_tool_name = tool_name_map.get(request.tool, request.tool)
-        
+
         # Log the request
         logging.info(f"REST API request for tool: {request.tool} -> {mcp_tool_name}")
-        
+
+        # List of valid tools
+        valid_tools = ["stata_run_selection", "stata_run_file", "stata_session"]
+
         # Check if the tool exists
-        if mcp_tool_name not in ["stata_run_selection", "stata_run_file"]:
+        if mcp_tool_name not in valid_tools:
             return ToolResponse(
                 status="error",
                 message=f"Unknown tool: {request.tool}"
@@ -2454,11 +2539,27 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
                     status="error",
                     message="Missing required parameter: selection"
                 )
-            # Get optional working_dir parameter
+            # Get optional parameters
             working_dir = request.parameters.get("working_dir", None)
-            # Enable auto_detect_graphs for VS Code extension calls
-            # Use asyncio.to_thread to allow concurrent stop requests
-            result = await asyncio.to_thread(run_stata_selection, request.parameters["selection"], working_dir, True)
+            session_id = request.parameters.get("session_id", None)
+
+            # Route through session manager if multi-session is enabled
+            if multi_session_enabled and session_manager is not None:
+                if session_id:
+                    logging.info(f"MCP run_selection using session: {session_id}")
+                result_dict = await asyncio.to_thread(
+                    session_manager.execute,
+                    request.parameters["selection"],
+                    session_id=session_id
+                )
+                if result_dict.get('status') == 'success':
+                    result = result_dict.get('output', '')
+                else:
+                    result = f"Error: {result_dict.get('error', 'Unknown error')}"
+            else:
+                # Single-session mode: use direct execution
+                # Enable auto_detect_graphs for VS Code extension calls
+                result = await asyncio.to_thread(run_stata_selection, request.parameters["selection"], working_dir, True)
             # Format output for better display
             result = result.replace("\\n", "\n")
             
@@ -2468,10 +2569,10 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
                     status="error",
                     message="Missing required parameter: file_path"
                 )
-            
+
             # Get the file path from the parameters
             file_path = request.parameters["file_path"]
-            
+
             # Get timeout parameter if provided, otherwise use default (10 minutes)
             timeout = request.parameters.get("timeout", 600)
             try:
@@ -2482,13 +2583,16 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
             except (ValueError, TypeError):
                 logging.warning(f"Non-integer timeout value: {timeout}, using default 600")
                 timeout = 600
-                
-            # Get optional working_dir parameter
+
+            # Get optional parameters
             working_dir = request.parameters.get("working_dir", None)
+            session_id = request.parameters.get("session_id", None)
 
             logging.info(f"MCP run_file request for: {file_path} with timeout {timeout} seconds ({timeout/60:.1f} minutes)")
             if working_dir:
                 logging.info(f"Working directory: {working_dir}")
+            if session_id:
+                logging.info(f"Using session: {session_id}")
 
             # Normalize the path for cross-platform compatibility
             file_path = os.path.normpath(file_path)
@@ -2497,21 +2601,33 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
             if platform.system() == "Windows" and '/' in file_path:
                 file_path = file_path.replace('/', '\\')
 
-            # Run the file through the run_stata_file function with timeout
-            # Enable auto_name_graphs for VS Code extension calls
-            # Use asyncio.to_thread to allow concurrent stop requests
-            result = await asyncio.to_thread(run_stata_file, file_path, timeout, True, working_dir)
-            
+            # Route through session manager if multi-session is enabled
+            if multi_session_enabled and session_manager is not None:
+                result_dict = await asyncio.to_thread(
+                    session_manager.execute_file,
+                    file_path,
+                    session_id=session_id,
+                    timeout=float(timeout)
+                )
+                if result_dict.get('status') == 'success':
+                    result = result_dict.get('output', '')
+                else:
+                    result = f"Error: {result_dict.get('error', 'Unknown error')}"
+            else:
+                # Single-session mode: use direct execution
+                # Enable auto_name_graphs for VS Code extension calls
+                result = await asyncio.to_thread(run_stata_file, file_path, timeout, True, working_dir)
+
             # Format output for better display
             result = result.replace("\\n", "\n")
-            
+
             # Log the output length for debugging
             logging.debug(f"MCP run_file output length: {len(result)}")
-            
+
             # If no output was captured, log a warning
             if "Command executed but" in result and "output not captured" in result:
                 logging.warning(f"No output captured for file: {file_path}")
-                
+
             # If file not found error, make the message more helpful
             if "File not found" in result:
                 # Add help text explaining common issues with Windows paths
@@ -2520,7 +2636,72 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
                     result += "1. Make sure the file path uses correct separators (use \\ instead of /)\n"
                     result += "2. Check if the file exists in the specified location\n"
                     result += "3. If using relative paths, the current working directory is: " + os.getcwd()
-        
+
+        # Session management tool - unified with action parameter
+        elif mcp_tool_name == "stata_session":
+            action = request.parameters.get("action", "list")
+            session_id = request.parameters.get("session_id", None)
+
+            # Action: list - List all active sessions
+            if action == "list":
+                if multi_session_enabled and session_manager is not None:
+                    sessions = session_manager.list_sessions()
+                    stats = session_manager.get_stats()
+                    result_data = {
+                        "sessions": sessions,
+                        "max_sessions": stats.get("max_sessions", 0),
+                        "available_slots": stats.get("available_slots", 0),
+                        "multi_session_enabled": True
+                    }
+                else:
+                    result_data = {
+                        "sessions": [],
+                        "multi_session_enabled": False,
+                        "message": "Multi-session mode is not enabled"
+                    }
+                return ToolResponse(
+                    status="success",
+                    result=json.dumps(result_data, indent=2)
+                )
+
+            # Action: destroy - Destroy a session
+            elif action == "destroy":
+                if not multi_session_enabled or session_manager is None:
+                    return ToolResponse(
+                        status="error",
+                        message="Multi-session mode is not enabled"
+                    )
+
+                if not session_id:
+                    return ToolResponse(
+                        status="error",
+                        message="Missing required parameter: session_id (required for destroy action)"
+                    )
+
+                logging.info(f"Destroying session: {session_id}")
+                success, error = session_manager.destroy_session(session_id)
+
+                if success:
+                    return ToolResponse(
+                        status="success",
+                        result=json.dumps({
+                            "action": "destroy",
+                            "session_id": session_id,
+                            "message": f"Session '{session_id}' destroyed successfully"
+                        }, indent=2)
+                    )
+                else:
+                    return ToolResponse(
+                        status="error",
+                        message=error or f"Failed to destroy session '{session_id}'"
+                    )
+
+            else:
+                return ToolResponse(
+                    status="error",
+                    message=f"Unknown action: {action}. Valid actions: list, destroy"
+                )
+
         # Return successful response
         return ToolResponse(
             status="success",
@@ -2547,80 +2728,140 @@ async def health_check():
 # Endpoint to stop a running execution
 # Hidden from OpenAPI schema so it won't be exposed to LLMs via MCP
 @app.post("/stop_execution", include_in_schema=False)
-async def stop_execution():
-    """Stop the currently running Stata execution"""
-    global current_execution_id
+async def stop_execution(session_id: str = None):
+    """Stop the currently running Stata execution.
 
-    # First, get execution info while holding the lock
+    Works with both single-session and multi-session modes.
+    In multi-session mode, sends stop signal to the worker process.
+
+    Args:
+        session_id: Optional session ID for multi-session mode
+    """
+    global current_execution_id, multi_session_enabled, session_manager
+
+    stop_sent = False
+    method_used = None
+
+    # Try multi-session mode if enabled
+    if multi_session_enabled and session_manager is not None:
+        logging.info(f"[STOP] Using multi-session mode, session_id={session_id or 'default'}")
+        try:
+            # Use shorter timeout and don't block on result
+            result = await asyncio.wait_for(
+                asyncio.to_thread(session_manager.stop_execution, session_id),
+                timeout=2.0
+            )
+            logging.info(f"[STOP] Session manager result: {result}")
+            if result.get('status') in ('stopped', 'stop_sent'):
+                stop_sent = True
+                method_used = "session_manager"
+            elif result.get('status') == 'not_running':
+                logging.info("[STOP] Session not busy, but will try StataSO_SetBreak anyway")
+        except asyncio.TimeoutError:
+            logging.info("[STOP] Session manager stop timed out, continuing...")
+        except Exception as e:
+            logging.debug(f"[STOP] Session manager stop failed: {str(e)}")
+
+    # Also try StataSO_SetBreak - only works if pystata is loaded in main process
+    # In multi-session mode, pystata is in worker processes, so this will fail
+    # but we try anyway as a fallback for single-session mode
+    # IMPORTANT: Only call SetBreak ONCE - multiple calls can crash Stata with SIGSEGV
+    try:
+        from pystata.config import stlib
+        if stlib is not None:
+            logging.info("[STOP] Trying StataSO_SetBreak() (single-session mode)")
+            stlib.StataSO_SetBreak()  # Call only ONCE to avoid crashes
+            stop_sent = True
+            method_used = method_used or "stata_setbreak"
+            logging.info("[STOP] StataSO_SetBreak() called successfully")
+    except ImportError:
+        # Expected in multi-session mode - pystata not loaded in main process
+        logging.debug("[STOP] pystata not available in main process (expected in multi-session mode)")
+    except Exception as e:
+        logging.debug(f"[STOP] StataSO_SetBreak() failed: {str(e)}")
+
+    # Mark any tracked execution as cancelled
+    exec_id = None
     with execution_lock:
-        if current_execution_id is None:
-            return {"status": "no_execution", "message": "No execution is currently running"}
+        if current_execution_id is not None:
+            exec_id = current_execution_id
+            if exec_id in execution_registry:
+                execution_registry[exec_id]['cancelled'] = True
+                logging.info(f"[STOP] Marked execution {exec_id} as cancelled")
 
-        exec_id = current_execution_id
-        if exec_id not in execution_registry:
-            return {"status": "not_found", "message": f"Execution {exec_id} not found in registry"}
+    if stop_sent:
+        return {
+            "status": "stop_requested",
+            "execution_id": exec_id,
+            "method": method_used,
+            "message": "Stop signal sent"
+        }
+    else:
+        return {
+            "status": "stop_requested",
+            "execution_id": exec_id,
+            "method": "signal",
+            "message": "Stop signal sent (multi-session mode)"
+        }
 
-        execution = execution_registry[exec_id]
-        thread = execution.get('thread')
+@app.post("/reload_workers", include_in_schema=False)
+async def reload_workers():
+    """Reload worker processes without restarting the server.
 
-        # Mark as cancelled
-        execution['cancelled'] = True
-        logging.debug(f"Stop requested for execution {exec_id}")
+    This allows updating worker code (stata_worker.py) without killing
+    the MCP connection. The main server stays running.
+    """
+    global session_manager, multi_session_enabled
 
-    # Release lock before calling StataSO_SetBreak to avoid potential deadlock
-    # The Stata thread may be trying to acquire the lock in the polling loop
-
-    termination_successful = False
-    termination_method = None
+    if not multi_session_enabled or session_manager is None:
+        return {
+            "status": "skipped",
+            "message": "Multi-session mode not enabled, no workers to reload"
+        }
 
     try:
-        # Use PyStata's native break mechanism (StataSO_SetBreak)
-        # This is the ONLY reliable way to interrupt Stata since it runs in-process
-        # as a shared library (not as a separate process)
-        logging.debug("Using StataSO_SetBreak() to interrupt Stata")
-        try:
-            from pystata.config import stlib
-            if stlib is not None:
-                # Call SetBreak multiple times to ensure it takes effect
-                # Stata checks the break flag at various points during execution
-                for i in range(3):
-                    stlib.StataSO_SetBreak()
-                    logging.debug(f"Called StataSO_SetBreak() - attempt {i+1}")
-                    time.sleep(0.3)
+        # Get current session count
+        old_sessions = session_manager.list_sessions()
 
-                    if thread and not thread.is_alive():
-                        termination_successful = True
-                        termination_method = "stata_setbreak"
-                        logging.debug("Thread terminated via StataSO_SetBreak()")
-                        break
+        # Shutdown all existing workers
+        logging.info("[RELOAD] Shutting down existing workers...")
+        session_manager.stop()
 
-                # Wait a bit more and check again
-                if not termination_successful and thread:
-                    time.sleep(1.0)
-                    if not thread.is_alive():
-                        termination_successful = True
-                        termination_method = "stata_setbreak"
-                        logging.debug("Thread terminated via StataSO_SetBreak() (delayed)")
-            else:
-                logging.debug("stlib is None - cannot call StataSO_SetBreak()")
-        except Exception as e:
-            logging.debug(f"StataSO_SetBreak() failed: {str(e)}")
+        # Wait for workers to stop
+        await asyncio.sleep(2)
 
-        # Note: We do NOT try to kill processes because:
-        # 1. Stata runs as a shared library within the Python process (not separate)
-        # 2. pkill -f "stata" would match and kill stata_mcp_server.py itself!
-        # StataSO_SetBreak() is the correct and only way to interrupt Stata
+        # Reload the worker module
+        import importlib
+        import stata_worker
+        importlib.reload(stata_worker)
+        logging.info("[RELOAD] Worker module reloaded")
 
-    except Exception as term_error:
-        logging.error(f"Error during stop execution: {str(term_error)}")
-        return {"status": "error", "message": str(term_error)}
+        # Create new session manager with fresh workers
+        from session_manager import SessionManager
+        importlib.reload(__import__('session_manager'))
+        from session_manager import SessionManager as ReloadedSessionManager
 
-    return {
-        "status": "stopped" if termination_successful else "stop_requested",
-        "execution_id": exec_id,
-        "method": termination_method,
-        "message": "Execution stopped" if termination_successful else "Stop signal sent, Stata will stop at next break point"
-    }
+        session_manager = ReloadedSessionManager(
+            stata_path=session_manager.stata_path if hasattr(session_manager, 'stata_path') else os.environ.get('SYSDIR_STATA', '/Applications/Stata'),
+            stata_edition=session_manager.stata_edition if hasattr(session_manager, 'stata_edition') else 'mp',
+            max_sessions=100
+        )
+
+        logging.info("[RELOAD] New session manager created")
+
+        return {
+            "status": "success",
+            "message": f"Workers reloaded. Previous sessions: {len(old_sessions)}, new default session ready.",
+            "old_sessions": len(old_sessions)
+        }
+
+    except Exception as e:
+        logging.error(f"[RELOAD] Error reloading workers: {str(e)}")
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
 
 @app.get("/execution_status", include_in_schema=False)
 async def get_execution_status():
@@ -2644,6 +2885,168 @@ async def get_execution_status():
             }
 
         return {"status": "idle", "executing": False}
+
+# ============================================================================
+# Multi-Session Management Endpoints
+# ============================================================================
+
+@app.post("/sessions", include_in_schema=False)
+async def create_session():
+    """Create a new Stata session for parallel execution"""
+    global session_manager, multi_session_enabled
+
+    if not multi_session_enabled:
+        return {
+            "status": "error",
+            "message": "Multi-session mode is not enabled. Start server with --multi-session flag."
+        }
+
+    if session_manager is None:
+        return {
+            "status": "error",
+            "message": "Session manager not initialized"
+        }
+
+    try:
+        success, session_id, error = session_manager.create_session()
+        if success:
+            return {
+                "status": "success",
+                "session_id": session_id,
+                "message": "Session created successfully"
+            }
+        else:
+            return {
+                "status": "error",
+                "message": error
+            }
+    except Exception as e:
+        logging.error(f"Error creating session: {str(e)}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+@app.get("/sessions", include_in_schema=False)
+async def list_sessions():
+    """List all active Stata sessions"""
+    global session_manager, multi_session_enabled
+
+    if not multi_session_enabled:
+        return {
+            "sessions": [],
+            "multi_session_enabled": False,
+            "message": "Multi-session mode is not enabled"
+        }
+
+    if session_manager is None:
+        return {
+            "sessions": [],
+            "multi_session_enabled": True,
+            "message": "Session manager not initialized"
+        }
+
+    try:
+        sessions = session_manager.list_sessions()
+        stats = session_manager.get_stats()
+        return {
+            "sessions": sessions,
+            "max_sessions": stats.get("max_sessions", 4),
+            "available_slots": stats.get("available_slots", 0),
+            "multi_session_enabled": True
+        }
+    except Exception as e:
+        logging.error(f"Error listing sessions: {str(e)}")
+        return {
+            "sessions": [],
+            "error": str(e)
+        }
+
+
+@app.get("/sessions/{session_id}", include_in_schema=False)
+async def get_session_details(session_id: str):
+    """Get details about a specific session"""
+    global session_manager, multi_session_enabled
+
+    if not multi_session_enabled or session_manager is None:
+        return {
+            "status": "error",
+            "message": "Multi-session mode is not enabled or not initialized"
+        }
+
+    try:
+        session = session_manager.get_session(session_id)
+        if session:
+            return {
+                "status": "success",
+                "session": session.to_dict()
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"Session not found: {session_id}"
+            }
+    except Exception as e:
+        logging.error(f"Error getting session {session_id}: {str(e)}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+@app.delete("/sessions/{session_id}", include_in_schema=False)
+async def destroy_session(session_id: str):
+    """Destroy a Stata session"""
+    global session_manager, multi_session_enabled
+
+    if not multi_session_enabled or session_manager is None:
+        return {
+            "status": "error",
+            "message": "Multi-session mode is not enabled or not initialized"
+        }
+
+    try:
+        success, error = session_manager.destroy_session(session_id)
+        if success:
+            return {
+                "status": "success",
+                "message": f"Session {session_id} destroyed"
+            }
+        else:
+            return {
+                "status": "error",
+                "message": error
+            }
+    except Exception as e:
+        logging.error(f"Error destroying session {session_id}: {str(e)}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+@app.post("/sessions/{session_id}/stop", include_in_schema=False)
+async def stop_session_execution(session_id: str):
+    """Stop execution in a specific session"""
+    global session_manager, multi_session_enabled
+
+    if not multi_session_enabled or session_manager is None:
+        return {
+            "status": "error",
+            "message": "Multi-session mode is not enabled or not initialized"
+        }
+
+    try:
+        result = session_manager.stop_execution(session_id)
+        return result
+    except Exception as e:
+        logging.error(f"Error stopping execution in session {session_id}: {str(e)}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
 
 # Endpoint to serve graph images
 # Hidden from OpenAPI schema so it won't be exposed to LLMs via MCP
@@ -3286,7 +3689,16 @@ def main():
                           help='Result display mode for MCP returns: compact (filters verbose output) or full - default: compact')
         parser.add_argument('--max-output-tokens', type=int, default=10000,
                           help='Maximum tokens for MCP output (0 for unlimited) - default: 10000')
-        
+        # Multi-session arguments (multi-session is enabled by default)
+        parser.add_argument('--multi-session', action='store_true', default=True,
+                          help='Enable multi-session mode for parallel Stata execution (default: enabled)')
+        parser.add_argument('--no-multi-session', action='store_true',
+                          help='Disable multi-session mode (use single shared Stata instance)')
+        parser.add_argument('--max-sessions', type=int, default=100,
+                          help='Maximum concurrent sessions when multi-session is enabled - default: 100')
+        parser.add_argument('--session-timeout', type=int, default=3600,
+                          help='Session idle timeout in seconds - default: 3600 (1 hour)')
+
         # Special handling when running as a module
         if is_running_as_module:
             print(f"Command line arguments when running as module: {sys.argv}")
@@ -3419,11 +3831,16 @@ def main():
         # Set Stata edition
         global stata_edition, log_file_location, custom_log_directory, extension_path
         global result_display_mode, max_output_tokens
+        global multi_session_enabled, multi_session_max_sessions, multi_session_timeout
         stata_edition = args.stata_edition.lower()
         log_file_location = args.log_file_location
         custom_log_directory = args.custom_log_directory
         result_display_mode = args.result_display_mode
         max_output_tokens = args.max_output_tokens
+        # Multi-session is enabled by default, but can be disabled with --no-multi-session
+        multi_session_enabled = args.multi_session and not args.no_multi_session
+        multi_session_max_sessions = args.max_sessions
+        multi_session_timeout = args.session_timeout
 
         # Try to determine extension path from the log file path
         if args.log_file:
@@ -3438,6 +3855,10 @@ def main():
         logging.info(f"Log file location setting: {log_file_location}")
         logging.info(f"Result display mode: {result_display_mode}")
         logging.info(f"Max output tokens: {max_output_tokens}")
+        logging.info(f"Multi-session mode: {'enabled' if multi_session_enabled else 'disabled'}")
+        if multi_session_enabled:
+            logging.info(f"Max sessions: {multi_session_max_sessions}")
+            logging.info(f"Session timeout: {multi_session_timeout}s")
         if custom_log_directory:
             logging.info(f"Custom log directory: {custom_log_directory}")
         if extension_path:
@@ -3507,9 +3928,49 @@ def main():
                         logging.info(f"Attempting to kill process using port {port}")
                         kill_process_on_port(port)
         
-        # Try to initialize Stata
-        try_init_stata(STATA_PATH)
-        
+        # Try to initialize Stata (for single-session mode or as fallback)
+        if not multi_session_enabled:
+            try_init_stata(STATA_PATH)
+        else:
+            # In multi-session mode, initialize the session manager
+            # Each session will initialize its own Stata instance in a worker process
+            logging.info("Multi-session mode enabled - initializing session manager")
+            try:
+                # Add the script's directory to Python path for session_manager import
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                if script_dir not in sys.path:
+                    sys.path.insert(0, script_dir)
+                from session_manager import SessionManager
+                global session_manager
+                session_manager = SessionManager(
+                    stata_path=STATA_PATH,
+                    stata_edition=stata_edition,
+                    max_sessions=multi_session_max_sessions,
+                    session_timeout=multi_session_timeout,
+                    enabled=True
+                )
+                if session_manager.start():
+                    logging.info("Session manager started successfully")
+                    # Mark Stata as available (through session manager)
+                    global stata_available, has_stata
+                    stata_available = True
+                    has_stata = True
+                else:
+                    logging.error("Failed to start session manager")
+                    multi_session_enabled = False
+                    # Fall back to single-session mode
+                    try_init_stata(STATA_PATH)
+            except ImportError as e:
+                logging.error(f"Failed to import session_manager: {e}")
+                logging.info("Falling back to single-session mode")
+                multi_session_enabled = False
+                try_init_stata(STATA_PATH)
+            except Exception as e:
+                logging.error(f"Error initializing session manager: {e}")
+                logging.info("Falling back to single-session mode")
+                multi_session_enabled = False
+                try_init_stata(STATA_PATH)
+
         # Create and mount the MCP server
         # Only expose run_selection and run_file to LLMs
         # Other endpoints are still accessible via direct HTTP calls from VS Code extension
@@ -3586,6 +4047,27 @@ def main():
                     "required": ["file_path"]
                 }
             ))
+            # stata_session tool for session management
+            tools_list.append(types.Tool(
+                name="stata_session",
+                description="Stata Session Management\n\nManage Stata sessions for parallel execution. Supports two actions:\n- list: List all active sessions and their status\n- destroy: Destroy an existing session\n\nIn multi-session mode, you can run multiple Stata tasks in parallel by specifying different session_id values in run_selection or run_file calls. Sessions are created automatically when needed.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["list", "destroy"],
+                            "default": "list",
+                            "description": "Action to perform: 'list' to show sessions, 'destroy' to remove a session"
+                        },
+                        "session_id": {
+                            "type": "string",
+                            "description": "Session ID. Required for 'destroy' action"
+                        }
+                    },
+                    "title": "stata_sessionArguments"
+                }
+            ))
             return tools_list
 
         # Register call_tool handler to execute tools with HTTP server's context
@@ -3595,6 +4077,28 @@ def main():
             import mcp.types as types
 
             logging.debug(f"HTTP server executing tool: {name}")
+
+            # Handle stata_session tool specially since it's not in operation_map
+            if name == "stata_session":
+                # Call the /v1/tools endpoint directly
+                response = await http_client.post(
+                    "/v1/tools",
+                    json={
+                        "tool": "stata_session",
+                        "parameters": arguments
+                    }
+                )
+                response_data = response.json()
+                if response_data.get("status") == "success":
+                    return [types.TextContent(
+                        type="text",
+                        text=response_data.get("result", "")
+                    )]
+                else:
+                    return [types.TextContent(
+                        type="text",
+                        text=f"Error: {response_data.get('message', 'Unknown error')}"
+                    )]
 
             # Call the fastapi_mcp's execute method, which has the streaming wrapper
             # The streaming wrapper will check http_mcp_server.request_context (which is set by StreamableHTTPSessionManager)

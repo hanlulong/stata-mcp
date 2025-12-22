@@ -2,6 +2,37 @@
 
 All notable changes to the Stata MCP extension will be documented in this file.
 
+## [0.4.0] - 2025-12-22
+
+### Added
+- **Multi-Session Support**: Run multiple Stata sessions in parallel for concurrent execution
+  - New settings:
+    - `stata-vscode.multiSession`: Enable multi-session mode (default: false)
+    - `stata-vscode.maxSessions`: Maximum concurrent sessions (default: 8)
+    - `stata-vscode.sessionTimeout`: Session idle timeout in seconds (default: 3600)
+  - Command-line flags: `--multi-session`, `--max-sessions`, `--session-timeout`
+  - Each session has isolated state (data, variables, macros)
+  - Backward compatible: existing clients work without changes (uses default session)
+
+- **Session Management API**: New endpoints for session control
+  - `POST /sessions`: Create a new session
+  - `GET /sessions`: List all active sessions
+  - `GET /sessions/{session_id}`: Get session details
+  - `DELETE /sessions/{session_id}`: Destroy a session
+  - `POST /sessions/{session_id}/stop`: Stop execution in a session
+
+- **Session-Aware Execution**: Endpoints now support `session_id` parameter
+  - `/run_file?session_id=abc123`: Run file in specific session
+  - `/run_selection?session_id=abc123`: Run selection in specific session
+
+### Technical
+- New files: `src/stata_worker.py`, `src/session_manager.py`
+- Uses Python multiprocessing with `spawn` method for process isolation
+- Each worker has its own PyStata instance (pystata.config.init)
+- Inter-process communication via `multiprocessing.Queue`
+- Design document: `docs/MULTI_SESSION_DESIGN.md`
+- User guide: `docs/MULTI_SESSION_USAGE.md`
+
 ## [0.3.8] - 2025-12-22
 
 ### Added

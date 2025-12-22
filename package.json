@@ -3,7 +3,7 @@
 	"displayName": "Stata MCP",
 	"description": "Stata MCP Extension for VS Code and Cursor IDE",
 	"publisher": "DeepEcon",
-	"version": "0.3.8",
+	"version": "0.4.0",
 	"icon": "images/Stata_MCP_logo_400x400.png",
 	"engines": {
 		"vscode": "^1.75.0"
@@ -179,11 +179,6 @@
 					"default": true,
 					"description": "Always show the Stata status bar item, even when not editing a Stata file"
 				},
-				"stata-vscode.autoConfigureMcp": {
-					"type": "boolean",
-					"default": false,
-					"description": "Automatically configure Cursor MCP integration"
-				},
 				"stata-vscode.debugMode": {
 					"type": "boolean",
 					"default": false,
@@ -193,11 +188,6 @@
 					"type": "boolean",
 					"default": false,
 					"description": "Force the MCP server to use the specified port even if it's already in use"
-				},
-				"stata-vscode.clineConfigPath": {
-					"type": "string",
-					"default": "",
-					"description": "Custom path to Cline configuration file (optional, defaults to standard locations)"
 				},
 				"stata-vscode.runFileTimeout": {
 					"type": "number",
@@ -242,6 +232,24 @@
 					"type": "string",
 					"default": "",
 					"description": "Custom working directory path (only used when workingDirectory is set to 'custom')"
+				},
+				"stata-vscode.multiSession": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable multi-session mode for parallel Stata execution. Each session runs in a separate process with isolated state."
+				},
+				"stata-vscode.maxSessions": {
+					"type": "number",
+					"default": 100,
+					"minimum": 1,
+					"maximum": 100,
+					"description": "Maximum number of concurrent Stata sessions when multi-session mode is enabled (default: 100)"
+				},
+				"stata-vscode.sessionTimeout": {
+					"type": "number",
+					"default": 3600,
+					"minimum": 60,
+					"description": "Session idle timeout in seconds (default: 3600 = 1 hour). Sessions are automatically destroyed after this period of inactivity."
 				}
 			}
 		},

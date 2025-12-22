@@ -183,7 +183,6 @@ cursor --install-extension path/to/stata-mcp-0.3.8.vsix
 |------|------|--------|
 | `stata-vscode.runFileTimeout` | "运行文件"操作的超时时间（秒） | `600`（10 分钟） |
 | `stata-vscode.debugMode` | 在输出面板中显示详细的调试信息 | `false` |
-| `stata-vscode.clineConfigPath` | Cline 配置文件的自定义路径（可选） | 自动检测 |
 
 ### 工作目录设置
 
@@ -204,6 +203,23 @@ cursor --install-extension path/to/stata-mcp-0.3.8.vsix
 |------|------|--------|
 | `stata-vscode.resultDisplayMode` | MCP 返回的输出模式：`compact`（过滤冗余输出以节省 token）或 `full`（返回完整输出） | `compact` |
 | `stata-vscode.maxOutputTokens` | MCP 输出的最大 token 数（0 = 无限制）。大输出将保存到文件并返回路径 | `10000` |
+
+### 多会话设置
+
+启用并行 Stata 执行，每个会话拥有独立的状态（数据、变量、宏）。
+
+| 设置 | 描述 | 默认值 |
+|------|------|--------|
+| `stata-vscode.multiSession` | 启用多会话模式以支持并行 Stata 执行 | `false` |
+| `stata-vscode.maxSessions` | 最大并发会话数（1-16） | `8` |
+| `stata-vscode.sessionTimeout` | 会话空闲超时时间（秒）。超时后会话将自动销毁 | `3600` |
+
+**适用场景：**
+- 并行运行多个分析任务
+- 将测试代码与生产数据隔离
+- 多个 Claude Code 实例使用同一 MCP 服务器
+
+**注意：** 每个会话需要约 200-300 MB 内存。请检查您的 Stata 许可证是否支持并发实例。
 
 **Compact 模式过滤内容：**
 - 循环代码回显（foreach/forvalues/while 块）- 仅保留实际输出

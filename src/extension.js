@@ -308,7 +308,14 @@ function activate(context) {
         Logger.info('Setting up Python dependencies during extension activation...');
         installDependencies();
     } else {
-        startMcpServer();
+        // Check if auto-start is enabled (default: true)
+        const autoStartServer = config.get('autoStartServer') !== false;
+        if (autoStartServer) {
+            startMcpServer();
+        } else {
+            Logger.info('Auto-start server is disabled. Server will start on first Stata command.');
+            updateStatusBar();
+        }
     }
 }
 
@@ -471,11 +478,19 @@ async function startMcpServer() {
     const customLogDirectory = config.get('customLogDirectory') || '';
     const resultDisplayMode = config.get('resultDisplayMode') || 'compact';
     const maxOutputTokens = config.get('maxOutputTokens') || 10000;
+    const multiSession = config.get('multiSession') !== false;  // Default to true
+    const maxSessions = config.get('maxSessions') || 100;
+    const sessionTimeout = config.get('sessionTimeout') || 3600;
 
     Logger.info(`Using Stata edition: ${stataEdition}`);
     Logger.info(`Log file location: ${logFileLocation}`);
     Logger.info(`Result display mode: ${resultDisplayMode}`);
     Logger.info(`Max output tokens: ${maxOutputTokens}`);
+    Logger.info(`Multi-session mode: ${multiSession ? 'enabled' : 'disabled'}`);
+    if (multiSession) {
+        Logger.info(`Max sessions: ${maxSessions}`);
+        Logger.info(`Session timeout: ${sessionTimeout}s`);
+    }
     
     if (!stataPath) {
         stataPath = await detectStataPath();
@@ -650,9 +665,12 @@ async function startMcpServer() {
             cmdString += ` --log-file-location ${logFileLocation}`;
             if (customLogDirectory) cmdString += ` --custom-log-directory "${customLogDirectory}"`;
             cmdString += ` --result-display-mode ${resultDisplayMode} --max-output-tokens ${maxOutputTokens}`;
-            
+            if (multiSession) {
+                cmdString += ` --multi-session --max-sessions ${maxSessions} --session-timeout ${sessionTimeout}`;
+            }
+
             Logger.info(`Starting server with command: ${cmdString}`);
-            
+
             const options = { cwd: scriptDir, windowsHide: true };
             mcpServerProcess = childProcess.exec(cmdString, options);
         } else {
@@ -663,6 +681,9 @@ async function startMcpServer() {
             args.push('--log-file-location', logFileLocation);
             if (customLogDirectory) args.push('--custom-log-directory', customLogDirectory);
             args.push('--result-display-mode', resultDisplayMode, '--max-output-tokens', maxOutputTokens.toString());
+            if (multiSession) {
+                args.push('--multi-session', '--max-sessions', maxSessions.toString(), '--session-timeout', sessionTimeout.toString());
+            }
             
             cmdString = `${pythonCommand} ${args.join(' ')}`;
             Logger.info(`Starting server with command: ${cmdString}`);
@@ -1422,60 +1443,99 @@ async function executeStataFile(filePath) {
     }
 
     try {
-        // Use /v1/tools endpoint - PyStata streams output to stdout automatically
-        // which is captured by mcpServerProcess.stdout and displayed in real-time
-        const requestBody = {
-            tool: 'run_file',
-            parameters: {
-                file_path: filePath,
-                timeout: runFileTimeout,
-                working_dir: workingDir
-            }
-        };
-
-        Logger.debug(`Executing via /v1/tools: ${filePath}`);
+        // Use streaming endpoint for real-time output display
+        Logger.debug(`Executing via /run_file/stream: ${filePath}`);
         stataOutputChannel.clear();
         stataOutputChannel.show(false);  // Show output panel
 
-        const response = await axios.post(
-            `http://${host}:${port}/v1/tools`,
-            requestBody,
-            {
-                headers: { 'Content-Type': 'application/json' },
-                timeout: (runFileTimeout * 1000) + 10000
-            }
-        );
+        // Build query parameters
+        const params = new URLSearchParams({
+            file_path: filePath,
+            timeout: runFileTimeout.toString()
+        });
+        if (workingDir) {
+            params.append('working_dir', workingDir);
+        }
 
-        if (response.status === 200) {
-            const result = response.data;
+        // Use streaming endpoint for real-time output display
+        const streamUrl = `http://${host}:${port}/run_file/stream?${params.toString()}`;
+        Logger.debug(`Stream URL: ${streamUrl}`);
 
-            if (result.status === 'success') {
-                const outputContent = result.result || 'File executed successfully (no output)';
+        // Use axios with responseType 'stream' for SSE
+        let fullOutput = '';
+        let hasError = false;
 
-                // Parse and display any graphs (VS Code only, not for MCP calls)
-                const autoDisplayGraphs = config.get('autoDisplayGraphs', true);
-                if (autoDisplayGraphs) {
-                    const graphs = parseGraphsFromOutput(outputContent);
-                    if (graphs.length > 0) {
-                        await displayGraphs(graphs, host, port);
+        const response = await axios.get(streamUrl, {
+            responseType: 'stream',
+            timeout: (runFileTimeout * 1000) + 10000
+        });
+
+        // Process the SSE stream
+        await new Promise((resolve, reject) => {
+            let buffer = '';
+
+            response.data.on('data', (chunk) => {
+                buffer += chunk.toString();
+
+                // Process complete SSE messages
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';  // Keep incomplete line in buffer
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const data = line.substring(6);  // Remove 'data: ' prefix
+
+                        // Skip status messages, show actual output
+                        if (data.startsWith('Starting execution') ||
+                            data.startsWith('Executing...') ||
+                            data.startsWith('*** Execution')) {
+                            // Status message - could show in status bar
+                            Logger.debug(`Stream status: ${data}`);
+                        } else if (data.startsWith('Error:') || data.startsWith('ERROR:')) {
+                            hasError = true;
+                            stataOutputChannel.appendLine(data);
+                            fullOutput += data + '\n';
+                        } else if (data.trim()) {
+                            // Actual Stata output - display in real-time
+                            stataOutputChannel.appendLine(data);
+                            fullOutput += data + '\n';
+                        }
                     }
                 }
+            });
 
-                return outputContent;
-            } else {
-                const errorMessage = result.message || 'Unknown error';
-                stataOutputChannel.appendLine(`Error: ${errorMessage}`);
-                stataOutputChannel.show(false);  // Steal focus on errors
-                vscode.window.showErrorMessage(`Error executing Stata file: ${errorMessage}`);
-                return null;
-            }
-        } else {
-            const errorMessage = `HTTP error: ${response.status}`;
-            stataOutputChannel.appendLine(errorMessage);
-            stataOutputChannel.show(false);  // Steal focus on errors
-            vscode.window.showErrorMessage(errorMessage);
-            return null;
+            response.data.on('end', () => {
+                // Process any remaining buffer
+                if (buffer.startsWith('data: ')) {
+                    const data = buffer.substring(6);
+                    if (data.trim() && !data.startsWith('Starting') && !data.startsWith('Executing') && !data.startsWith('***')) {
+                        stataOutputChannel.appendLine(data);
+                        fullOutput += data + '\n';
+                    }
+                }
+                resolve();
+            });
+
+            response.data.on('error', (err) => {
+                reject(err);
+            });
+        });
+
+        if (hasError) {
+            vscode.window.showErrorMessage('Stata execution completed with errors');
         }
+
+        // Parse and display any graphs
+        const autoDisplayGraphs = config.get('autoDisplayGraphs', true);
+        if (autoDisplayGraphs && fullOutput) {
+            const graphs = parseGraphsFromOutput(fullOutput);
+            if (graphs.length > 0) {
+                await displayGraphs(graphs, host, port);
+            }
+        }
+
+        return fullOutput || 'File executed successfully';
+
     } catch (error) {
         Logger.debug(`Error executing Stata file: ${error.message}`);
         const errorMessage = `Error executing Stata file: ${error.message}`;

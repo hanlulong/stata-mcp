@@ -184,7 +184,6 @@ Customize the extension behavior through VS Code settings. Access these settings
 |---------|-------------|---------|
 | `stata-vscode.runFileTimeout` | Timeout in seconds for 'Run File' operations | `600` (10 minutes) |
 | `stata-vscode.debugMode` | Show detailed debug information in output panel | `false` |
-| `stata-vscode.clineConfigPath` | Custom path to Cline configuration file (optional) | Auto-detected |
 
 ### Working Directory Settings
 
@@ -205,6 +204,23 @@ These settings control how Stata output is returned to AI assistants (LLMs) via 
 |---------|-------------|---------|
 | `stata-vscode.resultDisplayMode` | Output mode for MCP returns: `compact` (filters redundant output to save tokens) or `full` (returns complete output) | `compact` |
 | `stata-vscode.maxOutputTokens` | Maximum tokens for MCP output (0 = unlimited). Large outputs are saved to file with a path returned instead | `10000` |
+
+### Multi-Session Settings
+
+Enable parallel Stata execution with isolated sessions. Each session has its own data, variables, and macros.
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `stata-vscode.multiSession` | Enable multi-session mode for parallel Stata execution | `false` |
+| `stata-vscode.maxSessions` | Maximum number of concurrent sessions (1-16) | `8` |
+| `stata-vscode.sessionTimeout` | Session idle timeout in seconds. Sessions are automatically destroyed after this period of inactivity | `3600` |
+
+**When to use multi-session mode:**
+- Running multiple analyses in parallel
+- Isolating test code from production data
+- Multiple Claude Code instances using the same MCP server
+
+**Note:** Each session requires ~200-300 MB RAM for Stata. Check your Stata license for concurrent instance limits.
 
 **Compact mode filters:**
 - Loop code echoes (foreach/forvalues/while blocks) - keeps actual output only
