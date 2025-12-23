@@ -8,25 +8,17 @@
 [![GitHub license](https://img.shields.io/github/license/hanlulong/stata-mcp)](https://github.com/hanlulong/stata-mcp/blob/main/LICENSE) 
 
 
-This extension provides Stata integration for Visual Studio Code and Cursor IDE using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/docs/getting-started/intro).
-
-The extension allows you to:
-
-- Run Stata commands directly from VS Code or Cursor
-- Execute selections or entire .do files
-- View Stata output in the editor in real-time
-- Get AI assistant integration through the MCP protocol
-- Experience enhanced AI coding with [Cursor](https://www.cursor.com/), [Cline](https://github.com/cline/cline), [Claude Code](https://claude.com/product/claude-code), or [Codex](https://github.com/openai/codex)
-- Choose your Stata edition (MP, SE, or BE)
+This extension provides Stata integration for Visual Studio Code and Cursor IDE using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/docs/getting-started/intro). It enables AI-powered Stata development with [Cursor](https://www.cursor.com/), [Cline](https://github.com/cline/cline), [Claude Code](https://claude.com/product/claude-code), or [Codex](https://github.com/openai/codex).
 
 ## Features
 
 - **Run Stata Commands**: Execute selections or entire .do files directly from your editor
+- **Real-time Output**: See Stata results instantly in your editor
 - **Syntax Highlighting**: Full syntax support for Stata .do, .ado, .mata, and .doh files
-- **AI Assistant Integration**: Contextual help and code suggestions via [MCP](https://modelcontextprotocol.io/)
+- **AI Assistant Integration**: Contextual help and code suggestions via MCP
 - **Cross-platform**: Works on Windows, macOS, and Linux
 - **Automatic Stata Detection**: Automatically finds your Stata installation
-- **Real-time Output**: See Stata results instantly in your editor
+- **Edition Selection**: Choose your Stata version (MP, SE, or BE)
 - **Multi-Session Parallel Execution**: Run multiple Stata sessions simultaneously with isolated state
 
 ## Demo
