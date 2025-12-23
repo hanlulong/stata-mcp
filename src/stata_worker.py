@@ -27,6 +27,7 @@ import io
 import re
 import time
 import queue
+import logging
 import platform
 import traceback
 import threading
@@ -65,6 +66,7 @@ class CommandType(Enum):
     EXECUTE_FILE = "execute_file"  # Execute a .do file
     GET_STATUS = "get_status"    # Get worker status
     STOP_EXECUTION = "stop"      # Interrupt current execution
+    GET_DATA = "get_data"        # Get current dataset as DataFrame
     EXIT = "exit"                # Shutdown worker
 
 
@@ -140,6 +142,132 @@ class OutputCapture:
             return output
 
 
+def enable_graph_tracking(stlib) -> bool:
+    """Enable graph tracking before command execution.
+
+    Must be called BEFORE running Stata commands to track graphs created.
+
+    Args:
+        stlib: The pystata.config.stlib module
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        from pystata.config import get_encode_str
+        stlib.StataSO_Execute(get_encode_str("qui _gr_list on"), False)
+        return True
+    except Exception:
+        return False
+
+
+def detect_and_export_graphs_worker(stata, stlib, graphs_dir: str) -> list:
+    """Detect and export graphs created during Stata execution.
+
+    Uses _gr_list low-level API to get list of graphs, then exports each one.
+    This approach works on both Windows and Mac.
+
+    Args:
+        stata: The pystata.stata module
+        stlib: The pystata.config.stlib module for low-level operations
+        graphs_dir: Directory to export graphs to
+
+    Returns:
+        List of graph info dicts: [{"name": "Graph", "path": "/path/to/graph.png"}, ...]
+    """
+    logging.debug(f"detect_and_export_graphs_worker: Platform={platform.system()}, graphs_dir={graphs_dir}")
+
+    if stata is None or stlib is None:
+        logging.debug("detect_and_export_graphs_worker: stata or stlib is None, returning empty list")
+        return []
+
+    try:
+        # Import required modules for low-level API
+        import sfi
+        from pystata.config import get_encode_str
+
+        # Use _gr_list low-level API to get graph names (same approach as Mac)
+        logging.debug("detect_and_export_graphs_worker: Using _gr_list to get graph list...")
+
+        # Get the list of graphs using _gr_list
+        rc = stlib.StataSO_Execute(get_encode_str("qui _gr_list list"), False)
+        logging.debug(f"detect_and_export_graphs_worker: _gr_list list returned rc={rc}")
+
+        # Get the graph names from the r(_grlist) macro
+        gnamelist = sfi.Macro.getGlobal("r(_grlist)")
+        logging.debug(f"detect_and_export_graphs_worker: r(_grlist) = {repr(gnamelist)}")
+
+        if not gnamelist or not gnamelist.strip():
+            logging.debug("detect_and_export_graphs_worker: No graphs found (gnamelist is empty)")
+            return []
+
+        graph_names = gnamelist.strip().split()
+        logging.info(f"detect_and_export_graphs_worker: Found {len(graph_names)} graph(s): {graph_names}")
+
+        if not graph_names:
+            return []
+
+        graphs_info = []
+
+        # Create graphs directory
+        os.makedirs(graphs_dir, exist_ok=True)
+
+        # Export each graph to PNG using low-level API
+        for gname in graph_names:
+            try:
+                # First display the graph to make it the active window
+                # This is required before export, especially for non-current graphs
+                display_cmd = f'quietly graph display {gname}'
+                rc = stlib.StataSO_Execute(get_encode_str(display_cmd), False)
+                if rc != 0:
+                    logging.debug(f"Graph display warning for '{gname}': rc={rc}")
+                    # Continue to try export anyway
+
+                # Export as PNG using low-level API
+                # Use forward slashes in path to avoid Stata interpreting backslashes as escape sequences
+                graph_file = os.path.join(graphs_dir, f'{gname}.png')
+                graph_file_stata = graph_file.replace('\\', '/')
+                export_cmd = f'quietly graph export "{graph_file_stata}", name({gname}) replace width(800) height(600)'
+
+                logging.debug(f"Exporting graph '{gname}' with command: {export_cmd}")
+
+                rc = stlib.StataSO_Execute(get_encode_str(export_cmd), False)
+                if rc != 0:
+                    logging.error(f"Graph export failed for '{gname}': rc={rc}")
+                    continue
+
+                # Verify the file was actually created
+                if os.path.exists(graph_file):
+                    file_size = os.path.getsize(graph_file)
+                    if file_size > 0:
+                        # Normalize path to forward slashes for cross-platform compatibility
+                        normalized_path = graph_file.replace('\\', '/')
+                        graphs_info.append({
+                            "name": gname,
+                            "path": normalized_path
+                        })
+                        logging.info(f"Successfully exported graph '{gname}' ({file_size} bytes) to {normalized_path}")
+                    else:
+                        logging.warning(f"Graph file created but empty: {graph_file}")
+                else:
+                    logging.warning(f"Graph file not found after export: {graph_file}")
+                    # List directory contents for debugging
+                    if os.path.exists(graphs_dir):
+                        available = os.listdir(graphs_dir)
+                        logging.debug(f"Available files in {graphs_dir}: {available}")
+            except Exception as e:
+                logging.error(f"Error processing graph '{gname}': {e}")
+                continue
+
+        logging.info(f"Graph detection complete: {len(graphs_info)} graphs exported")
+        return graphs_info
+
+    except Exception as e:
+        logging.error(f"Graph detection failed: {e}")
+        logging.debug(f"Exception details: {traceback.format_exc()}")
+        return []
+
+
 def worker_process(
     worker_id: str,
     command_queue,  # multiprocessing.Queue
@@ -147,7 +275,8 @@ def worker_process(
     stata_path: str,
     stata_edition: str = "mp",
     init_timeout: float = 60.0,
-    stop_event=None  # multiprocessing.Event for stop signaling
+    stop_event=None,  # multiprocessing.Event for stop signaling
+    graphs_dir: str = None  # Directory to export graphs (shared with main server)
 ):
     """
     Main worker process function - runs in a separate process.
@@ -164,6 +293,27 @@ def worker_process(
         init_timeout: Timeout for Stata initialization
         stop_event: Optional Event for signaling stop (avoids queue race condition)
     """
+    # Set up worker-specific logging to a file (since stdout is redirected)
+    # This helps debug issues in the worker process
+    # NOTE: Must create a new logger since parent process may have already configured root logger
+    worker_log_file = os.path.join(tempfile.gettempdir(), f'stata_worker_{worker_id}.log')
+
+    # Create a dedicated logger for this worker (not root logger)
+    worker_logger = logging.getLogger(f'stata_worker_{worker_id}')
+    worker_logger.setLevel(logging.DEBUG)
+    # Remove any existing handlers
+    worker_logger.handlers = []
+    # Add file handler
+    file_handler = logging.FileHandler(worker_log_file, mode='w', encoding='utf-8')
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(f'%(asctime)s - worker-{worker_id} - %(levelname)s - %(message)s'))
+    worker_logger.addHandler(file_handler)
+    worker_logger.info(f"Worker {worker_id} started, logging to {worker_log_file}")
+
+    # Also set the root logger to use this for convenience in other functions
+    logging.root.handlers = [file_handler]
+    logging.root.setLevel(logging.DEBUG)
+
     # CRITICAL: Redirect stdout to devnull immediately to prevent worker output
     # from appearing in parent process stdout (which VS Code pipes to output channel).
     # This prevents duplicate output - the SSE stream is the only output path.
@@ -175,6 +325,11 @@ def worker_process(
     stlib = None
     cancelled = False
     worker_temp_dir = None  # Track temp directory for cleanup
+
+    # Set default graphs directory if not provided
+    if graphs_dir is None:
+        graphs_dir = os.path.join(tempfile.gettempdir(), 'stata_mcp_graphs')
+    os.makedirs(graphs_dir, exist_ok=True)
 
     def send_result(command_id: str, status: str, output: str = "", error: str = "",
                     execution_time: float = 0.0, extra: Dict = None):
@@ -334,12 +489,19 @@ def worker_process(
 
             return False, "", error_str, execution_time
 
-    def execute_stata_file(file_path: str, timeout: float = 600.0, log_file: str = None) -> tuple:
+    def execute_stata_file(file_path: str, timeout: float = 600.0, log_file: str = None, working_dir: str = None) -> tuple:
         """
         Execute a .do file with log file support for streaming.
 
         When log_file is provided, wraps the execution with log commands so the
         output can be monitored in real-time for streaming.
+
+        Args:
+            file_path: Path to .do file to execute
+            timeout: Execution timeout in seconds
+            log_file: Optional path to log file for streaming support
+            working_dir: Working directory to cd to before running (affects where outputs are saved).
+                         If None, defaults to the .do file's directory.
 
         Returns:
             tuple: (success: bool, output: str, error: str, execution_time: float, log_file: str)
@@ -385,13 +547,23 @@ def worker_process(
             # This prevents Windows backslash escape issues in Stata commands
             log_file_stata = log_file.replace('\\', '/')
 
+            # Get the working directory for cd command (like native Stata behavior)
+            # This ensures outputs (graph export, save, etc.) go to the expected location
+            # Use provided working_dir, or default to the .do file's directory
+            if working_dir:
+                do_file_dir = os.path.abspath(working_dir).replace('\\', '/')
+            else:
+                do_file_dir = os.path.dirname(os.path.abspath(file_path)).replace('\\', '/')
+
             # Wrap with log commands for streaming support
             # CRITICAL: Embed seed directly in wrapped code to ensure it's set reliably
             # This avoids race conditions from separate stata.run() calls that might fail silently
+            # NOTE: cd to .do file's directory so outputs go there (log file location is separate)
             wrapped_code = f"""capture log close _all
 capture program drop _all
 capture macro drop _all
 set seed {seed_hash}
+cd "{do_file_dir}"
 log using "{log_file_stata}", replace text
 {original_code}
 capture log close _all
@@ -573,31 +745,145 @@ capture log close _all
                     code = payload.get('code', '')
                     timeout = payload.get('timeout', 600.0)
 
+                    # Enable graph tracking BEFORE execution (for _gr_list compatibility)
+                    if stlib is not None:
+                        enable_graph_tracking(stlib)
+
                     success, output, error, exec_time = execute_stata_code(code, timeout)
-                    send_result(
-                        command_id=cmd_id,
-                        status="success" if success else "error",
-                        output=output,
-                        error=error,
-                        execution_time=exec_time
-                    )
 
-                elif cmd_type == CommandType.EXECUTE_FILE:
-                    file_path = payload.get('file_path', '')
-                    timeout = payload.get('timeout', 600.0)
-                    log_file = payload.get('log_file', None)
+                    # Detect and export graphs after execution
+                    graphs = []
+                    if success and stlib is not None and graphs_dir:
+                        try:
+                            graphs = detect_and_export_graphs_worker(stata, stlib, graphs_dir)
+                        except Exception:
+                            pass  # Non-critical - don't fail command if graph export fails
 
-                    success, output, error, exec_time, actual_log_file = execute_stata_file(
-                        file_path, timeout, log_file
-                    )
                     send_result(
                         command_id=cmd_id,
                         status="success" if success else "error",
                         output=output,
                         error=error,
                         execution_time=exec_time,
-                        extra={"file_path": file_path, "log_file": actual_log_file}
+                        extra={"graphs": graphs} if graphs else None
                     )
+
+                elif cmd_type == CommandType.EXECUTE_FILE:
+                    file_path = payload.get('file_path', '')
+                    timeout = payload.get('timeout', 600.0)
+                    log_file = payload.get('log_file', None)
+                    working_dir = payload.get('working_dir', None)
+
+                    # Enable graph tracking BEFORE execution
+                    if stlib is not None:
+                        enable_graph_tracking(stlib)
+
+                    success, output, error, exec_time, actual_log_file = execute_stata_file(
+                        file_path, timeout, log_file, working_dir
+                    )
+
+                    # Detect and export graphs after execution
+                    graphs = []
+                    if success and stlib is not None and graphs_dir:
+                        try:
+                            graphs = detect_and_export_graphs_worker(stata, stlib, graphs_dir)
+                        except Exception:
+                            pass  # Non-critical - don't fail if graph export fails
+
+                    send_result(
+                        command_id=cmd_id,
+                        status="success" if success else "error",
+                        output=output,
+                        error=error,
+                        execution_time=exec_time,
+                        extra={"file_path": file_path, "log_file": actual_log_file, "graphs": graphs}
+                    )
+
+                elif cmd_type == CommandType.GET_DATA:
+                    # Get current dataset as DataFrame (PyStata mode only)
+                    if_condition = payload.get('if_condition', None)
+                    try:
+                        if stata is None:
+                            send_result(
+                                command_id=cmd_id,
+                                status="error",
+                                error="Stata is not initialized"
+                            )
+                        else:
+                            # Get data as pandas DataFrame
+                            df = stata.pdataframe_from_data()
+
+                            if df is None or df.empty:
+                                send_result(
+                                    command_id=cmd_id,
+                                    status="success",
+                                    output="",
+                                    extra={
+                                        "data": [],
+                                        "columns": [],
+                                        "dtypes": {},
+                                        "rows": 0,
+                                        "index": []
+                                    }
+                                )
+                            else:
+                                # Apply if condition filter if provided
+                                if if_condition:
+                                    try:
+                                        # Use Stata to filter
+                                        stata.run("capture drop _filter_marker", quietly=True)
+                                        stata.run(f"quietly generate byte _filter_marker = ({if_condition})", quietly=True)
+
+                                        import sfi
+                                        n_obs = sfi.Data.getObsTotal()
+                                        filter_mask = []
+                                        for i in range(n_obs):
+                                            val = sfi.Data.get('_filter_marker', i)
+                                            if isinstance(val, list) and len(val) > 0:
+                                                if isinstance(val[0], list) and len(val[0]) > 0:
+                                                    actual_val = val[0][0]
+                                                else:
+                                                    actual_val = val[0]
+                                            else:
+                                                actual_val = val
+                                            filter_mask.append(actual_val == 1)
+
+                                        stata.run("quietly drop _filter_marker", quietly=True)
+                                        df = df[filter_mask].reset_index(drop=True)
+                                    except Exception as filter_err:
+                                        try:
+                                            stata.run("capture drop _filter_marker", quietly=True)
+                                        except:
+                                            pass
+                                        send_result(
+                                            command_id=cmd_id,
+                                            status="error",
+                                            error=f"Filter error: {str(filter_err)}"
+                                        )
+                                        continue
+
+                                # Clean data for JSON serialization
+                                import numpy as np
+                                df_clean = df.replace({np.nan: None})
+
+                                send_result(
+                                    command_id=cmd_id,
+                                    status="success",
+                                    output="",
+                                    extra={
+                                        "data": df_clean.values.tolist(),
+                                        "columns": df_clean.columns.tolist(),
+                                        "dtypes": {col: str(df[col].dtype) for col in df.columns},
+                                        "rows": len(df),
+                                        "index": df.index.tolist()
+                                    }
+                                )
+                    except Exception as data_err:
+                        send_result(
+                            command_id=cmd_id,
+                            status="error",
+                            error=f"Error getting data: {str(data_err)}"
+                        )
 
                 else:
                     send_result(

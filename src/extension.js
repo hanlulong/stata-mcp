@@ -22,6 +22,7 @@ let debugMode = false;
 // Execution tracking for stop functionality
 let isExecuting = false;
 let currentExecutionFile = null;
+let currentStreamAbortController = null;  // AbortController for active stream
 
 // Configuration cache
 let configCache = null;
@@ -666,8 +667,8 @@ async function startMcpServer() {
 
         if (IS_WINDOWS) {
             const scriptDir = path.dirname(mcpServerPath);
-            cmdString = `"${pythonCommand}" -m stata_mcp_server --port ${port}`;
-            
+            cmdString = `"${pythonCommand}" -m stata_mcp_server --host ${host} --port ${port}`;
+
             if (forcePort) cmdString += ' --force-port';
             if (stataPath) cmdString += ` --stata-path "${stataPath}"`;
             cmdString += ` --log-file "${logFile}" --stata-edition ${stataEdition} --log-level ${logLevel}`;
@@ -684,7 +685,7 @@ async function startMcpServer() {
             const options = { cwd: scriptDir, windowsHide: true };
             mcpServerProcess = childProcess.exec(cmdString, options);
         } else {
-            args.push(mcpServerPath, '--port', port.toString());
+            args.push(mcpServerPath, '--host', host, '--port', port.toString());
             if (forcePort) args.push('--force-port');
             if (stataPath) args.push('--stata-path', stataPath);
             args.push('--log-file', logFile, '--stata-edition', stataEdition, '--log-level', logLevel);
@@ -847,6 +848,12 @@ async function stopExecution() {
     try {
         updateStatusBar('stopping');
 
+        // Abort the active stream first to stop receiving data
+        if (currentStreamAbortController) {
+            currentStreamAbortController.abort();
+            currentStreamAbortController = null;
+        }
+
         // Send stop request to server
         const response = await axios.post(
             `http://${host}:${port}/stop_execution`,
@@ -869,6 +876,7 @@ async function stopExecution() {
     } finally {
         isExecuting = false;
         currentExecutionFile = null;
+        currentStreamAbortController = null;
         updateStatusBar();
     }
 }
@@ -990,7 +998,7 @@ async function showInteractiveWindow(filePath, output, graphs, host, port) {
                                 `http://${cmdHost}:${cmdPort}/v1/tools`,
                                 {
                                     tool: 'run_selection',
-                                    parameters: { selection: message.text }
+                                    parameters: { selection: message.text, skip_filter: true }
                                 },
                                 { headers: { 'Content-Type': 'application/json' }, timeout: 30000 }
                             );
@@ -1054,6 +1062,7 @@ function getInteractiveWindowHtml(fileName, output, graphsHtml) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src http://localhost:* http://127.0.0.1:* https://*; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
     <title>Stata Interactive Window</title>
     <style>
         body {
@@ -1331,7 +1340,7 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
 
             if (result.status === 'success') {
                 const outputContent = result.result || 'Command executed successfully (no output)';
-                stataOutputChannel.clear();
+                // Don't clear output channel - preserve previous logs for run_selection
                 stataOutputChannel.appendLine(outputContent);
                 stataOutputChannel.show(false);  // Steal focus when running Stata commands
 
@@ -1476,9 +1485,13 @@ async function executeStataFile(filePath) {
         let fullOutput = '';
         let hasError = false;
 
+        // Create AbortController to allow cancellation when stop is pressed
+        currentStreamAbortController = new AbortController();
+
         const response = await axios.get(streamUrl, {
             responseType: 'stream',
-            timeout: (runFileTimeout * 1000) + 10000
+            timeout: (runFileTimeout * 1000) + 10000,
+            signal: currentStreamAbortController.signal
         });
 
         // Process the SSE stream
@@ -1487,6 +1500,9 @@ async function executeStataFile(filePath) {
 
             response.data.on('data', (chunk) => {
                 buffer += chunk.toString();
+
+                // Normalize line endings (Windows uses \r\n, Mac/Linux use \n)
+                buffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
                 // Process complete SSE messages
                 const lines = buffer.split('\n');
@@ -1548,6 +1564,14 @@ async function executeStataFile(filePath) {
         return fullOutput || 'File executed successfully';
 
     } catch (error) {
+        // Check if this was an intentional abort (user clicked Stop)
+        if (error.code === 'ERR_CANCELED' || error.name === 'CanceledError' || error.message?.includes('canceled')) {
+            Logger.debug('Execution was stopped by user');
+            stataOutputChannel.appendLine('\n--- Execution stopped by user ---');
+            // No error message for intentional stop
+            return null;
+        }
+
         Logger.debug(`Error executing Stata file: ${error.message}`);
         const errorMessage = `Error executing Stata file: ${error.message}`;
         stataOutputChannel.appendLine(errorMessage);
@@ -1558,6 +1582,9 @@ async function executeStataFile(filePath) {
         // Always cleanup execution state
         isExecuting = false;
         currentExecutionFile = null;
+        if (currentStreamAbortController) {
+            currentStreamAbortController = null;
+        }
         updateStatusBar();
     }
 }
@@ -2489,9 +2516,13 @@ function parseGraphsFromOutput(output) {
 
     Logger.debug(`Parsing output for graphs. Output length: ${output ? output.length : 0}`);
 
+    // Normalize line endings to \n (Windows uses \r\n, Mac/Linux use \n)
+    // Also handle standalone \r (old Mac format) just in case
+    const normalizedOutput = output ? output.replace(/\r\n/g, '\n').replace(/\r/g, '\n') : '';
+
     // Look for the GRAPHS DETECTED section in the output
     const graphSectionRegex = /={60}\nGRAPHS DETECTED: (\d+) graph\(s\) created\n={60}\n((?:\s*•\s+.+\n?)+)/;
-    const match = output.match(graphSectionRegex);
+    const match = normalizedOutput.match(graphSectionRegex);
 
     if (match) {
         Logger.debug(`Found GRAPHS DETECTED section. Match: ${match[0]}`);
@@ -2502,10 +2533,13 @@ function parseGraphsFromOutput(output) {
             // Extract graph name and path from lines like "  • graph1: /path/to/graph.png"
             const graphMatch = line.match(/•\s+(.+):\s+(.+)/);
             if (graphMatch) {
-                Logger.debug(`Matched graph line: name="${graphMatch[1].trim()}", path="${graphMatch[2].trim()}"`);
+                const name = graphMatch[1].trim();
+                // Normalize path to forward slashes (Windows paths may have backslashes)
+                const path = graphMatch[2].trim().replace(/\\/g, '/');
+                Logger.debug(`Matched graph line: name="${name}", path="${path}"`);
                 graphs.push({
-                    name: graphMatch[1].trim(),
-                    path: graphMatch[2].trim()
+                    name: name,
+                    path: path
                 });
             } else {
                 Logger.debug(`Failed to match graph line: "${line}"`);
@@ -2513,6 +2547,15 @@ function parseGraphsFromOutput(output) {
         }
     } else {
         Logger.debug(`No GRAPHS DETECTED section found in output`);
+        // Log a sample of output to help debug (first 500 chars)
+        if (normalizedOutput && normalizedOutput.length > 0) {
+            const sample = normalizedOutput.substring(0, 500);
+            Logger.debug(`Output sample (first 500 chars): ${sample}`);
+            // Check if there's any mention of graphs in the output
+            if (normalizedOutput.includes('GRAPHS') || normalizedOutput.includes('graph')) {
+                Logger.debug(`Output contains 'GRAPHS' or 'graph' but regex didn't match`);
+            }
+        }
     }
 
     Logger.debug(`Parsed ${graphs.length} graph(s)`);
@@ -2578,10 +2621,11 @@ function displayGraphsInVSCode(graphs, host, port) {
 
     // Add new graphs to the collection (or update existing ones)
     const timestamp = Date.now();
-    graphs.forEach(graph => {
+    graphs.forEach((graph, index) => {
         allGraphs[graph.name] = {
             ...graph,
-            timestamp: timestamp
+            timestamp: timestamp,
+            index: index  // Preserve order within batch
         };
     });
 
@@ -2594,14 +2638,40 @@ function displayGraphsInVSCode(graphs, host, port) {
 function updateGraphViewerPanel(host, port) {
     if (!graphViewerPanel) return;
 
-    const graphsArray = Object.values(allGraphs);
+    // Display: last graph at top (duplicated), then all graphs in order
+    // e.g., for 4 graphs: graph4, graph1, graph2, graph3, graph4 (5 figures total)
+    const allGraphsArray = Object.values(allGraphs);
+
+    // Group by batch (timestamp) and sort batches by timestamp desc
+    const batches = {};
+    allGraphsArray.forEach(g => {
+        const ts = g.timestamp;
+        if (!batches[ts]) batches[ts] = [];
+        batches[ts].push(g);
+    });
+
+    // Build final array: for each batch, last graph first, then all in order
+    const graphsArray = [];
+    const sortedTimestamps = Object.keys(batches).sort((a, b) => b - a);  // Newest batch first
+
+    for (const ts of sortedTimestamps) {
+        const batchGraphs = batches[ts].sort((a, b) => a.index - b.index);  // Sort by index
+        if (batchGraphs.length > 0) {
+            // Add last graph first at top
+            const lastGraph = batchGraphs[batchGraphs.length - 1];
+            graphsArray.push({ ...lastGraph, displayName: 'Last Graph' });
+            // Then add all graphs in order
+            batchGraphs.forEach(g => graphsArray.push(g));
+        }
+    }
 
     // Generate HTML for graphs with timestamps to force reload
     const graphsHtml = graphsArray.map(graph => {
         const graphUrl = `http://${host}:${port}/graphs/${encodeURIComponent(graph.name)}?t=${graph.timestamp}`;
+        const displayName = graph.displayName || graph.name;
         return `
             <div class="graph-container" data-graph-name="${escapeHtml(graph.name)}">
-                <h3>${escapeHtml(graph.name)}</h3>
+                <h3>${escapeHtml(displayName)}</h3>
                 <img src="${graphUrl}" alt="${escapeHtml(graph.name)}"
                      onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
                 <div class="error" style="display:none;">Failed to load graph: ${escapeHtml(graph.name)}</div>
@@ -2650,6 +2720,7 @@ function getGraphViewerHtml(graphsHtml, graphCount) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src http://localhost:* http://127.0.0.1:* https://*; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
     <title>Stata Graphs</title>
     <style>
         body {

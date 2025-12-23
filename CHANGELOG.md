@@ -7,11 +7,12 @@ All notable changes to the Stata MCP extension will be documented in this file.
 ### Added
 - **Multi-Session Support**: Run multiple Stata sessions in parallel for concurrent execution
   - New settings:
-    - `stata-vscode.multiSession`: Enable multi-session mode (default: false)
-    - `stata-vscode.maxSessions`: Maximum concurrent sessions (default: 8)
-    - `stata-vscode.sessionTimeout`: Session idle timeout in seconds (default: 3600)
+    - `stata-vscode.multiSession`: Enable multi-session mode (default: true)
+    - `stata-vscode.maxSessions`: Maximum concurrent sessions (default: 100)
+    - `stata-vscode.sessionTimeout`: Session idle timeout in seconds (default: 3600 = 1 hour)
   - Command-line flags: `--multi-session`, `--max-sessions`, `--session-timeout`
   - Each session has isolated state (data, variables, macros)
+  - Automatic session cleanup after idle timeout
   - Backward compatible: existing clients work without changes (uses default session)
 
 - **Session Management API**: New endpoints for session control
@@ -25,13 +26,26 @@ All notable changes to the Stata MCP extension will be documented in this file.
   - `/run_file?session_id=abc123`: Run file in specific session
   - `/run_selection?session_id=abc123`: Run selection in specific session
 
+### Fixed
+- **Windows Graph Display**: Fixed multiple issues preventing graph popup and display on Windows
+  - URL decoding for graph names with special characters (spaces, etc.)
+  - Line ending normalization (`\r\n` → `\n`) for Windows SSE streams and regex matching
+  - Forward slash paths in all Stata graph export commands to avoid escape sequence issues
+  - Low-level `_gr_list` API for reliable graph detection on Windows
+  - Graph list reset before each command to only detect newly created graphs
+
+- **Windows Socket Errors**: Suppressed non-critical IOCP socket errors (WinError 64, 995) that occurred when clients disconnected
+
+- **Table Formatting**: Preserved spacing in Stata table output (removed aggressive space compression)
+
+- **Log File Location**: Fixed `/v1/tools` endpoint to respect `logFileLocation` setting
+
 ### Technical
 - New files: `src/stata_worker.py`, `src/session_manager.py`
 - Uses Python multiprocessing with `spawn` method for process isolation
 - Each worker has its own PyStata instance (pystata.config.init)
 - Inter-process communication via `multiprocessing.Queue`
-- Design document: `docs/MULTI_SESSION_DESIGN.md`
-- User guide: `docs/MULTI_SESSION_USAGE.md`
+- Enhanced debug logging for Windows troubleshooting
 
 ## [0.3.8] - 2025-12-22
 

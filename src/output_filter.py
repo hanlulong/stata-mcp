@@ -269,11 +269,8 @@ def apply_compact_mode_filter(output: str, filter_command_echo: bool = False) ->
                 i += 1
                 continue
 
-        # Clean up and keep the line
+        # Clean up and keep the line (preserve spacing for table alignment)
         line = smcl_pattern.sub('', line)
-        leading_space = len(line) - len(line.lstrip())
-        line_content = re.sub(r' {4,}', '  ', line.strip())
-        line = ' ' * min(leading_space, 4) + line_content
 
         # Track variable lists and truncate after 100 items
         if var_list_pattern.match(line):

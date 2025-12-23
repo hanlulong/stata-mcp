@@ -105,7 +105,8 @@ class SessionManager:
         session_timeout: int = 3600,
         worker_start_timeout: int = 60,
         command_timeout: int = 600,
-        enabled: bool = True
+        enabled: bool = True,
+        graphs_dir: str = None
     ):
         """
         Initialize the session manager.
@@ -118,6 +119,7 @@ class SessionManager:
             worker_start_timeout: Worker initialization timeout in seconds
             command_timeout: Default command execution timeout
             enabled: Whether multi-session mode is enabled
+            graphs_dir: Directory for graph exports (shared with main server)
         """
         self.stata_path = stata_path
         self.stata_edition = stata_edition
@@ -126,6 +128,7 @@ class SessionManager:
         self.worker_start_timeout = worker_start_timeout
         self.command_timeout = command_timeout
         self.enabled = enabled
+        self.graphs_dir = graphs_dir
 
         self._sessions: Dict[str, Session] = {}
         self._lock = threading.RLock()
@@ -276,7 +279,8 @@ class SessionManager:
                     self.stata_path,
                     self.stata_edition,
                     self.worker_start_timeout,
-                    stop_event  # Pass stop_event to worker
+                    stop_event,  # Pass stop_event to worker
+                    self.graphs_dir  # Pass graphs_dir for graph exports
                 ),
                 name=f"stata-worker-{session_id}"
             )
@@ -456,7 +460,8 @@ class SessionManager:
         file_path: str,
         session_id: Optional[str] = None,
         timeout: Optional[float] = None,
-        log_file: Optional[str] = None
+        log_file: Optional[str] = None,
+        working_dir: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Execute a .do file in a session.
@@ -466,6 +471,8 @@ class SessionManager:
             session_id: Target session ID (None for default)
             timeout: Execution timeout in seconds
             log_file: Optional path to log file for streaming support
+            working_dir: Working directory to cd to before running (affects where outputs are saved).
+                         If None, defaults to the .do file's directory.
 
         Returns:
             Result dictionary with status, output, error, log_file
@@ -512,10 +519,61 @@ class SessionManager:
             {
                 "file_path": file_path,
                 "timeout": timeout or self.command_timeout,
-                "log_file": log_file
+                "log_file": log_file,
+                "working_dir": working_dir
             },
             timeout or self.command_timeout
         )
+
+    def get_data(
+        self,
+        session_id: Optional[str] = None,
+        if_condition: Optional[str] = None,
+        timeout: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """
+        Get current dataset from a session as a dictionary.
+
+        Args:
+            session_id: Target session ID (None for default)
+            if_condition: Optional Stata if condition for filtering
+            timeout: Command timeout in seconds
+
+        Returns:
+            Result dictionary with status, data, columns, dtypes, rows, index
+        """
+        session = self.get_session(session_id)
+        if not session:
+            return {
+                "status": "error",
+                "error": f"Session not found: {session_id or 'default'}"
+            }
+
+        if session.state != SessionState.READY:
+            return {
+                "status": "error",
+                "error": f"Session not ready: {session.state.value}"
+            }
+
+        result = self._execute_command(
+            session,
+            CommandType.GET_DATA,
+            {"if_condition": if_condition},
+            timeout or 30.0  # 30 second timeout for data retrieval
+        )
+
+        # Extract data from the extra field
+        if result.get('status') == 'success' and 'extra' in result:
+            extra = result['extra']
+            return {
+                "status": "success",
+                "data": extra.get('data', []),
+                "columns": extra.get('columns', []),
+                "dtypes": extra.get('dtypes', {}),
+                "rows": extra.get('rows', 0),
+                "index": extra.get('index', [])
+            }
+        return result
 
     def stop_execution(self, session_id: Optional[str] = None) -> Dict[str, Any]:
         """

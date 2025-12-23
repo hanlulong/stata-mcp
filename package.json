@@ -170,7 +170,10 @@
 				},
 				"stata-vscode.graphDisplayMethod": {
 					"type": "string",
-					"enum": ["vscode", "browser"],
+					"enum": [
+						"vscode",
+						"browser"
+					],
 					"default": "vscode",
 					"description": "Choose how to display graphs: 'vscode' (in VS Code webview panel) or 'browser' (in external web browser)"
 				},
@@ -196,13 +199,23 @@
 				},
 				"stata-vscode.stataEdition": {
 					"type": "string",
-					"enum": ["mp", "se", "be"],
+					"enum": [
+						"mp",
+						"se",
+						"be"
+					],
 					"default": "mp",
 					"description": "Stata edition to use (MP, SE, BE) - default: MP"
 				},
 				"stata-vscode.logFileLocation": {
 					"type": "string",
-					"enum": ["dofile", "parent", "workspace", "extension", "custom"],
+					"enum": [
+						"dofile",
+						"parent",
+						"workspace",
+						"extension",
+						"custom"
+					],
 					"default": "extension",
 					"description": "Location for Stata log files: 'dofile' (same directory as .do file), 'parent' (parent directory of .do file), 'workspace' (VS Code workspace root), 'extension' (logs folder in extension directory - default), or 'custom' (user-specified directory)"
 				},
@@ -213,7 +226,10 @@
 				},
 				"stata-vscode.resultDisplayMode": {
 					"type": "string",
-					"enum": ["compact", "full"],
+					"enum": [
+						"compact",
+						"full"
+					],
 					"default": "compact",
 					"description": "Result display mode for MCP returns: 'compact' (filters verbose output to save tokens) or 'full' (complete output). Compact mode removes program definitions, Mata blocks, change messages, and compresses whitespace."
 				},
@@ -224,7 +240,14 @@
 				},
 				"stata-vscode.workingDirectory": {
 					"type": "string",
-					"enum": ["dofile", "parent", "workspace", "extension", "custom", "none"],
+					"enum": [
+						"dofile",
+						"parent",
+						"workspace",
+						"extension",
+						"custom",
+						"none"
+					],
 					"default": "dofile",
 					"description": "Working directory when running .do files: 'dofile' (same as .do file - default), 'parent' (parent directory of .do file), 'workspace' (VS Code workspace root), 'extension' (logs folder in extension directory), 'custom' (user-specified), or 'none' (don't change directory)"
 				},
@@ -298,7 +321,8 @@
 	},
 	"dependencies": {
 		"adm-zip": "^0.5.16",
-		"axios": "^1.8.4"
+		"axios": "^1.8.4",
+		"resolve": "^1.22.11"
 	},
 	"devDependencies": {
 		"@types/glob": "^7.2.0",
