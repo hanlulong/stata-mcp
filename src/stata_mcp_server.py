@@ -357,15 +357,23 @@ def try_init_stata(stata_path):
 # Lock file mechanism removed - VS Code/Cursor handles extension instances properly
 # If there are port conflicts, the server will fail to start cleanly
 
-def get_log_file_path(do_file_path, do_file_base):
+def get_log_file_path(do_file_path, do_file_base, session_id=None):
     """Get the appropriate log file path based on user settings
 
     Returns an absolute path to ensure log files are saved to the correct location
     regardless of Stata's working directory.
+
+    Args:
+        do_file_path: Path to the .do file
+        do_file_base: Base name of the .do file (without extension)
+        session_id: Optional session ID to include in filename for parallel execution
     """
     global log_file_location, custom_log_directory, extension_path
 
     do_file_dir = os.path.dirname(do_file_path)
+
+    # Include session_id in filename to prevent file locking conflicts in parallel execution
+    session_suffix = f"_{session_id}" if session_id else ""
 
     if log_file_location == 'extension':
         # Use logs folder in extension directory
@@ -373,45 +381,45 @@ def get_log_file_path(do_file_path, do_file_base):
             logs_dir = os.path.join(extension_path, 'logs')
             # Create logs directory if it doesn't exist
             os.makedirs(logs_dir, exist_ok=True)
-            log_path = os.path.join(logs_dir, f"{do_file_base}_mcp.log")
+            log_path = os.path.join(logs_dir, f"{do_file_base}{session_suffix}_mcp.log")
             return os.path.abspath(log_path)
         else:
             # Fallback to dofile if extension path is not available
-            log_path = os.path.join(do_file_dir, f"{do_file_base}_mcp.log")
+            log_path = os.path.join(do_file_dir, f"{do_file_base}{session_suffix}_mcp.log")
             return os.path.abspath(log_path)
     elif log_file_location == 'dofile':
         # Use same directory as .do file
-        log_path = os.path.join(do_file_dir, f"{do_file_base}_mcp.log")
+        log_path = os.path.join(do_file_dir, f"{do_file_base}{session_suffix}_mcp.log")
         return os.path.abspath(log_path)
     elif log_file_location == 'parent':
         # Use parent directory of .do file
         parent_dir = os.path.dirname(do_file_dir)
         if parent_dir and os.path.exists(parent_dir):
-            log_path = os.path.join(parent_dir, f"{do_file_base}_mcp.log")
+            log_path = os.path.join(parent_dir, f"{do_file_base}{session_suffix}_mcp.log")
             return os.path.abspath(log_path)
         else:
             # Fallback to dofile directory if parent doesn't exist
-            log_path = os.path.join(do_file_dir, f"{do_file_base}_mcp.log")
+            log_path = os.path.join(do_file_dir, f"{do_file_base}{session_suffix}_mcp.log")
             return os.path.abspath(log_path)
     elif log_file_location == 'custom':
         # Use custom directory
         if custom_log_directory and os.path.exists(custom_log_directory):
-            log_path = os.path.join(custom_log_directory, f"{do_file_base}_mcp.log")
+            log_path = os.path.join(custom_log_directory, f"{do_file_base}{session_suffix}_mcp.log")
             return os.path.abspath(log_path)
         else:
             # Fallback to dofile if custom directory is invalid
             logging.warning(f"Custom log directory not valid: {custom_log_directory}, falling back to dofile directory")
-            log_path = os.path.join(do_file_dir, f"{do_file_base}_mcp.log")
+            log_path = os.path.join(do_file_dir, f"{do_file_base}{session_suffix}_mcp.log")
             return os.path.abspath(log_path)
     else:  # workspace
         # Use VS Code workspace root if available, otherwise fall back to dofile directory
         if workspace_root and os.path.isdir(workspace_root):
-            log_path = os.path.join(workspace_root, f"{do_file_base}_mcp.log")
+            log_path = os.path.join(workspace_root, f"{do_file_base}{session_suffix}_mcp.log")
             return os.path.abspath(log_path)
         else:
             # Fallback to dofile directory if workspace root not available
             logging.warning(f"Workspace root not available, falling back to dofile directory")
-            log_path = os.path.join(do_file_dir, f"{do_file_base}_mcp.log")
+            log_path = os.path.join(do_file_dir, f"{do_file_base}{session_suffix}_mcp.log")
             return os.path.abspath(log_path)
 
 def resolve_do_file_path(file_path: str) -> tuple[Optional[str], list[str]]:
@@ -2118,9 +2126,10 @@ async def stata_run_file_endpoint(
     # Route through session manager if multi-session is enabled
     if multi_session_enabled and session_manager is not None:
         # Determine log file path based on user settings
+        # Include session_id in log filename to prevent file locking conflicts in parallel execution
         abs_file_path = os.path.abspath(file_path)
         base_name = os.path.splitext(os.path.basename(abs_file_path))[0]
-        log_file = get_log_file_path(file_path, base_name)
+        log_file = get_log_file_path(file_path, base_name, session_id)
 
         # Run blocking session_manager.execute_file in thread pool to allow concurrent requests
         # Note: Multi-session mode doesn't support working_dir yet - each session manages its own directory
