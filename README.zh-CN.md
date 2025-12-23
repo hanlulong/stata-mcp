@@ -125,10 +125,6 @@ cursor --install-extension path/to/stata-mcp-0.4.0.vsix
    - **外部浏览器**：图形在默认网页浏览器中打开
    - 在扩展设置中更改：`stata-vscode.graphDisplayMethod`
 
-### Stata 版本选择
-
-在扩展设置中选择您首选的 Stata 版本（MP、SE 或 BE）
-
 ## 详细配置
 
 <details>
@@ -195,6 +191,12 @@ cursor --install-extension path/to/stata-mcp-0.4.0.vsix
 | `stata-vscode.resultDisplayMode` | MCP 返回的输出模式：`compact`（过滤冗余输出以节省 token）或 `full`（返回完整输出） | `compact` |
 | `stata-vscode.maxOutputTokens` | MCP 输出的最大 token 数（0 = 无限制）。大输出将保存到文件并返回路径 | `10000` |
 
+**Compact 模式过滤内容：**
+- 循环代码回显（foreach/forvalues/while 块）- 仅保留实际输出
+- 程序定义和 Mata 块
+- 命令回显和续行符（仅适用于 `run_file`）
+- 详细消息如 "(N real changes made)" 和 "(N missing values generated)"
+
 ### 多会话设置
 
 启用并行 Stata 执行，每个会话拥有独立的状态（数据、变量、宏）。
@@ -205,61 +207,7 @@ cursor --install-extension path/to/stata-mcp-0.4.0.vsix
 | `stata-vscode.maxSessions` | 最大并发会话数（1-100） | `100` |
 | `stata-vscode.sessionTimeout` | 会话空闲超时时间（秒）。超时后会话将自动销毁 | `3600` |
 
-**适用场景：**
-- 并行运行多个分析任务
-- 将测试代码与生产数据隔离
-- 多个 Claude Code 实例使用同一 MCP 服务器
-
 **注意：** 每个会话需要约 200-300 MB 内存。请检查您的 Stata 许可证是否支持并发实例。
-
-**Compact 模式过滤内容：**
-- 循环代码回显（foreach/forvalues/while 块）- 仅保留实际输出
-- 程序定义和 Mata 块
-- 命令回显和续行符（仅适用于 `run_file`）
-- 详细消息如 "(N real changes made)" 和 "(N missing values generated)"
-
-### 如何更改设置
-
-1. 打开 VS Code/Cursor 设置（`Ctrl+,` 或 `Cmd+,`）
-2. 搜索"Stata MCP"
-3. 修改所需的设置
-4. 如有提示，重启扩展或重新加载窗口
-
-<br>
-
-</details>
-<details>
-<summary><strong>日志文件管理</strong></summary>
-
-该扩展在运行 Stata .do 文件时会自动创建日志文件。您可以控制这些日志文件的保存位置：
-
-### 日志文件位置
-
-1. **扩展目录**（默认）：日志文件保存在扩展目录内的 `logs` 文件夹中，保持您的工作空间整洁
-2. **Do 文件目录**：日志文件保存在与您的 .do 文件相同的目录中
-3. **父目录**：日志文件保存在 .do 文件的父目录中
-4. **工作空间目录**：日志文件保存在 VS Code 工作区根目录中
-5. **自定义目录**：日志文件保存到您指定的目录
-
-### 更改日志文件位置
-
-1. 打开 VS Code/Cursor 设置（`Ctrl+,` 或 `Cmd+,`）
-2. 搜索"Stata MCP"
-3. 找到"日志文件位置"（`stata-vscode.logFileLocation`）并选择您首选的选项：
-   - `extension`：保存到扩展目录（默认）
-   - `dofile`：保存到与 .do 文件相同的目录
-   - `parent`：保存到 .do 文件的父目录
-   - `workspace`：保存到 VS Code 工作区根目录
-   - `custom`：保存到自定义目录
-4. 如果使用"自定义目录"，还要设置"自定义日志目录"（`stata-vscode.customLogDirectory`）路径
-
-### 各选项的优势
-
-- **扩展目录**：保持项目工作空间整洁有序（默认）
-- **Do 文件目录**：日志文件与您的 .do 文件保持在一起，便于参考
-- **父目录**：当 .do 文件在子目录中但您希望日志在项目级别时很有用
-- **工作空间目录**：将所有日志集中在项目根目录
-- **自定义目录**：将所有项目的日志集中在一个位置
 
 <br>
 

@@ -126,10 +126,6 @@ Control how graphs are displayed:
    - **External browser**: Graphs open in your default web browser
    - Change in Extension Settings: `stata-vscode.graphDisplayMethod`
 
-### Stata Edition Selection
-
-Select your preferred Stata edition (MP, SE, or BE) in the Extension Settings
-
 ## Detailed Configurations
 
 <details>
@@ -196,6 +192,12 @@ These settings control how Stata output is returned to AI assistants (LLMs) via 
 | `stata-vscode.resultDisplayMode` | Output mode for MCP returns: `compact` (filters redundant output to save tokens) or `full` (returns complete output) | `compact` |
 | `stata-vscode.maxOutputTokens` | Maximum tokens for MCP output (0 = unlimited). Large outputs are saved to file with a path returned instead | `10000` |
 
+**Compact mode filters:**
+- Loop code echoes (foreach/forvalues/while blocks) - keeps actual output only
+- Program definitions and Mata blocks
+- Command echoes and line continuations (for `run_file` only)
+- Verbose messages like "(N real changes made)" and "(N missing values generated)"
+
 ### Multi-Session Settings
 
 Enable parallel Stata execution with isolated sessions. Each session has its own data, variables, and macros.
@@ -206,61 +208,7 @@ Enable parallel Stata execution with isolated sessions. Each session has its own
 | `stata-vscode.maxSessions` | Maximum number of concurrent sessions (1-100) | `100` |
 | `stata-vscode.sessionTimeout` | Session idle timeout in seconds. Sessions are automatically destroyed after this period of inactivity | `3600` |
 
-**When to use multi-session mode:**
-- Running multiple analyses in parallel
-- Isolating test code from production data
-- Multiple Claude Code instances using the same MCP server
-
 **Note:** Each session requires ~200-300 MB RAM for Stata. Check your Stata license for concurrent instance limits.
-
-**Compact mode filters:**
-- Loop code echoes (foreach/forvalues/while blocks) - keeps actual output only
-- Program definitions and Mata blocks
-- Command echoes and line continuations (for `run_file` only)
-- Verbose messages like "(N real changes made)" and "(N missing values generated)"
-
-### How to Change Settings
-
-1. Open VS Code/Cursor settings (`Ctrl+,` or `Cmd+,`)
-2. Search for "Stata MCP"
-3. Modify the desired settings
-4. Restart the extension or reload the window if prompted
-
-<br>
-
-</details>
-<details>
-<summary><strong>Log File Management</strong></summary>
-
-The extension automatically creates log files when running Stata .do files. You can control where these log files are saved:
-
-### Log File Locations
-
-1. **Extension Directory** (default): Log files are saved in a `logs` folder within the extension directory, keeping your workspace clean
-2. **Do-file Directory**: Log files are saved in the same directory as your .do file
-3. **Parent Directory**: Log files are saved in the parent directory of your .do file
-4. **Workspace Directory**: Log files are saved in the VS Code workspace root
-5. **Custom Directory**: Log files are saved to a directory you specify
-
-### Changing Log File Location
-
-1. Open VS Code/Cursor settings (`Ctrl+,` or `Cmd+,`)
-2. Search for "Stata MCP"
-3. Find "Log File Location" (`stata-vscode.logFileLocation`) and select your preferred option:
-   - `extension`: Save to extension directory (default)
-   - `dofile`: Save to same directory as .do file
-   - `parent`: Save to parent directory of .do file
-   - `workspace`: Save to VS Code workspace root
-   - `custom`: Save to a custom directory
-4. If using "Custom Directory", also set "Custom Log Directory" (`stata-vscode.customLogDirectory`) path
-
-### Benefits of Each Option
-
-- **Extension Directory**: Keeps your project workspace clean and organized (default)
-- **Do-file Directory**: Log files stay with your .do files for easy reference
-- **Parent Directory**: Useful when .do files are in subdirectories but you want logs at project level
-- **Workspace Directory**: Centralizes all logs at the project root
-- **Custom Directory**: Centralize all logs in one location across projects
 
 <br>
 
