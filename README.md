@@ -503,13 +503,6 @@ This extension uses [uv](https://github.com/astral-sh/uv), a fast Python package
 
 Starting with version 0.1.8, this extension integrates the fast Python package installer [uv](https://github.com/astral-sh/uv) to set up the environment. If uv is not found on your system, the extension will attempt to install it automatically.
 
-## Repository Reference
-
-Looking for internal architecture notes?
-- See `docs/REPO_STRUCTURE.md` for a quick map of directories and build artefacts.
-- See `docs/incidents/README.md` for an index of historical debugging write-ups (streaming, notifications, timeouts, etc.).
-- See `tests/README.md` for the current set of diagnostics and accompanying Stata fixtures.
-
 ## Troubleshooting
 
 If you encounter issues with the extension, follow these steps to perform a clean reinstallation:
