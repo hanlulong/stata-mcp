@@ -102,7 +102,7 @@ class HealthResponse(BaseModel):
     stata_available: bool = Field(False, description="Whether Stata is available")
     multi_session_enabled: bool = Field(False, description="Whether multi-session mode is enabled")
     active_sessions: int = Field(0, description="Number of active sessions")
-    version: str = Field("0.4.0", description="Server version")
+    version: str = Field("0.4.1", description="Server version")
 
 
 # =============================================================================

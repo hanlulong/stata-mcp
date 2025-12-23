@@ -3,7 +3,7 @@
 	"displayName": "Stata MCP",
 	"description": "Stata MCP Extension for VS Code and Cursor IDE",
 	"publisher": "DeepEcon",
-	"version": "0.4.0",
+	"version": "0.4.1",
 	"icon": "images/Stata_MCP_logo_400x400.png",
 	"engines": {
 		"vscode": "^1.75.0"
@@ -321,7 +321,7 @@
 	},
 	"dependencies": {
 		"adm-zip": "^0.5.16",
-		"axios": "^1.8.4",
+		"axios": "^1.13.2",
 		"resolve": "^1.22.11"
 	},
 	"devDependencies": {

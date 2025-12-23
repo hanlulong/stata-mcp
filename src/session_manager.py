@@ -388,6 +388,34 @@ class SessionManager:
                 session_id = self.DEFAULT_SESSION_ID
             return self._sessions.get(session_id)
 
+    def wait_for_ready(self, session: Session, timeout: float = 30.0) -> bool:
+        """
+        Wait for a session to become ready (not busy).
+
+        This helps handle rapid consecutive requests by waiting a short time
+        for the previous command to complete instead of immediately returning
+        a 'session busy' error.
+
+        Args:
+            session: The session to wait for
+            timeout: Maximum time to wait in seconds
+
+        Returns:
+            True if session became ready, False if timeout
+        """
+        start_time = time.time()
+        poll_interval = 0.1  # Check every 100ms
+
+        while time.time() - start_time < timeout:
+            if session.state == SessionState.READY:
+                return True
+            if session.state in (SessionState.ERROR, SessionState.DESTROYED, SessionState.DESTROYING):
+                # Session is in a terminal state, don't wait
+                return False
+            time.sleep(poll_interval)
+
+        return False
+
     def list_sessions(self) -> List[Dict[str, Any]]:
         """
         List all active sessions.
@@ -442,7 +470,25 @@ class SessionManager:
                     "error": f"Session not found: {session_id or 'default'}"
                 }
 
-        if session.state != SessionState.READY:
+        # If session is busy, auto-create a new session for parallel execution
+        if session.state == SessionState.BUSY:
+            self._logger.info(f"Session {session.session_id} is busy, creating new session for parallel execution")
+            new_session_id = str(uuid.uuid4())[:8]
+            create_result = self.create_session(new_session_id)
+            if create_result.get('success'):
+                session = self.get_session(new_session_id)
+                if session is None:
+                    return {
+                        "status": "error",
+                        "error": "Failed to get newly created session"
+                    }
+                self._logger.info(f"Using new session {new_session_id} for parallel execution")
+            else:
+                return {
+                    "status": "error",
+                    "error": f"Session busy and failed to create new session: {create_result.get('error', 'Unknown error')}"
+                }
+        elif session.state != SessionState.READY:
             return {
                 "status": "error",
                 "error": f"Session not ready: {session.state.value}"
@@ -500,7 +546,25 @@ class SessionManager:
                     "error": f"Session not found: {session_id or 'default'}"
                 }
 
-        if session.state != SessionState.READY:
+        # If session is busy, auto-create a new session for parallel execution
+        if session.state == SessionState.BUSY:
+            self._logger.info(f"Session {session.session_id} is busy, creating new session for parallel file execution")
+            new_session_id = str(uuid.uuid4())[:8]
+            create_result = self.create_session(new_session_id)
+            if create_result.get('success'):
+                session = self.get_session(new_session_id)
+                if session is None:
+                    return {
+                        "status": "error",
+                        "error": "Failed to get newly created session"
+                    }
+                self._logger.info(f"Using new session {new_session_id} for parallel file execution")
+            else:
+                return {
+                    "status": "error",
+                    "error": f"Session busy and failed to create new session: {create_result.get('error', 'Unknown error')}"
+                }
+        elif session.state != SessionState.READY:
             return {
                 "status": "error",
                 "error": f"Session not ready: {session.state.value}"

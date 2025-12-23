@@ -2,6 +2,24 @@
 
 All notable changes to the Stata MCP extension will be documented in this file.
 
+## [0.4.1] - 2025-12-23
+
+### Fixed
+- **Session Management Robustness**: Improved error handling and thread safety in multi-session mode
+  - Enhanced thread-safe session lifecycle management with proper RLock usage
+  - Improved session cleanup and shutdown procedures
+  - Better handling of concurrent session creation and destruction
+
+- **Cross-Platform Compatibility**: Verified and improved Windows/Mac compatibility
+  - Path normalization using forward slashes for Stata commands
+  - Proper temp directory handling (TEMP/TMP on Windows, STATATMP on all platforms)
+  - Java headless mode on Mac to prevent Dock icon during graph export
+
+- **Error Handling**: Improved error handling throughout the extension
+  - Better error messages for MCP endpoint failures
+  - Graceful handling of user-cancelled executions
+  - Proper cleanup in finally blocks for all execution paths
+
 ## [0.4.0] - 2025-12-22
 
 ### Added

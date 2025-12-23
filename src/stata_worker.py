@@ -456,12 +456,45 @@ def worker_process(
             seed_hash = int(hashlib.md5(seed_input.encode()).hexdigest()[:8], 16) % 2147483647
             seed_prefix = f"quietly set seed {seed_hash}\n"
 
-        try:
-            code_with_seed = seed_prefix + code
-            with OutputCapture() as capture:
-                stata.run(code_with_seed, echo=True)
+        # Create temp log file for output capture (Windows PyStata doesn't write to stdout)
+        temp_log_file = os.path.join(tempfile.gettempdir(), f'stata_run_{worker_id}_{int(time.time()*1000)}.log')
+        temp_log_stata = temp_log_file.replace('\\', '/')
 
-            output = capture.get_output()
+        try:
+            # Wrap code with log commands for reliable output capture
+            wrapped_code = f"""capture log close _all
+log using "{temp_log_stata}", replace text
+{seed_prefix}{code}
+capture log close _all
+"""
+            logging.debug(f"execute_stata_code: Running wrapped code with log file: {temp_log_file}")
+
+            # Run the wrapped code
+            with OutputCapture() as capture:
+                stata.run(wrapped_code, echo=True)
+
+            # Try to read output from log file first (more reliable on Windows)
+            output = ""
+            if os.path.exists(temp_log_file):
+                try:
+                    with open(temp_log_file, 'r', encoding='utf-8', errors='replace') as f:
+                        output = f.read()
+                    logging.debug(f"execute_stata_code: Read {len(output)} chars from log file")
+                except Exception as e:
+                    logging.warning(f"execute_stata_code: Could not read log file: {e}")
+
+            # Fall back to captured stdout if log file is empty
+            if not output.strip():
+                output = capture.get_output()
+                logging.debug(f"execute_stata_code: Using stdout capture ({len(output)} chars)")
+
+            # Clean up temp log file
+            try:
+                if os.path.exists(temp_log_file):
+                    os.unlink(temp_log_file)
+            except Exception:
+                pass
+
             execution_time = time.time() - start_time
             worker_state = WorkerState.READY
 
@@ -479,6 +512,13 @@ def worker_process(
             return True, output, "", execution_time
 
         except Exception as e:
+            # Clean up temp log file on error
+            try:
+                if os.path.exists(temp_log_file):
+                    os.unlink(temp_log_file)
+            except Exception:
+                pass
+
             execution_time = time.time() - start_time
             worker_state = WorkerState.READY
             error_str = str(e)

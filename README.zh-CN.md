@@ -60,11 +60,11 @@ code --install-extension DeepEcon.stata-mcp
 
 #### 选项 2：从 .vsix 文件安装
 
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.4.0.vsix`。
+1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.4.1.vsix`。
 2. 使用以下方法之一安装：
 
 ```bash
-code --install-extension path/to/stata-mcp-0.4.0.vsix
+code --install-extension path/to/stata-mcp-0.4.1.vsix
 ```
 
 或：
@@ -76,11 +76,11 @@ code --install-extension path/to/stata-mcp-0.4.0.vsix
 
 ### Cursor 安装
 
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.4.0.vsix`。
+1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.4.1.vsix`。
 2. 使用以下方法之一安装：
 
 ```bash
-cursor --install-extension path/to/stata-mcp-0.4.0.vsix
+cursor --install-extension path/to/stata-mcp-0.4.1.vsix
 ```
 
 或：

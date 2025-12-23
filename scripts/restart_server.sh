@@ -6,11 +6,11 @@ SRC_DIR="$(dirname "$0")/.."
 PORT=4000
 
 # Detect extension directory - check VS Code first (baseline), then Cursor
-if [ -d "$HOME/.vscode/extensions/deepecon.stata-mcp-0.4.0" ]; then
-    EXTENSION_DIR="$HOME/.vscode/extensions/deepecon.stata-mcp-0.4.0"
+if [ -d "$HOME/.vscode/extensions/deepecon.stata-mcp-0.4.1" ]; then
+    EXTENSION_DIR="$HOME/.vscode/extensions/deepecon.stata-mcp-0.4.1"
     echo "Using VS Code extension directory"
-elif [ -d "$HOME/.cursor/extensions/deepecon.stata-mcp-0.4.0" ]; then
-    EXTENSION_DIR="$HOME/.cursor/extensions/deepecon.stata-mcp-0.4.0"
+elif [ -d "$HOME/.cursor/extensions/deepecon.stata-mcp-0.4.1" ]; then
+    EXTENSION_DIR="$HOME/.cursor/extensions/deepecon.stata-mcp-0.4.1"
     echo "Using Cursor extension directory"
 else
     echo "ERROR: Extension not found in VS Code or Cursor"

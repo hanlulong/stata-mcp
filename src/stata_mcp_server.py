@@ -116,7 +116,7 @@ logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
 
 # Server info
 SERVER_NAME = "Stata MCP Server"
-SERVER_VERSION = "0.4.0"
+SERVER_VERSION = "0.4.1"
 
 # Flag for Stata availability
 stata_available = False
