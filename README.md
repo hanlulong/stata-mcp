@@ -17,9 +17,7 @@ This extension provides Stata integration for Visual Studio Code and Cursor IDE 
 - **Syntax Highlighting**: Full syntax support for Stata .do, .ado, .mata, and .doh files
 - **AI Assistant Integration**: Contextual help and code suggestions via MCP
 - **Cross-platform**: Works on Windows, macOS, and Linux
-- **Automatic Stata Detection**: Automatically finds your Stata installation
-- **Edition Selection**: Choose your Stata version (MP, SE, or BE)
-- **Multi-Session Parallel Execution**: Run multiple Stata sessions simultaneously with isolated state
+- **Multi-Session Parallel Execution**: Run multiple Stata sessions simultaneously with AI coding tools
 
 ## Demo
 
