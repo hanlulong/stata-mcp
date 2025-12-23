@@ -14,7 +14,6 @@
 
 - 直接从 VS Code 或 Cursor 运行 Stata 命令
 - 执行选中部分或整个 .do 文件
-- **并行运行多个 Stata 会话**，支持并发执行
 - 在编辑器中实时查看 Stata 输出
 - 通过 MCP 协议获得 AI 助手集成
 - 使用 [Cursor](https://www.cursor.com/)、[Cline](https://github.com/cline/cline)、[Claude Code](https://claude.com/product/claude-code) 或 [Codex](https://github.com/openai/codex) 体验增强的 AI 编程
@@ -22,13 +21,13 @@
 
 ## 功能特性
 
-- **🚀 多会话并行执行**：同时运行多个 Stata 会话，状态独立隔离 - 非常适合需要并发执行多个任务的 AI 代理
 - **运行 Stata 命令**：直接从编辑器执行选中部分或整个 .do 文件
 - **语法高亮**：完全支持 Stata .do、.ado、.mata 和 .doh 文件的语法
 - **AI 助手集成**：通过 [MCP](https://modelcontextprotocol.io/) 提供上下文帮助和代码建议
 - **跨平台**：支持 Windows、macOS 和 Linux
 - **自动检测 Stata**：自动查找您的 Stata 安装
 - **实时输出**：在编辑器中即时查看 Stata 结果
+- **多会话并行执行**：同时运行多个 Stata 会话，状态独立隔离
 
 ## 演示
 

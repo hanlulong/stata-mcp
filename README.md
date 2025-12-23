@@ -14,7 +14,6 @@ The extension allows you to:
 
 - Run Stata commands directly from VS Code or Cursor
 - Execute selections or entire .do files
-- **Run multiple Stata sessions in parallel** for concurrent execution
 - View Stata output in the editor in real-time
 - Get AI assistant integration through the MCP protocol
 - Experience enhanced AI coding with [Cursor](https://www.cursor.com/), [Cline](https://github.com/cline/cline), [Claude Code](https://claude.com/product/claude-code), or [Codex](https://github.com/openai/codex)
@@ -22,13 +21,13 @@ The extension allows you to:
 
 ## Features
 
-- **🚀 Multi-Session Parallel Execution**: Run multiple Stata sessions simultaneously with isolated state - perfect for AI agents that need to execute multiple tasks concurrently
 - **Run Stata Commands**: Execute selections or entire .do files directly from your editor
 - **Syntax Highlighting**: Full syntax support for Stata .do, .ado, .mata, and .doh files
 - **AI Assistant Integration**: Contextual help and code suggestions via [MCP](https://modelcontextprotocol.io/)
 - **Cross-platform**: Works on Windows, macOS, and Linux
 - **Automatic Stata Detection**: Automatically finds your Stata installation
 - **Real-time Output**: See Stata results instantly in your editor
+- **Multi-Session Parallel Execution**: Run multiple Stata sessions simultaneously with isolated state
 
 ## Demo
 
