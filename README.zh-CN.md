@@ -201,8 +201,8 @@ cursor --install-extension path/to/stata-mcp-0.4.0.vsix
 
 | 设置 | 描述 | 默认值 |
 |------|------|--------|
-| `stata-vscode.multiSession` | 启用多会话模式以支持并行 Stata 执行 | `false` |
-| `stata-vscode.maxSessions` | 最大并发会话数（1-16） | `8` |
+| `stata-vscode.multiSession` | 启用多会话模式以支持并行 Stata 执行 | `true` |
+| `stata-vscode.maxSessions` | 最大并发会话数（1-100） | `100` |
 | `stata-vscode.sessionTimeout` | 会话空闲超时时间（秒）。超时后会话将自动销毁 | `3600` |
 
 **适用场景：**

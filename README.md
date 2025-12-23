@@ -202,8 +202,8 @@ Enable parallel Stata execution with isolated sessions. Each session has its own
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `stata-vscode.multiSession` | Enable multi-session mode for parallel Stata execution | `false` |
-| `stata-vscode.maxSessions` | Maximum number of concurrent sessions (1-16) | `8` |
+| `stata-vscode.multiSession` | Enable multi-session mode for parallel Stata execution | `true` |
+| `stata-vscode.maxSessions` | Maximum number of concurrent sessions (1-100) | `100` |
 | `stata-vscode.sessionTimeout` | Session idle timeout in seconds. Sessions are automatically destroyed after this period of inactivity | `3600` |
 
 **When to use multi-session mode:**
