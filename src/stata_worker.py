@@ -287,23 +287,24 @@ def worker_process(
         start_time = time.time()
 
         # === ENSURE UNIQUE RANDOM STATE FOR THIS SESSION ===
-        # Set seed at start of FIRST execution to ensure session isolation
-        # Use a session-specific flag to only set seed once per session
-        if not hasattr(execute_stata_code, '_seed_set'):
-            execute_stata_code._seed_set = {}
-        if worker_id not in execute_stata_code._seed_set:
-            try:
-                import hashlib
-                seed_input = f"{worker_id}_{time.time()}_{os.getpid()}"
-                seed_hash = int(hashlib.md5(seed_input.encode()).hexdigest()[:8], 16)
-                stata.run(f"set seed {seed_hash}")  # Don't use quietly
-                execute_stata_code._seed_set[worker_id] = seed_hash
-            except Exception:
-                pass  # Non-critical
+        # Set seed only on FIRST successful execution to ensure session isolation
+        # Track whether seed has been successfully set (not just attempted)
+        if not hasattr(execute_stata_code, '_seed_confirmed'):
+            execute_stata_code._seed_confirmed = {}
+
+        # Generate seed prefix if not yet confirmed for this session
+        seed_prefix = ""
+        if worker_id not in execute_stata_code._seed_confirmed:
+            import hashlib
+            seed_input = f"{worker_id}_{os.getpid()}"
+            # Stata requires seed < 2^31 (2147483648), so mask to 31 bits
+            seed_hash = int(hashlib.md5(seed_input.encode()).hexdigest()[:8], 16) % 2147483647
+            seed_prefix = f"quietly set seed {seed_hash}\n"
 
         try:
+            code_with_seed = seed_prefix + code
             with OutputCapture() as capture:
-                stata.run(code, echo=True)
+                stata.run(code_with_seed, echo=True)
 
             output = capture.get_output()
             execution_time = time.time() - start_time
@@ -315,6 +316,10 @@ def worker_process(
             # Check if execution was cancelled
             if cancelled or "--Break--" in output:
                 return False, output, "Execution cancelled", execution_time
+
+            # Mark seed as confirmed after successful execution
+            if worker_id not in execute_stata_code._seed_confirmed:
+                execute_stata_code._seed_confirmed[worker_id] = True
 
             return True, output, "", execution_time
 
@@ -364,19 +369,12 @@ def worker_process(
         stop_already_sent = False  # Reset for new execution
         start_time = time.time()
 
-        # === ENSURE UNIQUE RANDOM STATE FOR THIS SESSION ===
-        # Set seed at start of FIRST execution to ensure session isolation
-        if not hasattr(execute_stata_file, '_seed_set'):
-            execute_stata_file._seed_set = {}
-        if worker_id not in execute_stata_file._seed_set:
-            try:
-                import hashlib
-                seed_input = f"{worker_id}_{time.time()}_{os.getpid()}"
-                seed_hash = int(hashlib.md5(seed_input.encode()).hexdigest()[:8], 16)
-                stata.run(f"set seed {seed_hash}")  # Don't use quietly
-                execute_stata_file._seed_set[worker_id] = seed_hash
-            except Exception:
-                pass  # Non-critical
+        # === GENERATE UNIQUE SEED FOR THIS EXECUTION ===
+        # Generate seed hash to embed in wrapped code for reliable session isolation
+        # Stata requires seed < 2^31 (2147483648), so mask to 31 bits
+        import hashlib
+        seed_input = f"{worker_id}_{time.time()}_{os.getpid()}"
+        seed_hash = int(hashlib.md5(seed_input.encode()).hexdigest()[:8], 16) % 2147483647
 
         try:
             # Read the original do file
@@ -388,9 +386,12 @@ def worker_process(
             log_file_stata = log_file.replace('\\', '/')
 
             # Wrap with log commands for streaming support
+            # CRITICAL: Embed seed directly in wrapped code to ensure it's set reliably
+            # This avoids race conditions from separate stata.run() calls that might fail silently
             wrapped_code = f"""capture log close _all
 capture program drop _all
 capture macro drop _all
+set seed {seed_hash}
 log using "{log_file_stata}", replace text
 {original_code}
 capture log close _all
