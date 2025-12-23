@@ -59,7 +59,7 @@ nohup python3 src/stata_mcp_server.py \
     --max-output-tokens 10000 \
     --log-level DEBUG \
     --multi-session \
-    --max-sessions 8 \
+    --max-sessions 100 \
     > /tmp/stata_mcp_restart.log 2>&1 &
 
 echo "4. Waiting for server to start..."
