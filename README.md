@@ -480,8 +480,8 @@ If Cursor is not recognizing the Stata MCP server:
 <br>
 
 </details>
-
-## Python Environment Management
+<details>
+<summary><strong>Python Environment Management</strong></summary>
 
 This extension uses [uv](https://github.com/astral-sh/uv), a fast Python package installer built in Rust, to manage Python dependencies. Key features:
 
@@ -495,13 +495,17 @@ This extension uses [uv](https://github.com/astral-sh/uv), a fast Python package
    ```bash
    # Windows (PowerShell as Administrator)
    powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-   
+
    # macOS/Linux
    curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
-2. Follow the [Troubleshooting](#common-installation-issues) steps to reinstall the extension
+2. Follow the [Troubleshooting](#troubleshooting) steps to reinstall the extension
 
 Starting with version 0.1.8, this extension integrates the fast Python package installer [uv](https://github.com/astral-sh/uv) to set up the environment. If uv is not found on your system, the extension will attempt to install it automatically.
+
+<br>
+
+</details>
 
 ## Troubleshooting
 

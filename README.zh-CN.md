@@ -479,8 +479,8 @@ Cursor MCP 配置文件的位置因操作系统而异：
 <br>
 
 </details>
-
-## Python 环境管理
+<details>
+<summary><strong>Python 环境管理</strong></summary>
 
 此扩展使用 [uv](https://github.com/astral-sh/uv)（一个在 Rust 中构建的快速 Python 包安装器）来管理 Python 依赖项。主要特性：
 
@@ -494,13 +494,17 @@ Cursor MCP 配置文件的位置因操作系统而异：
    ```bash
    # Windows（以管理员身份运行 PowerShell）
    powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-   
+
    # macOS/Linux
    curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
-2. 按照[故障排除](#常见安装问题)步骤重新安装扩展
+2. 按照[故障排除](#故障排除)步骤重新安装扩展
 
 从 0.1.8 版本开始，此扩展集成了快速的 Python 包安装器 [uv](https://github.com/astral-sh/uv) 来设置环境。如果在您的系统上找不到 uv，扩展将尝试自动安装它。
+
+<br>
+
+</details>
 
 ## 故障排除
 
