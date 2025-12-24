@@ -99,10 +99,16 @@ Starting with version 0.1.8, the extension integrates a fast Python package inst
 
 1. Open a Stata .do file
 2. Run commands using:
-   - **Run Selection**: Select Stata code and press `Ctrl+Shift+Enter` (or `Cmd+Shift+Enter` on Mac), or click the first button (▶️) in the editor toolbar
-   - **Run File**: Press `Ctrl+Shift+D` (or `Cmd+Shift+D` on Mac) to run the entire .do file, or click the second button in the toolbar
-   - **Interactive Mode**: Select Stata code and click the 📊 button in the editor toolbar to run the selection in an interactive window, or click without selection to run the entire file
-3. View output in the editor panel or interactive window
+   - **Run Selection**: Select Stata code and press `Ctrl+Shift+Enter` (or `Cmd+Shift+Enter` on Mac), or click the play button in the editor toolbar
+   - **Run File**: Press `Ctrl+Shift+D` (or `Cmd+Shift+D` on Mac) to run the entire .do file, or click the run-all button in the toolbar
+   - **Stop Execution**: Press `Ctrl+Shift+C` (or `Cmd+Shift+C` on Mac) to stop a running command
+   - **Interactive Mode**: Click the graph button in the editor toolbar to run code in an interactive browser window
+3. View output in the Stata Output panel
+
+> **Note for Cursor Users**: In Cursor 2.1+, toolbar buttons are hidden by default. To show them:
+> 1. Click the **...** (three dots) menu in the editor title bar
+> 2. Select **"Configure Icon Visibility"**
+> 3. Enable the Stata buttons you want to see (Run Selection, Run File, Stop, View Data, Interactive)
 
 ### Data Viewer
 

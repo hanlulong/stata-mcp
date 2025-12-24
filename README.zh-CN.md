@@ -98,10 +98,16 @@ cursor --install-extension path/to/stata-mcp-0.4.1.vsix
 
 1. 打开一个 Stata .do 文件
 2. 使用以下方式运行命令：
-   - **运行选中部分**：选中 Stata 代码并按 `Ctrl+Shift+Enter`（Mac 上为 `Cmd+Shift+Enter`），或点击编辑器工具栏中的第一个按钮（▶️）
-   - **运行文件**：按 `Ctrl+Shift+D`（Mac 上为 `Cmd+Shift+D`）运行整个 .do 文件，或点击工具栏中的第二个按钮
-   - **交互模式**：选中 Stata 代码并点击编辑器工具栏中的 📊 按钮在交互窗口中运行所选代码，或不选中直接点击以运行整个文件
-3. 在编辑器面板或交互窗口中查看输出
+   - **运行选中部分**：选中 Stata 代码并按 `Ctrl+Shift+Enter`（Mac 上为 `Cmd+Shift+Enter`），或点击编辑器工具栏中的播放按钮
+   - **运行文件**：按 `Ctrl+Shift+D`（Mac 上为 `Cmd+Shift+D`）运行整个 .do 文件，或点击工具栏中的运行全部按钮
+   - **停止执行**：按 `Ctrl+Shift+C`（Mac 上为 `Cmd+Shift+C`）停止正在运行的命令
+   - **交互模式**：点击编辑器工具栏中的图表按钮在交互浏览器窗口中运行代码
+3. 在 Stata 输出面板中查看输出
+
+> **Cursor 用户注意**：在 Cursor 2.1+ 版本中，工具栏按钮默认隐藏。要显示它们：
+> 1. 点击编辑器标题栏中的 **...** （三个点）菜单
+> 2. 选择 **"Configure Icon Visibility"**（配置图标可见性）
+> 3. 启用您想要看到的 Stata 按钮（运行选中、运行文件、停止、查看数据、交互模式）
 
 ### 数据查看器
 
