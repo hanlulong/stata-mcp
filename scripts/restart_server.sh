@@ -5,15 +5,18 @@
 SRC_DIR="$(dirname "$0")/.."
 PORT=4000
 
-# Detect extension directory - check VS Code first (baseline), then Cursor
+# Detect extension directory - check VS Code first (baseline), then Cursor, then Antigravity
 if [ -d "$HOME/.vscode/extensions/deepecon.stata-mcp-0.4.1" ]; then
     EXTENSION_DIR="$HOME/.vscode/extensions/deepecon.stata-mcp-0.4.1"
     echo "Using VS Code extension directory"
 elif [ -d "$HOME/.cursor/extensions/deepecon.stata-mcp-0.4.1" ]; then
     EXTENSION_DIR="$HOME/.cursor/extensions/deepecon.stata-mcp-0.4.1"
     echo "Using Cursor extension directory"
+elif [ -d "$HOME/.antigravity/extensions/deepecon.stata-mcp-0.4.1" ]; then
+    EXTENSION_DIR="$HOME/.antigravity/extensions/deepecon.stata-mcp-0.4.1"
+    echo "Using Antigravity extension directory"
 else
-    echo "ERROR: Extension not found in VS Code or Cursor"
+    echo "ERROR: Extension not found in VS Code, Cursor, or Antigravity"
     echo "Please install the extension first."
     exit 1
 fi

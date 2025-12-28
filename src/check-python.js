@@ -68,7 +68,7 @@ function promptUvInstallation() {
     }
     
     console.log('\nAfter installation:');
-    console.log('1. Restart VS Code/Cursor completely');
+    console.log('1. Restart your IDE completely');
     console.log('2. Verify UV is installed by running "uv --version" in a terminal');
     console.log('3. The extension will use UV automatically when restarted');
     console.log('==================================================');

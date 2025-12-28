@@ -24,11 +24,16 @@
 code --install-extension path/to/stata-mcp-0.2.5.vsix
 ```
 
-或通过 VS Code 的扩展视图 > ... 菜单 > "从 VSIX 安装..."
+或通过 IDE 的扩展视图 > ... 菜单 > "从 VSIX 安装..."
 
 对于 Cursor：
 ```bash
 cursor --install-extension path/to/stata-mcp-0.2.5.vsix
+```
+
+对于 Antigravity：
+```bash
+antigravity --install-extension path/to/stata-mcp-0.2.5.vsix
 ```
 
 ## 文档

@@ -14,7 +14,7 @@ Always use the restart script:
 ```
 
 This script:
-1. Auto-detects VS Code or Cursor extension directory
+1. Auto-detects VS Code, Cursor, or Antigravity extension directory
 2. Copies updated source files to the installed extension
 3. Sends graceful SIGTERM (not SIGKILL) to stop the server
 4. Starts the server with correct settings
@@ -48,4 +48,4 @@ When building the VSIX package:
 
 ## IDE Compatibility
 
-The extension works with both VS Code and Cursor IDE. The restart script auto-detects which one is installed.
+The extension works with VS Code, Cursor, and Antigravity IDE. The restart script auto-detects which one is installed.

@@ -14,7 +14,7 @@ This guide summarizes the key directories and utilities in the `stata-mcp` repos
 - `tests/README.md` – Overview of the retained diagnostics and fixtures.
 
 ## Generated Packages
-- `stata-mcp-*.vsix` – Locally built extension archives for VS Code and Cursor.
+- `stata-mcp-*.vsix` – Locally built extension archives for VS Code, Cursor, and Antigravity.
 - `node_modules/` – NPM dependencies (ignored in version control).
 
 ## Additional References

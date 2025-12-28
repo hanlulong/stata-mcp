@@ -129,9 +129,11 @@ No special testing needed - should work as before.
 code --install-extension stata-mcp-0.3.4.vsix
 # Or for Cursor
 cursor --install-extension stata-mcp-0.3.4.vsix
+# Or for Antigravity
+antigravity --install-extension stata-mcp-0.3.4.vsix
 ```
 
-**Step 2: Restart VS Code/Cursor**
+**Step 2: Restart your IDE**
 
 **Step 3: Run a Long Script via MCP**
 ```

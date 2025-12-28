@@ -16,7 +16,7 @@
 
 ### Method 1: Install via VS Code UI (Recommended)
 
-1. **Open VS Code or Cursor**
+1. **Open VS Code, Cursor, or Antigravity**
 
 2. **Open Extensions view**
    - Click the Extensions icon in the sidebar (or press `Cmd+Shift+X` on Mac, `Ctrl+Shift+X` on Windows)

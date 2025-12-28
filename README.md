@@ -1,4 +1,4 @@
-# Stata MCP Extension for VS Code and Cursor
+# Stata MCP Extension for VS Code, Cursor, and Antigravity
 
 [![en](https://img.shields.io/badge/lang-English-red.svg)](./README.md)
 [![cn](https://img.shields.io/badge/语言-中文-yellow.svg)](./README.zh-CN.md)
@@ -8,7 +8,7 @@
 [![GitHub license](https://img.shields.io/github/license/hanlulong/stata-mcp)](https://github.com/hanlulong/stata-mcp/blob/main/LICENSE) 
 
 
-This extension provides Stata integration for Visual Studio Code and Cursor IDE using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/docs/getting-started/intro). It enables AI-powered Stata development with [Cursor](https://www.cursor.com/), [Cline](https://github.com/cline/cline), [Claude Code](https://claude.com/product/claude-code), or [Codex](https://github.com/openai/codex).
+This extension provides Stata integration for Visual Studio Code, Cursor, and Antigravity IDE using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/docs/getting-started/intro). It enables AI-powered Stata development with [Cursor](https://www.cursor.com/), [Antigravity](https://antigravity.google/), [Cline](https://github.com/cline/cline), [Claude Code](https://claude.com/product/claude-code), or [Codex](https://github.com/openai/codex).
 
 ## Features
 
@@ -21,7 +21,7 @@ This extension provides Stata integration for Visual Studio Code and Cursor IDE 
 
 ## Demo
 
-Watch how this extension enhances your Stata workflow with Cursor (or VS Code) and AI assistance:
+Watch how this extension enhances your Stata workflow with Cursor (or VS Code/Antigravity) and AI assistance:
 
 ![Stata MCP Extension Demo](images/demo_2x.gif)
 
@@ -91,6 +91,21 @@ Or:
 4. Select "Install from VSIX"
 5. Navigate to and select the downloaded .vsix file
 
+### Antigravity Installation
+
+Google Antigravity uses the [Open VSX Registry](https://open-vsx.org/extension/DeepEcon/stata-mcp) by default, so you can install directly:
+
+1. Open Antigravity
+2. Go to Extensions view (Cmd+Shift+X)
+3. Search for "Stata MCP"
+4. Click "Install"
+
+Or install from .vsix file:
+
+```bash
+antigravity --install-extension path/to/stata-mcp-0.4.1.vsix
+```
+
 Starting with version 0.1.8, the extension integrates a fast Python package installer called `uv` to set up the environment. If uv is not found on your system, the extension will attempt to install it automatically.
 
 ## Usage
@@ -105,7 +120,7 @@ Starting with version 0.1.8, the extension integrates a fast Python package inst
    - **Interactive Mode**: Click the graph button in the editor toolbar to run code in an interactive browser window
 3. View output in the Stata Output panel
 
-> **Note for Cursor Users**: In Cursor 2.1+, toolbar buttons are hidden by default. To show them:
+> **Note for Cursor/Antigravity Users**: Toolbar buttons may be hidden by default. To show them:
 > 1. Click the **...** (three dots) menu in the editor title bar
 > 2. Select **"Configure Icon Visibility"**
 > 3. Enable the Stata buttons you want to see (Run Selection, Run File, Stop, View Data, Interactive)
@@ -138,7 +153,7 @@ Control how graphs are displayed:
 <summary><strong>Extension Settings</strong></summary>
 
 Customize the extension behavior through VS Code settings. Access these settings via:
-- **VS Code/Cursor**: File > Preferences > Settings (or `Ctrl+,` / `Cmd+,`)
+- **VS Code/Cursor/Antigravity**: File > Preferences > Settings (or `Ctrl+,` / `Cmd+,`)
 - Search for "Stata MCP" to find all extension settings
 
 ### Core Settings
@@ -222,13 +237,13 @@ Enable parallel Stata execution with isolated sessions. Each session has its own
 <details>
 <summary><strong>Claude Code</strong></summary>
 
-[Claude Code](https://claude.com/product/claude-code) is Anthropic's official AI coding assistant available in VS Code and Cursor. Follow these steps to configure the Stata MCP server:
+[Claude Code](https://claude.com/product/claude-code) is Anthropic's official AI coding assistant available in VS Code, Cursor, and Antigravity. Follow these steps to configure the Stata MCP server:
 
 ### Installation
 
-1. **Install the Stata MCP extension** in VS Code or Cursor (see [Installation](#installation) section above)
+1. **Install the Stata MCP extension** in VS Code, Cursor, or Antigravity (see [Installation](#installation) section above)
 
-2. **Start the Stata MCP server**: The server should start automatically when you open VS Code/Cursor with the extension installed. Verify it's running by checking the status bar (should show "Stata").
+2. **Start the Stata MCP server**: The server should start automatically when you open your IDE with the extension installed. Verify it's running by checking the status bar (should show "Stata").
 
 ### Configuration
 
@@ -241,7 +256,7 @@ Once the Stata MCP server is running, configure Claude Code to connect to it:
    claude mcp add --transport sse stata-mcp http://localhost:4000/mcp --scope user
    ```
 
-3. Restart VS Code or Cursor
+3. Restart your IDE
 
 4. Claude Code will now have access to Stata tools and can help you:
    - Write and execute Stata commands
@@ -263,7 +278,7 @@ To verify Claude Code is properly connected to the Stata MCP server:
 If Claude Code is not recognizing the Stata MCP server:
 1. Verify the MCP server is running (Status bar should show "Stata")
 2. Check that you ran the `claude mcp add` command with the correct URL
-3. Try restarting VS Code or Cursor
+3. Try restarting your IDE
 4. Check the extension output panel (View > Output > Stata MCP) for any errors
 5. Ensure there are no port conflicts (default port is 4000)
 
@@ -275,7 +290,7 @@ If Claude Code is not recognizing the Stata MCP server:
 
 You can use this extension with [Claude Desktop](https://claude.ai/download) through [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):
 
-1. Make sure the Stata MCP extension is installed in VS Code or Cursor and currently running before attempting to configure Claude Desktop
+1. Make sure the Stata MCP extension is installed in VS Code, Cursor, or Antigravity and currently running before attempting to configure Claude Desktop
 2. Install [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):
    ```bash
    # Using pip
@@ -333,7 +348,7 @@ You can use this extension with [Claude Desktop](https://claude.ai/download) thr
 
 You can use this extension with [OpenAI Codex](https://github.com/openai/codex) through [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):
 
-1. Make sure the Stata MCP extension is installed in VS Code or Cursor and currently running before attempting to configure Codex
+1. Make sure the Stata MCP extension is installed in VS Code, Cursor, or Antigravity and currently running before attempting to configure Codex
 2. Install [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):
    ```bash
    # Using pip
@@ -363,7 +378,7 @@ You can use this extension with [OpenAI Codex](https://github.com/openai/codex) 
 
 4. If the file already contains other MCP servers, just add the `[mcp_servers.stata-mcp]` section.
 
-5. Restart Codex or VS Code/Cursor
+5. Restart Codex or your IDE
 
 6. Codex will automatically discover the available Stata tools, allowing you to run Stata commands and analyze data directly from your conversations.
 
@@ -373,7 +388,7 @@ If Codex is not recognizing the Stata MCP server:
 1. Verify the MCP server is running (Status bar should show "Stata")
 2. Check that the configuration file exists at `~/.codex/config.toml` with the correct content
 3. Ensure mcp-proxy is installed: `pip list | grep mcp-proxy` or `which mcp-proxy`
-4. Try restarting VS Code or Cursor
+4. Try restarting your IDE
 5. Check the extension output panel (View > Output > Stata MCP) for any errors
 6. Ensure there are no port conflicts (default port is 4000)
 
@@ -519,7 +534,7 @@ If you encounter issues with the extension, follow these steps to perform a clea
 
 ### Windows
 
-1. Close all VS Code/Cursor windows
+1. Close all VS Code/Cursor/Antigravity windows
 2. Open Task Manager (Ctrl+Shift+Esc):
    - Go to the "Processes" tab
    - Look for any running Python or `uvicorn` processes
@@ -529,6 +544,7 @@ If you encounter issues with the extension, follow these steps to perform a clea
    - Press Win+R, type `%USERPROFILE%\.vscode\extensions` and press Enter
    - Delete the folder `deepecon.stata-mcp-0.x.x` (where x.x is the version number)
    - For Cursor: The path is `%USERPROFILE%\.cursor\extensions`
+   - For Antigravity: The path is `%USERPROFILE%\.antigravity\extensions`
 
 4. Install UV manually (if needed):
    ```powershell
@@ -542,7 +558,7 @@ If you encounter issues with the extension, follow these steps to perform a clea
 
 ### macOS/Linux
 
-1. Close all VS Code/Cursor windows
+1. Close all VS Code/Cursor/Antigravity windows
 
 2. Kill any running Python processes:
    ```bash
@@ -558,6 +574,8 @@ If you encounter issues with the extension, follow these steps to perform a clea
    rm -rf ~/.vscode/extensions/deepecon.stata-mcp-0.x.x
    # For Cursor:
    rm -rf ~/.cursor/extensions/deepecon.stata-mcp-0.x.x
+   # For Antigravity:
+   rm -rf ~/.antigravity/extensions/deepecon.stata-mcp-0.x.x
    ```
 
 4. Install UV manually (if needed):
@@ -580,7 +598,7 @@ If you encounter issues with the extension, follow these steps to perform a clea
   - macOS/Linux: Add the paths to your `~/.bashrc`, `~/.zshrc`, or equivalent
 
 - If you get permission errors:
-  - Windows: Run VS Code/Cursor as Administrator
+  - Windows: Run your IDE as Administrator
   - macOS/Linux: Check folder permissions with `ls -la` and fix with `chmod` if needed
 
 - If the extension still fails to initialize:
@@ -610,7 +628,7 @@ If you encounter issues with the extension, follow these steps to perform a clea
 When opening an issue on GitHub, please provide:
 - The complete error message from the Output panel (View -> Output -> Stata-MCP)
 - Your operating system and version
-- VS Code/Cursor version
+- VS Code/Cursor/Antigravity version
 - Python version (`python --version`)
 - UV version (`uv --version`)
 - Steps to reproduce the issue

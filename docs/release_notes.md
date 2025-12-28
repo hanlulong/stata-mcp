@@ -24,11 +24,16 @@ Download the latest release package (`stata-mcp-0.2.5.vsix`) and install it via:
 code --install-extension path/to/stata-mcp-0.2.5.vsix
 ```
 
-Or through VS Code's Extensions view > ... menu > "Install from VSIX..."
+Or through your IDE's Extensions view > ... menu > "Install from VSIX..."
 
 For Cursor:
 ```bash
 cursor --install-extension path/to/stata-mcp-0.2.5.vsix
+```
+
+For Antigravity:
+```bash
+antigravity --install-extension path/to/stata-mcp-0.2.5.vsix
 ```
 
 ## Documentation

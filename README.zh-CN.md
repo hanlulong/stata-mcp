@@ -1,4 +1,4 @@
-# Stata MCP 扩展 for VS Code 和 Cursor
+# Stata MCP 扩展 for VS Code、Cursor 和 Antigravity
 
 [![en](https://img.shields.io/badge/lang-English-red.svg)](./README.md)
 [![cn](https://img.shields.io/badge/语言-中文-yellow.svg)](./README.zh-CN.md)
@@ -8,7 +8,7 @@
 [![GitHub license](https://img.shields.io/github/license/hanlulong/stata-mcp)](https://github.com/hanlulong/stata-mcp/blob/main/LICENSE) 
 
 
-此扩展通过[模型上下文协议（MCP）](https://modelcontextprotocol.io/docs/getting-started/intro)为 Visual Studio Code 和 Cursor IDE 提供 Stata 集成。支持 [Cursor](https://www.cursor.com/)、[Cline](https://github.com/cline/cline)、[Claude Code](https://claude.com/product/claude-code) 或 [Codex](https://github.com/openai/codex) 等 AI 工具进行智能 Stata 开发。
+此扩展通过[模型上下文协议（MCP）](https://modelcontextprotocol.io/docs/getting-started/intro)为 Visual Studio Code、Cursor 和 Antigravity IDE 提供 Stata 集成。支持 [Cursor](https://www.cursor.com/)、[Antigravity](https://antigravity.google/)、[Cline](https://github.com/cline/cline)、[Claude Code](https://claude.com/product/claude-code) 或 [Codex](https://github.com/openai/codex) 等 AI 工具进行智能 Stata 开发。
 
 ## 功能特性
 
@@ -21,7 +21,7 @@
 
 ## 演示
 
-观看此扩展如何使用 Cursor（或 VS Code）和 AI 辅助增强您的 Stata 工作流程：
+观看此扩展如何使用 Cursor（或 VS Code/Antigravity）和 AI 辅助增强您的 Stata 工作流程：
 
 ![Stata MCP 扩展演示](images/demo_2x.gif)
 
@@ -90,6 +90,21 @@ cursor --install-extension path/to/stata-mcp-0.4.1.vsix
 4. 选择"从 VSIX 安装"
 5. 导航并选择下载的 .vsix 文件
 
+### Antigravity 安装
+
+Google Antigravity 默认使用 [Open VSX Registry](https://open-vsx.org/extension/DeepEcon/stata-mcp)，因此可以直接安装：
+
+1. 打开 Antigravity
+2. 转到扩展视图（Cmd+Shift+X）
+3. 搜索"Stata MCP"
+4. 点击"安装"
+
+或从 .vsix 文件安装：
+
+```bash
+antigravity --install-extension path/to/stata-mcp-0.4.1.vsix
+```
+
 从 0.1.8 版本开始，该扩展集成了名为 `uv` 的快速 Python 包安装器来设置环境。如果在您的系统上找不到 uv，扩展将尝试自动安装它。
 
 ## 使用方法
@@ -104,7 +119,7 @@ cursor --install-extension path/to/stata-mcp-0.4.1.vsix
    - **交互模式**：点击编辑器工具栏中的图表按钮在交互浏览器窗口中运行代码
 3. 在 Stata 输出面板中查看输出
 
-> **Cursor 用户注意**：在 Cursor 2.1+ 版本中，工具栏按钮默认隐藏。要显示它们：
+> **Cursor/Antigravity 用户注意**：工具栏按钮可能默认隐藏。要显示它们：
 > 1. 点击编辑器标题栏中的 **...** （三个点）菜单
 > 2. 选择 **"Configure Icon Visibility"**（配置图标可见性）
 > 3. 启用您想要看到的 Stata 按钮（运行选中、运行文件、停止、查看数据、交互模式）
@@ -137,7 +152,7 @@ cursor --install-extension path/to/stata-mcp-0.4.1.vsix
 <summary><strong>扩展设置</strong></summary>
 
 通过 VS Code 设置自定义扩展行为。访问这些设置：
-- **VS Code/Cursor**：文件 > 首选项 > 设置（或 `Ctrl+,` / `Cmd+,`）
+- **VS Code/Cursor/Antigravity**：文件 > 首选项 > 设置（或 `Ctrl+,` / `Cmd+,`）
 - 搜索"Stata MCP"以查找所有扩展设置
 
 ### 核心设置
@@ -221,13 +236,13 @@ cursor --install-extension path/to/stata-mcp-0.4.1.vsix
 <details>
 <summary><strong>Claude Code</strong></summary>
 
-[Claude Code](https://claude.com/product/claude-code) 是 Anthropic 的官方 AI 编程助手，可在 VS Code 和 Cursor 中使用。按照以下步骤配置 Stata MCP 服务器：
+[Claude Code](https://claude.com/product/claude-code) 是 Anthropic 的官方 AI 编程助手，可在 VS Code、Cursor 和 Antigravity 中使用。按照以下步骤配置 Stata MCP 服务器：
 
 ### 安装
 
-1. **安装 Stata MCP 扩展**（在 VS Code 或 Cursor 中，参见上面的[安装](#安装)部分）
+1. **安装 Stata MCP 扩展**（在 VS Code、Cursor 或 Antigravity 中，参见上面的[安装](#安装)部分）
 
-2. **启动 Stata MCP 服务器**：当您打开安装了扩展的 VS Code/Cursor 时，服务器应自动启动。通过检查状态栏（应显示"Stata"）来验证其是否正在运行。
+2. **启动 Stata MCP 服务器**：当您打开安装了扩展的 IDE 时，服务器应自动启动。通过检查状态栏（应显示"Stata"）来验证其是否正在运行。
 
 ### 配置
 
@@ -240,7 +255,7 @@ cursor --install-extension path/to/stata-mcp-0.4.1.vsix
    claude mcp add --transport sse stata-mcp http://localhost:4000/mcp --scope user
    ```
 
-3. 重启 VS Code 或 Cursor
+3. 重启您的 IDE
 
 4. Claude Code 现在可以访问 Stata 工具并可以帮助您：
    - 编写和执行 Stata 命令
@@ -262,7 +277,7 @@ cursor --install-extension path/to/stata-mcp-0.4.1.vsix
 如果 Claude Code 无法识别 Stata MCP 服务器：
 1. 验证 MCP 服务器正在运行（状态栏应显示"Stata"）
 2. 检查您是否使用正确的 URL 运行了 `claude mcp add` 命令
-3. 尝试重启 VS Code 或 Cursor
+3. 尝试重启您的 IDE
 4. 检查扩展输出面板（查看 > 输出 > Stata MCP）是否有任何错误
 5. 确保没有端口冲突（默认端口为 4000）
 
@@ -274,7 +289,7 @@ cursor --install-extension path/to/stata-mcp-0.4.1.vsix
 
 您可以通过 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy) 将此扩展与 [Claude Desktop](https://claude.ai/download) 一起使用：
 
-1. 确保 Stata MCP 扩展已安装在 VS Code 或 Cursor 中并且当前正在运行，然后再尝试配置 Claude Desktop
+1. 确保 Stata MCP 扩展已安装在 VS Code、Cursor 或 Antigravity 中并且当前正在运行，然后再尝试配置 Claude Desktop
 2. 安装 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy)：
    ```bash
    # 使用 pip
@@ -332,7 +347,7 @@ cursor --install-extension path/to/stata-mcp-0.4.1.vsix
 
 您可以通过 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy) 将此扩展与 [OpenAI Codex](https://github.com/openai/codex) 一起使用：
 
-1. 确保 Stata MCP 扩展已安装在 VS Code 或 Cursor 中并且当前正在运行，然后再尝试配置 Codex
+1. 确保 Stata MCP 扩展已安装在 VS Code、Cursor 或 Antigravity 中并且当前正在运行，然后再尝试配置 Codex
 2. 安装 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy)：
    ```bash
    # 使用 pip
@@ -362,7 +377,7 @@ cursor --install-extension path/to/stata-mcp-0.4.1.vsix
 
 4. 如果文件已包含其他 MCP 服务器，只需添加 `[mcp_servers.stata-mcp]` 部分。
 
-5. 重启 Codex 或 VS Code/Cursor
+5. 重启 Codex 或您的 IDE
 
 6. Codex 将自动发现可用的 Stata 工具，允许您直接从对话中运行 Stata 命令和分析数据。
 
@@ -372,7 +387,7 @@ cursor --install-extension path/to/stata-mcp-0.4.1.vsix
 1. 验证 MCP 服务器正在运行（状态栏应显示"Stata"）
 2. 检查配置文件是否存在于 `~/.codex/config.toml` 并且内容正确
 3. 确保已安装 mcp-proxy：`pip list | grep mcp-proxy` 或 `which mcp-proxy`
-4. 尝试重启 VS Code 或 Cursor
+4. 尝试重启您的 IDE
 5. 检查扩展输出面板（查看 > 输出 > Stata MCP）是否有任何错误
 6. 确保没有端口冲突（默认端口为 4000）
 
@@ -518,7 +533,7 @@ Cursor MCP 配置文件的位置因操作系统而异：
 
 ### Windows
 
-1. 关闭所有 VS Code/Cursor 窗口
+1. 关闭所有 VS Code/Cursor/Antigravity 窗口
 2. 打开任务管理器（Ctrl+Shift+Esc）：
    - 转到"进程"标签
    - 查找任何正在运行的 Python 或 `uvicorn` 进程
@@ -528,6 +543,7 @@ Cursor MCP 配置文件的位置因操作系统而异：
    - 按 Win+R，输入 `%USERPROFILE%\.vscode\extensions` 并按回车
    - 删除文件夹 `deepecon.stata-mcp-0.x.x`（其中 x.x 是版本号）
    - 对于 Cursor：路径为 `%USERPROFILE%\.cursor\extensions`
+   - 对于 Antigravity：路径为 `%USERPROFILE%\.antigravity\extensions`
 
 4. 手动安装 UV（如果需要）：
    ```powershell
@@ -541,7 +557,7 @@ Cursor MCP 配置文件的位置因操作系统而异：
 
 ### macOS/Linux
 
-1. 关闭所有 VS Code/Cursor 窗口
+1. 关闭所有 VS Code/Cursor/Antigravity 窗口
 
 2. 终止任何正在运行的 Python 进程：
    ```bash
@@ -557,6 +573,8 @@ Cursor MCP 配置文件的位置因操作系统而异：
    rm -rf ~/.vscode/extensions/deepecon.stata-mcp-0.x.x
    # 对于 Cursor：
    rm -rf ~/.cursor/extensions/deepecon.stata-mcp-0.x.x
+   # 对于 Antigravity：
+   rm -rf ~/.antigravity/extensions/deepecon.stata-mcp-0.x.x
    ```
 
 4. 手动安装 UV（如果需要）：
@@ -579,7 +597,7 @@ Cursor MCP 配置文件的位置因操作系统而异：
   - macOS/Linux：将路径添加到您的 `~/.bashrc`、`~/.zshrc` 或等效文件
 
 - 如果您遇到权限错误：
-  - Windows：以管理员身份运行 VS Code/Cursor
+  - Windows：以管理员身份运行您的 IDE
   - macOS/Linux：使用 `ls -la` 检查文件夹权限，如果需要，使用 `chmod` 修复
 
 - 如果扩展仍然无法初始化：
@@ -609,7 +627,7 @@ Cursor MCP 配置文件的位置因操作系统而异：
 在 GitHub 上打开问题时，请提供：
 - 来自输出面板的完整错误消息（查看 -> 输出 -> Stata-MCP）
 - 您的操作系统和版本
-- VS Code/Cursor 版本
+- VS Code/Cursor/Antigravity 版本
 - Python 版本（`python --version`）
 - UV 版本（`uv --version`）
 - 重现问题的步骤
