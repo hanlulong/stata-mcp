@@ -142,10 +142,11 @@ class OutputCapture:
             return output
 
 
-def enable_graph_tracking(stlib) -> bool:
-    """Enable graph tracking before command execution.
+def reset_graph_tracking(stlib) -> bool:
+    """Reset graph tracking before command execution.
 
-    Must be called BEFORE running Stata commands to track graphs created.
+    Clears the graph list and re-enables tracking so only NEW graphs
+    created after this call will be detected.
 
     Args:
         stlib: The pystata.config.stlib module
@@ -155,6 +156,8 @@ def enable_graph_tracking(stlib) -> bool:
     """
     try:
         from pystata.config import get_encode_str
+        # Reset by turning off then on - this clears the tracking list
+        stlib.StataSO_Execute(get_encode_str("qui _gr_list off"), False)
         stlib.StataSO_Execute(get_encode_str("qui _gr_list on"), False)
         return True
     except Exception:
@@ -166,6 +169,9 @@ def detect_and_export_graphs_worker(stata, stlib, graphs_dir: str) -> list:
 
     Uses _gr_list low-level API to get list of graphs, then exports each one.
     This approach works on both Windows and Mac.
+
+    Note: Call reset_graph_tracking() BEFORE execution to ensure only NEW graphs
+    are detected (the reset clears the tracking list).
 
     Args:
         stata: The pystata.stata module
@@ -203,9 +209,6 @@ def detect_and_export_graphs_worker(stata, stlib, graphs_dir: str) -> list:
 
         graph_names = gnamelist.strip().split()
         logging.info(f"detect_and_export_graphs_worker: Found {len(graph_names)} graph(s): {graph_names}")
-
-        if not graph_names:
-            return []
 
         graphs_info = []
 
@@ -470,8 +473,10 @@ capture log close _all
             logging.debug(f"execute_stata_code: Running wrapped code with log file: {temp_log_file}")
 
             # Run the wrapped code
+            # CRITICAL: Use inline=False because inline=True calls _gr_list off at the end,
+            # which clears the graph list before we can detect graphs!
             with OutputCapture() as capture:
-                stata.run(wrapped_code, echo=True)
+                stata.run(wrapped_code, echo=True, inline=False)
 
             # Try to read output from log file first (more reliable on Windows)
             output = ""
@@ -785,9 +790,9 @@ capture log close _all
                     code = payload.get('code', '')
                     timeout = payload.get('timeout', 600.0)
 
-                    # Enable graph tracking BEFORE execution (for _gr_list compatibility)
+                    # Reset graph tracking BEFORE execution to only detect NEW graphs
                     if stlib is not None:
-                        enable_graph_tracking(stlib)
+                        reset_graph_tracking(stlib)
 
                     success, output, error, exec_time = execute_stata_code(code, timeout)
 
@@ -814,9 +819,9 @@ capture log close _all
                     log_file = payload.get('log_file', None)
                     working_dir = payload.get('working_dir', None)
 
-                    # Enable graph tracking BEFORE execution
+                    # Reset graph tracking BEFORE execution to only detect NEW graphs
                     if stlib is not None:
-                        enable_graph_tracking(stlib)
+                        reset_graph_tracking(stlib)
 
                     success, output, error, exec_time, actual_log_file = execute_stata_file(
                         file_path, timeout, log_file, working_dir

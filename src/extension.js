@@ -993,6 +993,7 @@ async function showInteractiveWindow(filePath, output, graphs, host, port) {
                             const config = getConfig();
                             const cmdHost = config.get('mcpServerHost') || 'localhost';
                             const cmdPort = config.get('mcpServerPort') || 4000;
+                            const cmdTimeout = config.get('runSelectionTimeout') || 600;  // Default 600 seconds
 
                             const response = await axios.post(
                                 `http://${cmdHost}:${cmdPort}/v1/tools`,
@@ -1000,7 +1001,7 @@ async function showInteractiveWindow(filePath, output, graphs, host, port) {
                                     tool: 'run_selection',
                                     parameters: { selection: message.text, skip_filter: true }
                                 },
-                                { headers: { 'Content-Type': 'application/json' }, timeout: 30000 }
+                                { headers: { 'Content-Type': 'application/json' }, timeout: cmdTimeout * 1000 }
                             );
 
                             if (response.status === 200 && response.data.status === 'success') {
@@ -1303,6 +1304,7 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
     const config = getConfig();
     const host = config.get('mcpServerHost') || 'localhost';
     const port = config.get('mcpServerPort') || 4000;
+    const runSelectionTimeout = config.get('runSelectionTimeout') || 600;  // Default 600 seconds
 
     if (!await isServerRunning(host, port)) {
         await startMcpServer();
@@ -1314,6 +1316,14 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
 
     stataOutputChannel.show(false);  // Steal focus when running Stata commands
     Logger.debug(`Executing Stata code: ${code}`);
+
+    // Clear graph display before Run Selection to show fresh results
+    if (toolName === 'run_selection') {
+        allGraphs = {};
+        if (graphViewerPanel) {
+            updateGraphViewerPanel(host, port);
+        }
+    }
 
     const paramName = toolName === 'run_selection' ? 'selection' : 'command';
 
@@ -1331,7 +1341,7 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
             requestBody,
             {
                 headers: { 'Content-Type': 'application/json' },
-                timeout: 30000
+                timeout: runSelectionTimeout * 1000  // Convert seconds to milliseconds
             }
         );
         
@@ -2656,12 +2666,14 @@ function updateGraphViewerPanel(host, port) {
 
     for (const ts of sortedTimestamps) {
         const batchGraphs = batches[ts].sort((a, b) => a.index - b.index);  // Sort by index
-        if (batchGraphs.length > 0) {
-            // Add last graph first at top
+        if (batchGraphs.length > 1) {
+            // Multiple graphs: Add last graph first at top as "Last Graph", then all graphs in order
             const lastGraph = batchGraphs[batchGraphs.length - 1];
             graphsArray.push({ ...lastGraph, displayName: 'Last Graph' });
-            // Then add all graphs in order
             batchGraphs.forEach(g => graphsArray.push(g));
+        } else if (batchGraphs.length === 1) {
+            // Single graph: Just show it once (no need for separate "Last Graph")
+            graphsArray.push(batchGraphs[0]);
         }
     }
 

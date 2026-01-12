@@ -617,6 +617,41 @@ check_token_limit_and_save = _local_check_token_limit_and_save
 process_mcp_output = _local_process_mcp_output
 
 
+def join_stata_line_continuations(code: str) -> str:
+    """Join lines with Stata line continuation (///) into single logical lines.
+
+    This prevents options like legend(off) from being treated as separate commands
+    when code is selected and run.
+
+    Args:
+        code: Stata code that may contain /// line continuations
+
+    Returns:
+        Code with continuations joined into single lines
+    """
+    raw_lines = code.splitlines()
+    joined_lines = []
+    current_line = ""
+
+    for raw_line in raw_lines:
+        # Check if line ends with /// (Stata line continuation)
+        stripped = raw_line.rstrip()
+        if stripped.endswith('///'):
+            # Remove /// and append to current line (keep one space)
+            current_line += stripped[:-3].rstrip() + " "
+        else:
+            # No continuation - complete the line
+            current_line += raw_line
+            joined_lines.append(current_line)
+            current_line = ""
+
+    # Handle any remaining content (in case code ends with ///)
+    if current_line:
+        joined_lines.append(current_line)
+
+    return "\n".join(joined_lines)
+
+
 def preprocess_do_file_for_graphs(file_path: str) -> str:
     """Pre-process a .do file to auto-name graphs and handle line continuations.
 
@@ -779,19 +814,16 @@ def run_stata_command(
     if has_stata and stata_available:
         # Run the command via pystata
         try:
-            # Enable graph listing for this command using low-level API
-            # Reset the graph list by turning off and on to only detect new graphs
+            # Reset graph tracking BEFORE execution to only detect NEW graphs
             try:
                 from pystata.config import stlib, get_encode_str
                 logging.debug("Resetting graph list for new command...")
-                # Turn off _gr_list to clear tracking, then turn it back on
-                # This resets the list so only graphs created after this point are tracked
                 stlib.StataSO_Execute(get_encode_str("qui _gr_list off"), False)
                 stlib.StataSO_Execute(get_encode_str("qui _gr_list on"), False)
-                logging.debug("Successfully reset graph listing")
+                logging.debug("Graph list reset successfully")
             except Exception as e:
-                logging.warning(f"Could not enable graph listing: {str(e)}")
-                logging.debug(f"Graph listing enable error: {traceback.format_exc()}")
+                logging.warning(f"Could not reset graph listing: {str(e)}")
+                logging.debug(f"Graph listing reset error: {traceback.format_exc()}")
 
             # Initialize graphs list (will be populated if graphs are found)
             graphs_from_interactive = []
@@ -872,24 +904,16 @@ def run_stata_command(
                     sys.stdout.close()
                     sys.stdout = original_stdout
 
-                # Only detect and export graphs if enabled AND command likely creates a graph
-                # This prevents false positives from stale graphs in memory
+                # Detect and export only NEW graphs if enabled (matching run_stata_file behavior)
                 if auto_detect_graphs:
-                    # Check if command contains graph-creating keywords
-                    command_lower = command.lower()
-                    graph_keywords = ['scatter', 'twoway', 'histogram', 'hist ', 'kdensity', 'graph ',
-                                     'line ', 'bar ', 'box ', 'pie ', 'dot ', 'hbar ', 'area ']
-                    might_create_graph = any(kw in command_lower for kw in graph_keywords)
-
-                    if might_create_graph:
-                        # Immediately check for graphs while they're still in memory
-                        try:
-                            logging.debug("Checking for graphs immediately after execution (interactive mode)...")
-                            graphs_from_interactive = display_graphs_interactive(graph_format='png', width=800, height=600)
-                            if graphs_from_interactive:
-                                logging.info(f"Captured {len(graphs_from_interactive)} graphs in interactive mode")
-                        except Exception as graph_err:
-                            logging.warning(f"Could not capture graphs in interactive mode: {str(graph_err)}")
+                    # Immediately check for graphs while they're still in memory
+                    try:
+                        logging.debug("Checking for graphs immediately after execution (interactive mode)...")
+                        graphs_from_interactive = display_graphs_interactive(graph_format='png', width=800, height=600)
+                        if graphs_from_interactive:
+                            logging.info(f"Captured {len(graphs_from_interactive)} NEW graphs in interactive mode")
+                    except Exception as graph_err:
+                        logging.warning(f"Could not capture graphs in interactive mode: {str(graph_err)}")
 
             except Exception as exec_error:
                 error_msg = f"Error running command: {str(exec_error)}"
@@ -1119,6 +1143,9 @@ def display_graphs_interactive(graph_format='png', width=800, height=600):
     This function mimics PyStata's grdisplay.py approach for exporting graphs.
     It should be called immediately after command execution while graphs are still in memory.
 
+    Note: Call reset_graph_tracking (off then on) BEFORE execution to ensure only
+    NEW graphs are detected.
+
     Args:
         graph_format: Format for exported graphs ('svg', 'png', or 'pdf')
         width: Width for graph export (pixels for png, inches for svg/pdf)
@@ -1249,6 +1276,10 @@ def run_stata_selection(
     Returns:
         Stata output as a string
     """
+    # Preprocess: Join lines with /// continuation into single logical lines
+    # This ensures multi-line commands with continuations work correctly
+    processed_selection = join_stata_line_continuations(selection)
+
     # If a working directory is provided, prepend a cd command
     if working_dir and os.path.isdir(working_dir):
         logging.info(f"Changing working directory to: {working_dir}")
@@ -1258,11 +1289,11 @@ def run_stata_selection(
         working_dir_stata = working_dir.replace('\\', '/')
         # Use double quotes for the cd command to handle spaces
         cd_command = f'cd "{working_dir_stata}"'
-        # Combine cd command with the selection
-        full_command = f"{cd_command}\n{selection}"
+        # Combine cd command with the processed selection
+        full_command = f"{cd_command}\n{processed_selection}"
         return run_stata_command(full_command, auto_detect_graphs=auto_detect_graphs)
     else:
-        return run_stata_command(selection, auto_detect_graphs=auto_detect_graphs)
+        return run_stata_command(processed_selection, auto_detect_graphs=auto_detect_graphs)
 
 def run_stata_file(
     file_path: str,
@@ -1506,13 +1537,14 @@ def run_stata_file(
             
             # Set up for PyStata execution
             if has_stata and stata_available:
-                # Enable graph listing for this do file execution using low-level API
+                # Reset graph tracking BEFORE execution to only detect NEW graphs
                 try:
                     from pystata.config import stlib, get_encode_str
+                    stlib.StataSO_Execute(get_encode_str("qui _gr_list off"), False)
                     stlib.StataSO_Execute(get_encode_str("qui _gr_list on"), False)
-                    logging.debug("Enabled graph listing for do file")
+                    logging.debug("Graph list reset for file execution")
                 except Exception as e:
-                    logging.warning(f"Could not enable graph listing: {str(e)}")
+                    logging.warning(f"Could not reset graph listing: {str(e)}")
 
                 # Record start time for timeout tracking
                 start_time = time.time()
@@ -2168,11 +2200,11 @@ async def stata_run_file_stream(file_path: str, timeout: int = 600, working_dir:
                     result = f"Error: {result_dict.get('error', 'Unknown error')}"
             else:
                 logging.info("[STREAM] Using single-session mode")
-                # Note: run_stata_file handles graph detection internally and appends to result,
-                # but for streaming we read the log file directly, so we need to detect graphs separately
+                # Note: run_stata_file handles graph reset and detection internally
                 result = run_stata_file(processed_file, timeout=timeout, working_dir=working_dir, auto_name_graphs=True)
                 # Detect graphs after execution for single-session streaming mode
                 # This is needed because streaming reads log file directly, not the returned result string
+                # run_stata_file already reset the graph list before execution
                 try:
                     logging.debug("[STREAM] Detecting graphs for single-session mode...")
                     graphs = display_graphs_interactive(graph_format='png', width=800, height=600)
@@ -2456,24 +2488,18 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
                 )
                 if result_dict.get('status') == 'success':
                     result = result_dict.get('output', '')
-                    # Only append graph info if the command likely creates a graph
-                    # This prevents false positives from stale graphs in worker memory
-                    selection_lower = request.parameters["selection"].lower()
-                    graph_keywords = ['scatter', 'twoway', 'histogram', 'hist ', 'kdensity', 'graph ',
-                                     'line ', 'bar ', 'box ', 'pie ', 'dot ', 'hbar ', 'area ']
-                    might_create_graph = any(kw in selection_lower for kw in graph_keywords)
-
-                    if might_create_graph:
-                        extra = result_dict.get('extra', {})
-                        graphs = extra.get('graphs', []) if extra else []
-                        if graphs:
-                            graph_info = "\n\n" + "="*60 + "\n"
-                            graph_info += f"GRAPHS DETECTED: {len(graphs)} graph(s) created\n"
-                            graph_info += "="*60 + "\n"
-                            for graph in graphs:
-                                graph_info += f"  • {graph['name']}: {graph['path']}\n"
-                            result += graph_info
-                            logging.info(f"Multi-session: Added {len(graphs)} graphs to output")
+                    # Append graph info if any graphs were created
+                    # (matching run_file behavior - no keyword check needed since worker already detected them)
+                    extra = result_dict.get('extra', {})
+                    graphs = extra.get('graphs', []) if extra else []
+                    if graphs:
+                        graph_info = "\n\n" + "="*60 + "\n"
+                        graph_info += f"GRAPHS DETECTED: {len(graphs)} graph(s) created\n"
+                        graph_info += "="*60 + "\n"
+                        for graph in graphs:
+                            graph_info += f"  • {graph['name']}: {graph['path']}\n"
+                        result += graph_info
+                        logging.info(f"Multi-session: Added {len(graphs)} graphs to output")
                 else:
                     result = f"Error: {result_dict.get('error', 'Unknown error')}"
             else:

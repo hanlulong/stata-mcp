@@ -8,7 +8,7 @@
 [![GitHub license](https://img.shields.io/github/license/hanlulong/stata-mcp)](https://github.com/hanlulong/stata-mcp/blob/main/LICENSE) 
 
 
-此扩展通过[模型上下文协议（MCP）](https://modelcontextprotocol.io/docs/getting-started/intro)为 Visual Studio Code、Cursor 和 Antigravity IDE 提供 Stata 集成。支持 [Cursor](https://www.cursor.com/)、[Antigravity](https://antigravity.google/)、[Cline](https://github.com/cline/cline)、[Claude Code](https://claude.com/product/claude-code) 或 [Codex](https://github.com/openai/codex) 等 AI 工具进行智能 Stata 开发。
+此扩展通过[模型上下文协议（MCP）](https://modelcontextprotocol.io/docs/getting-started/intro)为 Visual Studio Code、Cursor 和 Antigravity IDE 提供 Stata 集成。支持 [GitHub Copilot](https://github.com/features/copilot)、[Cursor](https://www.cursor.com/)、[Antigravity](https://antigravity.google/)、[Cline](https://github.com/cline/cline)、[Claude Code](https://claude.com/product/claude-code) 或 [Codex](https://github.com/openai/codex) 等 AI 工具进行智能 Stata 开发。
 
 ## 功能特性
 
@@ -60,11 +60,11 @@ code --install-extension DeepEcon.stata-mcp
 
 #### 选项 2：从 .vsix 文件安装
 
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.4.1.vsix`。
+1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.4.2.vsix`。
 2. 使用以下方法之一安装：
 
 ```bash
-code --install-extension path/to/stata-mcp-0.4.1.vsix
+code --install-extension path/to/stata-mcp-0.4.2.vsix
 ```
 
 或：
@@ -76,11 +76,11 @@ code --install-extension path/to/stata-mcp-0.4.1.vsix
 
 ### Cursor 安装
 
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.4.1.vsix`。
+1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.4.2.vsix`。
 2. 使用以下方法之一安装：
 
 ```bash
-cursor --install-extension path/to/stata-mcp-0.4.1.vsix
+cursor --install-extension path/to/stata-mcp-0.4.2.vsix
 ```
 
 或：
@@ -102,7 +102,7 @@ Google Antigravity 默认使用 [Open VSX Registry](https://open-vsx.org/extensi
 或从 .vsix 文件安装：
 
 ```bash
-antigravity --install-extension path/to/stata-mcp-0.4.1.vsix
+antigravity --install-extension path/to/stata-mcp-0.4.2.vsix
 ```
 
 从 0.1.8 版本开始，该扩展集成了名为 `uv` 的快速 Python 包安装器来设置环境。如果在您的系统上找不到 uv，扩展将尝试自动安装它。
@@ -190,6 +190,7 @@ antigravity --install-extension path/to/stata-mcp-0.4.1.vsix
 | 设置 | 描述 | 默认值 |
 |------|------|--------|
 | `stata-vscode.runFileTimeout` | "运行文件"操作的超时时间（秒） | `600`（10 分钟） |
+| `stata-vscode.runSelectionTimeout` | "运行选择"和交互式窗口命令的超时时间（秒） | `600`（10 分钟） |
 | `stata-vscode.debugMode` | 在输出面板中显示详细的调试信息 | `false` |
 
 ### 工作目录设置
@@ -229,6 +230,82 @@ antigravity --install-extension path/to/stata-mcp-0.4.1.vsix
 | `stata-vscode.sessionTimeout` | 会话空闲超时时间（秒）。超时后会话将自动销毁 | `3600` |
 
 **注意：** 每个会话需要约 200-300 MB 内存。请检查您的 Stata 许可证是否支持并发实例。
+
+<br>
+
+</details>
+<details>
+<summary><strong>GitHub Copilot</strong></summary>
+
+[GitHub Copilot](https://github.com/features/copilot) 从 VS Code 1.102 版本开始支持 MCP（模型上下文协议）。您可以将 Stata MCP 服务器连接到 Copilot，实现 AI 驱动的 Stata 开发。
+
+### 配置
+
+1. **安装 Stata MCP 扩展**（在 VS Code 中，参见上面的[安装](#安装)部分）
+
+2. **启动 Stata MCP 服务器**：当您打开安装了扩展的 VS Code 时，服务器应自动启动。通过检查状态栏（应显示"Stata"）来验证其是否正在运行。
+
+3. **将 Stata MCP 服务器添加到 Copilot**：您可以按工作区或全局配置 MCP 服务器。
+
+   **选项 A：按工作区配置**
+
+   在工作区根目录创建 `.vscode/mcp.json` 文件：
+   ```json
+   {
+     "servers": {
+       "stata-mcp": {
+         "type": "sse",
+         "url": "http://localhost:4000/mcp"
+       }
+     }
+   }
+   ```
+
+   **选项 B：全局配置（所有工作区）**
+
+   1. 打开命令面板（Ctrl+Shift+P / Cmd+Shift+P）
+   2. 输入 **"MCP: Open User Configuration"** 并选择
+   3. 在 `mcp.json` 文件中添加 Stata MCP 服务器：
+      ```json
+      {
+        "servers": {
+          "stata-mcp": {
+            "type": "sse",
+            "url": "http://localhost:4000/mcp"
+          }
+        }
+      }
+      ```
+
+   用户级 `mcp.json` 文件位置：
+   - **Windows**: `%APPDATA%\Code\User\mcp.json`
+   - **macOS**: `~/Library/Application Support/Code/User/mcp.json`
+   - **Linux**: `~/.config/Code/User/mcp.json`
+
+4. **重新加载 VS Code** 以应用配置。
+
+5. GitHub Copilot 现在可以访问 Stata 工具并可以帮助您：
+   - 编写和执行 Stata 命令
+   - 分析您的数据
+   - 生成可视化图表
+   - 调试 Stata 代码
+   - 创建统计报告
+
+### 验证连接
+
+1. 打开 GitHub Copilot Chat（Ctrl+Shift+I / Cmd+Shift+I）
+2. 输入 `@mcp` 查看可用的 MCP 工具
+3. Stata 工具（`stata_run_selection`、`stata_run_file`）应该会显示
+
+### 故障排除
+
+如果 Copilot 无法识别 Stata MCP 服务器：
+1. 验证 VS Code 版本为 1.102 或更高版本
+2. 验证 MCP 服务器正在运行（状态栏应显示"Stata"）
+3. 检查 `.vscode/mcp.json` 是否存在且内容正确
+4. 尝试重启 VS Code
+5. 检查扩展输出面板（查看 > 输出 > Stata MCP）是否有任何错误
+6. 确保您组织的 Copilot 策略已启用 MCP（如适用）
 
 <br>
 

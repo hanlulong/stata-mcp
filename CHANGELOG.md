@@ -2,6 +2,37 @@
 
 All notable changes to the Stata MCP extension will be documented in this file.
 
+## [0.4.2] - 2026-01-11
+
+### Fixed
+- **Run Selection Timeout**: Fixed hardcoded 30-second timeout for "Run Selection" and interactive window commands (Issue #43)
+  - Added new setting `stata-vscode.runSelectionTimeout` (default: 600 seconds / 10 minutes)
+  - Previously, "Run Selection" and interactive window commands had a hardcoded 30000ms (30 second) timeout that could not be changed
+  - The `runFileTimeout` setting only affected "Run File" operations, not "Run Selection"
+  - Now both operations use configurable timeouts, allowing users to run long-running code on large datasets
+
+- **Graph Display in StataNow 19**: Fixed graph detection failure for "Run Selection" in StataNow 19 non-GUI mode (Issue #42)
+  - Graphs were only displaying for "Run File" but not "Run Selection"
+  - Root cause: `_gr_list off` + `_gr_list on` reset sequence in `run_stata_command()` doesn't work correctly in StataNow 19 non-GUI mode
+  - Fix: Changed to only call `_gr_list on` (matching `run_stata_file()` behavior)
+
+- **Line Continuation (///)**: Fixed "Run Selection" to properly handle Stata line continuations (Issue #44)
+  - Added `join_stata_line_continuations()` function to preprocess code before execution
+  - Lines ending with `///` are now joined with the following line before being sent to Stata
+  - This ensures multi-line commands work correctly when running selected code
+
+### Improved
+- **Graph Display Optimization**: Enhanced graph viewing experience
+  - Single figures no longer show duplicate "Last Graph" entry at top
+  - Graph panel is now cleared before each "Run Selection" to show only fresh results
+  - Prevents accumulation of graphs from previous executions
+
+### Added
+- **GitHub Copilot Documentation**: Added configuration guide for using Stata MCP with GitHub Copilot
+  - GitHub Copilot supports MCP starting from VS Code 1.102
+  - Configure via `.vscode/mcp.json` with SSE transport
+  - The Stata MCP server is a fully compliant MCP server (not "fake" as reported in Issue #44)
+
 ## [0.4.1] - 2025-12-23
 
 ### Fixed

@@ -8,7 +8,7 @@
 [![GitHub license](https://img.shields.io/github/license/hanlulong/stata-mcp)](https://github.com/hanlulong/stata-mcp/blob/main/LICENSE) 
 
 
-This extension provides Stata integration for Visual Studio Code, Cursor, and Antigravity IDE using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/docs/getting-started/intro). It enables AI-powered Stata development with [Cursor](https://www.cursor.com/), [Antigravity](https://antigravity.google/), [Cline](https://github.com/cline/cline), [Claude Code](https://claude.com/product/claude-code), or [Codex](https://github.com/openai/codex).
+This extension provides Stata integration for Visual Studio Code, Cursor, and Antigravity IDE using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/docs/getting-started/intro). It enables AI-powered Stata development with [GitHub Copilot](https://github.com/features/copilot), [Cursor](https://www.cursor.com/), [Antigravity](https://antigravity.google/), [Cline](https://github.com/cline/cline), [Claude Code](https://claude.com/product/claude-code), or [Codex](https://github.com/openai/codex).
 
 ## Features
 
@@ -61,11 +61,11 @@ Or:
 
 #### Option 2: From .vsix file
 
-1. Download the extension package `stata-mcp-0.4.1.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
+1. Download the extension package `stata-mcp-0.4.2.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
 2. Install using one of these methods:
 
 ```bash
-code --install-extension path/to/stata-mcp-0.4.1.vsix
+code --install-extension path/to/stata-mcp-0.4.2.vsix
 ```
 
 Or:
@@ -77,11 +77,11 @@ Or:
 
 ### Cursor Installation
 
-1. Download the extension package `stata-mcp-0.4.1.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
+1. Download the extension package `stata-mcp-0.4.2.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
 2. Install using one of these methods:
 
 ```bash
-cursor --install-extension path/to/stata-mcp-0.4.1.vsix
+cursor --install-extension path/to/stata-mcp-0.4.2.vsix
 ```
 
 Or:
@@ -103,7 +103,7 @@ Google Antigravity uses the [Open VSX Registry](https://open-vsx.org/extension/D
 Or install from .vsix file:
 
 ```bash
-antigravity --install-extension path/to/stata-mcp-0.4.1.vsix
+antigravity --install-extension path/to/stata-mcp-0.4.2.vsix
 ```
 
 Starting with version 0.1.8, the extension integrates a fast Python package installer called `uv` to set up the environment. If uv is not found on your system, the extension will attempt to install it automatically.
@@ -191,6 +191,7 @@ Customize the extension behavior through VS Code settings. Access these settings
 | Setting | Description | Default |
 |---------|-------------|---------|
 | `stata-vscode.runFileTimeout` | Timeout in seconds for 'Run File' operations | `600` (10 minutes) |
+| `stata-vscode.runSelectionTimeout` | Timeout in seconds for 'Run Selection' and interactive window commands | `600` (10 minutes) |
 | `stata-vscode.debugMode` | Show detailed debug information in output panel | `false` |
 
 ### Working Directory Settings
@@ -230,6 +231,82 @@ Enable parallel Stata execution with isolated sessions. Each session has its own
 | `stata-vscode.sessionTimeout` | Session idle timeout in seconds. Sessions are automatically destroyed after this period of inactivity | `3600` |
 
 **Note:** Each session requires ~200-300 MB RAM for Stata. Check your Stata license for concurrent instance limits.
+
+<br>
+
+</details>
+<details>
+<summary><strong>GitHub Copilot</strong></summary>
+
+[GitHub Copilot](https://github.com/features/copilot) supports MCP (Model Context Protocol) starting from VS Code 1.102. You can connect the Stata MCP server to Copilot for AI-powered Stata development.
+
+### Configuration
+
+1. **Install the Stata MCP extension** in VS Code (see [Installation](#installation) section above)
+
+2. **Start the Stata MCP server**: The server should start automatically when you open VS Code with the extension installed. Verify it's running by checking the status bar (should show "Stata").
+
+3. **Add the Stata MCP server to Copilot**: You can configure MCP servers either per-workspace or globally.
+
+   **Option A: Per-Workspace Configuration**
+
+   Create a `.vscode/mcp.json` file in your workspace root:
+   ```json
+   {
+     "servers": {
+       "stata-mcp": {
+         "type": "sse",
+         "url": "http://localhost:4000/mcp"
+       }
+     }
+   }
+   ```
+
+   **Option B: Global Configuration (All Workspaces)**
+
+   1. Open Command Palette (Ctrl+Shift+P / Cmd+Shift+P)
+   2. Type **"MCP: Open User Configuration"** and select it
+   3. Add the Stata MCP server to the `mcp.json` file:
+      ```json
+      {
+        "servers": {
+          "stata-mcp": {
+            "type": "sse",
+            "url": "http://localhost:4000/mcp"
+          }
+        }
+      }
+      ```
+
+   The user-level `mcp.json` file is located at:
+   - **Windows**: `%APPDATA%\Code\User\mcp.json`
+   - **macOS**: `~/Library/Application Support/Code/User/mcp.json`
+   - **Linux**: `~/.config/Code/User/mcp.json`
+
+4. **Reload VS Code** to apply the configuration.
+
+5. GitHub Copilot will now have access to Stata tools and can help you:
+   - Write and execute Stata commands
+   - Analyze your data
+   - Generate visualizations
+   - Debug Stata code
+   - Create statistical reports
+
+### Verifying the Connection
+
+1. Open GitHub Copilot Chat (Ctrl+Shift+I / Cmd+Shift+I)
+2. Type `@mcp` to see available MCP tools
+3. The Stata tools (`stata_run_selection`, `stata_run_file`) should appear
+
+### Troubleshooting
+
+If Copilot is not recognizing the Stata MCP server:
+1. Verify VS Code version 1.102 or later
+2. Verify the MCP server is running (Status bar should show "Stata")
+3. Check that `.vscode/mcp.json` exists with the correct content
+4. Try restarting VS Code
+5. Check the extension output panel (View > Output > Stata MCP) for any errors
+6. Ensure MCP is enabled in your organization's Copilot policy (if applicable)
 
 <br>
 
