@@ -2,6 +2,16 @@
 
 All notable changes to the Stata MCP extension will be documented in this file.
 
+## [0.4.3] - 2026-01-17
+
+### Added
+- **Incremental Output Display**: "Run Selection" now displays output in real-time like native Stata (Issue #43 follow-up)
+  - Added streaming endpoint `/run_selection/stream` using Server-Sent Events (SSE)
+  - Output appears progressively as Stata executes, not just after completion
+  - Running indicator now shows in status bar during "Run Selection" execution
+  - Support for cancellation via "Stop Execution" command
+  - Provides same real-time experience as "Run File" command
+
 ## [0.4.2] - 2026-01-11
 
 ### Fixed

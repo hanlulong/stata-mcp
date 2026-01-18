@@ -48,6 +48,41 @@ from stata_worker import (
 )
 
 
+def join_stata_line_continuations(code: str) -> str:
+    """Join lines with Stata line continuation (///) into single logical lines.
+
+    This prevents options like legend(off) from being treated as separate commands
+    when code is selected and run.
+
+    Args:
+        code: Stata code that may contain /// line continuations
+
+    Returns:
+        Code with continuations joined into single lines
+    """
+    raw_lines = code.splitlines()
+    joined_lines = []
+    current_line = ""
+
+    for raw_line in raw_lines:
+        # Check if line ends with /// (Stata line continuation)
+        stripped = raw_line.rstrip()
+        if stripped.endswith('///'):
+            # Remove /// and append to current line (keep one space)
+            current_line += stripped[:-3].rstrip() + " "
+        else:
+            # No continuation - complete the line
+            current_line += raw_line
+            joined_lines.append(current_line)
+            current_line = ""
+
+    # Handle any remaining content (in case code ends with ///)
+    if current_line:
+        joined_lines.append(current_line)
+
+    return "\n".join(joined_lines)
+
+
 class SessionState(Enum):
     """Session lifecycle states"""
     CREATING = "creating"
@@ -494,10 +529,12 @@ class SessionManager:
                 "error": f"Session not ready: {session.state.value}"
             }
 
+        # Process line continuations (///) before execution
+        processed_code = join_stata_line_continuations(code)
         return self._execute_command(
             session,
             CommandType.EXECUTE,
-            {"code": code, "timeout": timeout or self.command_timeout},
+            {"code": processed_code, "timeout": timeout or self.command_timeout},
             timeout or self.command_timeout
         )
 

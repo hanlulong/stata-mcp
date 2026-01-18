@@ -1301,6 +1301,12 @@ function escapeHtml(text) {
 }
 
 async function executeStataCode(code, toolName = 'run_command', workingDir = null) {
+    // Check if already executing
+    if (isExecuting) {
+        vscode.window.showWarningMessage('A Stata execution is already in progress. Please wait or stop it first.');
+        return;
+    }
+
     const config = getConfig();
     const host = config.get('mcpServerHost') || 'localhost';
     const port = config.get('mcpServerPort') || 4000;
@@ -1314,6 +1320,11 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
         }
     }
 
+    // Set execution state for status bar indicator
+    isExecuting = true;
+    currentExecutionFile = toolName === 'run_selection' ? 'selection' : 'command';
+    updateStatusBar('running');
+
     stataOutputChannel.show(false);  // Steal focus when running Stata commands
     Logger.debug(`Executing Stata code: ${code}`);
 
@@ -1325,66 +1336,167 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
         }
     }
 
-    const paramName = toolName === 'run_selection' ? 'selection' : 'command';
-
     try {
-        const requestBody = {
-            tool: toolName,
-            parameters: {
-                [paramName]: code,
-                working_dir: workingDir
+        // Use streaming endpoint for real-time output display (Run Selection only)
+        if (toolName === 'run_selection') {
+            // Build URL with query parameters for streaming endpoint
+            const params = new URLSearchParams();
+            params.append('selection', code);
+            params.append('timeout', runSelectionTimeout.toString());
+            if (workingDir) {
+                params.append('working_dir', workingDir);
             }
-        };
-        
-        const response = await axios.post(
-            `http://${host}:${port}/v1/tools`,
-            requestBody,
-            {
-                headers: { 'Content-Type': 'application/json' },
-                timeout: runSelectionTimeout * 1000  // Convert seconds to milliseconds
-            }
-        );
-        
-        if (response.status === 200) {
-            const result = response.data;
 
-            if (result.status === 'success') {
-                const outputContent = result.result || 'Command executed successfully (no output)';
-                // Don't clear output channel - preserve previous logs for run_selection
-                stataOutputChannel.appendLine(outputContent);
-                stataOutputChannel.show(false);  // Steal focus when running Stata commands
+            const streamUrl = `http://${host}:${port}/run_selection/stream?${params.toString()}`;
+            Logger.debug(`Stream URL: ${streamUrl}`);
 
-                // Parse and display any graphs (VS Code only, not for MCP calls)
-                const autoDisplayGraphs = config.get('autoDisplayGraphs', true);
-                if (autoDisplayGraphs) {
-                    const graphs = parseGraphsFromOutput(outputContent);
-                    if (graphs.length > 0) {
-                        await displayGraphs(graphs, host, port);
+            let fullOutput = '';
+            let hasError = false;
+
+            // Create AbortController for cancellation
+            currentStreamAbortController = new AbortController();
+
+            const response = await axios.get(streamUrl, {
+                responseType: 'stream',
+                timeout: (runSelectionTimeout * 1000) + 10000,
+                signal: currentStreamAbortController.signal
+            });
+
+            // Process the SSE stream
+            await new Promise((resolve, reject) => {
+                let buffer = '';
+
+                response.data.on('data', (chunk) => {
+                    buffer += chunk.toString();
+                    buffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = line.substring(6);
+
+                            if (data.startsWith('Executing selection') ||
+                                data.startsWith('*** Execution')) {
+                                Logger.debug(`Stream status: ${data}`);
+                            } else if (data.startsWith('Error:') || data.startsWith('ERROR:')) {
+                                hasError = true;
+                                stataOutputChannel.appendLine(data);
+                                fullOutput += data + '\n';
+                            } else if (data.trim()) {
+                                stataOutputChannel.appendLine(data);
+                                fullOutput += data + '\n';
+                            }
+                        }
                     }
-                }
+                });
 
-                return outputContent;
+                response.data.on('end', () => {
+                    if (buffer.startsWith('data: ')) {
+                        const data = buffer.substring(6);
+                        if (data.trim() && !data.startsWith('Executing') && !data.startsWith('***')) {
+                            stataOutputChannel.appendLine(data);
+                            fullOutput += data + '\n';
+                        }
+                    }
+                    resolve();
+                });
+
+                response.data.on('error', (err) => {
+                    reject(err);
+                });
+            });
+
+            if (hasError) {
+                vscode.window.showErrorMessage('Stata execution completed with errors');
+            }
+
+            // Parse and display graphs
+            const autoDisplayGraphs = config.get('autoDisplayGraphs', true);
+            if (autoDisplayGraphs && fullOutput) {
+                const graphs = parseGraphsFromOutput(fullOutput);
+                if (graphs.length > 0) {
+                    await displayGraphs(graphs, host, port);
+                }
+            }
+
+            return fullOutput || 'Selection executed successfully';
+
+        } else {
+            // Non-streaming for run_command (simple MCP calls)
+            const paramName = 'command';
+            const requestBody = {
+                tool: toolName,
+                parameters: {
+                    [paramName]: code,
+                    working_dir: workingDir
+                }
+            };
+
+            const response = await axios.post(
+                `http://${host}:${port}/v1/tools`,
+                requestBody,
+                {
+                    headers: { 'Content-Type': 'application/json' },
+                    timeout: runSelectionTimeout * 1000
+                }
+            );
+
+            if (response.status === 200) {
+                const result = response.data;
+
+                if (result.status === 'success') {
+                    const outputContent = result.result || 'Command executed successfully (no output)';
+                    stataOutputChannel.appendLine(outputContent);
+                    stataOutputChannel.show(false);
+
+                    const autoDisplayGraphs = config.get('autoDisplayGraphs', true);
+                    if (autoDisplayGraphs) {
+                        const graphs = parseGraphsFromOutput(outputContent);
+                        if (graphs.length > 0) {
+                            await displayGraphs(graphs, host, port);
+                        }
+                    }
+
+                    return outputContent;
+                } else {
+                    const errorMessage = result.message || 'Unknown error';
+                    stataOutputChannel.appendLine(`Error: ${errorMessage}`);
+                    stataOutputChannel.show(false);
+                    vscode.window.showErrorMessage(`Stata error: ${errorMessage}`);
+                    return null;
+                }
             } else {
-                const errorMessage = result.message || 'Unknown error';
-                stataOutputChannel.appendLine(`Error: ${errorMessage}`);
-                stataOutputChannel.show(false);  // Steal focus on errors
-                vscode.window.showErrorMessage(`Stata error: ${errorMessage}`);
+                const errorMessage = `HTTP error: ${response.status}`;
+                stataOutputChannel.appendLine(errorMessage);
+                stataOutputChannel.show(false);
+                vscode.window.showErrorMessage(errorMessage);
                 return null;
             }
-        } else {
-            const errorMessage = `HTTP error: ${response.status}`;
-            stataOutputChannel.appendLine(errorMessage);
-            stataOutputChannel.show(false);  // Steal focus on errors
-            vscode.window.showErrorMessage(errorMessage);
-            return null;
         }
     } catch (error) {
+        // Check if this was an intentional abort
+        if (error.code === 'ERR_CANCELED' || error.name === 'CanceledError' || error.message?.includes('canceled')) {
+            Logger.debug('Execution was stopped by user');
+            stataOutputChannel.appendLine('\n--- Execution stopped by user ---');
+            return null;
+        }
+
         Logger.debug(`Error executing Stata code: ${error.message}`);
         const errorMessage = `Error executing Stata code: ${error.message}`;
         stataOutputChannel.appendLine(errorMessage);
-        stataOutputChannel.show(false);  // Steal focus on errors
+        stataOutputChannel.show(false);
         vscode.window.showErrorMessage(errorMessage);
         return null;
+    } finally {
+        // Always cleanup execution state
+        isExecuting = false;
+        currentExecutionFile = null;
+        if (currentStreamAbortController) {
+            currentStreamAbortController = null;
+        }
+        updateStatusBar();
     }
 }
 
