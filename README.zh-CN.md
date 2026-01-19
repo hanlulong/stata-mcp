@@ -60,11 +60,11 @@ code --install-extension DeepEcon.stata-mcp
 
 #### 选项 2：从 .vsix 文件安装
 
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.4.3.vsix`。
+1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.4.4.vsix`。
 2. 使用以下方法之一安装：
 
 ```bash
-code --install-extension path/to/stata-mcp-0.4.3.vsix
+code --install-extension path/to/stata-mcp-0.4.4.vsix
 ```
 
 或：
@@ -76,11 +76,11 @@ code --install-extension path/to/stata-mcp-0.4.3.vsix
 
 ### Cursor 安装
 
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.4.3.vsix`。
+1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.4.4.vsix`。
 2. 使用以下方法之一安装：
 
 ```bash
-cursor --install-extension path/to/stata-mcp-0.4.3.vsix
+cursor --install-extension path/to/stata-mcp-0.4.4.vsix
 ```
 
 或：
@@ -102,7 +102,7 @@ Google Antigravity 默认使用 [Open VSX Registry](https://open-vsx.org/extensi
 或从 .vsix 文件安装：
 
 ```bash
-antigravity --install-extension path/to/stata-mcp-0.4.3.vsix
+antigravity --install-extension path/to/stata-mcp-0.4.4.vsix
 ```
 
 从 0.1.8 版本开始，该扩展集成了名为 `uv` 的快速 Python 包安装器来设置环境。如果在您的系统上找不到 uv，扩展将尝试自动安装它。

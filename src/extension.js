@@ -2499,17 +2499,29 @@ function getAgentWebviewContent() {
 }
 
 function autoUpdateGlobalMcpConfig() {
+    // Only auto-update MCP config for Cursor IDE
+    // VS Code users should configure MCP via workspace settings or GitHub Copilot
+    const appName = vscode.env.appName || '';
+    const isCursor = appName.toLowerCase().includes('cursor');
+
+    if (!isCursor) {
+        Logger.debug(`Skipping MCP config auto-update: running in ${appName}, not Cursor`);
+        return true;
+    }
+
     const config = getConfig();
     const host = config.get('mcpServerHost') || 'localhost';
     const port = config.get('mcpServerPort') || 4000;
-    
+
     try {
         const homeDir = os.homedir();
         const mcpConfigDir = path.join(homeDir, '.cursor');
         const mcpConfigPath = path.join(mcpConfigDir, 'mcp.json');
-        
+
         Logger.info(`Checking MCP configuration at ${mcpConfigPath}`);
-        
+
+        // Only create .cursor directory if it already exists (user has Cursor installed)
+        // or if we're definitely running in Cursor
         if (!FileUtils.checkFileExists(mcpConfigDir)) {
             fs.mkdirSync(mcpConfigDir, { recursive: true });
             Logger.info(`Created directory: ${mcpConfigDir}`);

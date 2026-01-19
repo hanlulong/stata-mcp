@@ -2,6 +2,20 @@
 
 All notable changes to the Stata MCP extension will be documented in this file.
 
+## [0.4.4] - 2026-01-18
+
+### Fixed
+- **HTTP Protocol Error on Windows**: Fixed h11 "MUST_CLOSE" error during streaming execution (Issue #45)
+  - Restructured `run_selection_stream` to match `run_file_stream` approach
+  - Moved temp file cleanup from generator's try-finally to worker thread
+  - Prevents protocol violations when client disconnects mid-stream
+  - Added graceful handling for `GeneratorExit` and `asyncio.CancelledError`
+
+- **Unwanted .cursor Directory Creation**: Fixed extension creating `.cursor/mcp.json` in VS Code (Issue #45)
+  - Added IDE detection using `vscode.env.appName`
+  - MCP config auto-update now only runs when using Cursor IDE
+  - VS Code users are no longer affected by Cursor-specific configuration
+
 ## [0.4.3] - 2026-01-17
 
 ### Added

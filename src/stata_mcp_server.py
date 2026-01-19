@@ -2223,81 +2223,89 @@ async def stata_run_file_stream(file_path: str, timeout: int = 600, working_dir:
     thread = threading.Thread(target=run_with_progress, daemon=True)
     thread.start()
 
-    # Yield initial event
-    yield f"data: Starting execution of {os.path.basename(file_path)}...\n\n"
-
     start_time = time.time()
     last_read_pos = 0  # Track byte position in file for incremental reading
     check_interval = 0.5  # Check every 500ms for responsive streaming
 
     # Monitor progress by reading log file incrementally using byte offset
-    while thread.is_alive():
-        current_time = time.time()
-        elapsed = current_time - start_time
-
-        # Check log file for new content
-        if os.path.exists(log_file):
-            try:
-                current_size = os.path.getsize(log_file)
-                if current_size > last_read_pos:
-                    with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
-                        f.seek(last_read_pos)
-                        new_content = f.read()
-                        last_read_pos = f.tell()
-
-                    # Send only new lines (no filtering for VS Code - full output)
-                    if new_content.strip():
-                        for line in new_content.splitlines():
-                            if line.strip():
-                                escaped = line.replace('\\', '\\\\')
-                                yield f"data: {escaped}\n\n"
-            except Exception as e:
-                logging.debug(f"Error reading log file: {e}")
-
-        await asyncio.sleep(check_interval)
-
-        # Check timeout
-        if elapsed > timeout:
-            yield f"data: ERROR: Execution timed out after {timeout}s\n\n"
-            break
-
-    # Get final result - check for any remaining content
+    # Wrap in try-except to handle client disconnection gracefully
+    # All yields are inside try-except to handle client disconnect at any point
     try:
-        status, result, graphs = result_queue.get(timeout=5.0)
+        # Yield initial event
+        yield f"data: Starting execution of {os.path.basename(file_path)}...\n\n"
 
-        # Read any remaining log file content not yet sent
-        if os.path.exists(log_file):
-            try:
-                current_size = os.path.getsize(log_file)
-                if current_size > last_read_pos:
-                    with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
-                        f.seek(last_read_pos)
-                        remaining = f.read()
-                    if remaining.strip():
-                        for line in remaining.splitlines():
-                            if line.strip():
-                                escaped = line.replace('\\', '\\\\')
-                                yield f"data: {escaped}\n\n"
-            except Exception as e:
-                logging.debug(f"Error reading final log content: {e}")
+        while thread.is_alive():
+            current_time = time.time()
+            elapsed = current_time - start_time
 
-        if status == 'error':
-            yield f"data: ERROR: {result}\n\n"
-        else:
-            yield "data: *** Execution completed ***\n\n"
+            # Check log file for new content
+            if os.path.exists(log_file):
+                try:
+                    current_size = os.path.getsize(log_file)
+                    if current_size > last_read_pos:
+                        with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
+                            f.seek(last_read_pos)
+                            new_content = f.read()
+                            last_read_pos = f.tell()
 
-            # Output graph info in the expected format for VS Code extension's parseGraphsFromOutput
-            if graphs:
-                yield f"data: \n\n"
-                yield f"data: {'='*60}\n\n"
-                yield f"data: GRAPHS DETECTED: {len(graphs)} graph(s) created\n\n"
-                yield f"data: {'='*60}\n\n"
-                for graph in graphs:
-                    yield f"data:   • {graph['name']}: {graph['path']}\n\n"
-                logging.info(f"[STREAM] Sent {len(graphs)} graph(s) info to client")
+                        # Send only new lines (no filtering for VS Code - full output)
+                        if new_content.strip():
+                            for line in new_content.splitlines():
+                                if line.strip():
+                                    escaped = line.replace('\\', '\\\\')
+                                    yield f"data: {escaped}\n\n"
+                except Exception as e:
+                    logging.debug(f"Error reading log file: {e}")
 
-    except queue_module.Empty:
-        yield "data: ERROR: Failed to get execution result (timeout)\n\n"
+            await asyncio.sleep(check_interval)
+
+            # Check timeout
+            if elapsed > timeout:
+                yield f"data: ERROR: Execution timed out after {timeout}s\n\n"
+                break
+
+        # Get final result - check for any remaining content
+        try:
+            status, result, graphs = result_queue.get(timeout=5.0)
+
+            # Read any remaining log file content not yet sent
+            if os.path.exists(log_file):
+                try:
+                    current_size = os.path.getsize(log_file)
+                    if current_size > last_read_pos:
+                        with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
+                            f.seek(last_read_pos)
+                            remaining = f.read()
+                        if remaining.strip():
+                            for line in remaining.splitlines():
+                                if line.strip():
+                                    escaped = line.replace('\\', '\\\\')
+                                    yield f"data: {escaped}\n\n"
+                except Exception as e:
+                    logging.debug(f"Error reading final log content: {e}")
+
+            if status == 'error':
+                yield f"data: ERROR: {result}\n\n"
+            else:
+                yield "data: *** Execution completed ***\n\n"
+
+                # Output graph info in the expected format for VS Code extension's parseGraphsFromOutput
+                if graphs:
+                    yield f"data: \n\n"
+                    yield f"data: {'='*60}\n\n"
+                    yield f"data: GRAPHS DETECTED: {len(graphs)} graph(s) created\n\n"
+                    yield f"data: {'='*60}\n\n"
+                    for graph in graphs:
+                        yield f"data:   • {graph['name']}: {graph['path']}\n\n"
+                    logging.info(f"[STREAM] Sent {len(graphs)} graph(s) info to client")
+
+        except queue_module.Empty:
+            yield "data: ERROR: Failed to get execution result (timeout)\n\n"
+
+    except (GeneratorExit, asyncio.CancelledError):
+        # Client disconnected - exit cleanly without trying to yield more data
+        logging.debug("[STREAM] Client disconnected, stopping stream")
+        return
 
 @app.get(
     "/run_file",
@@ -2444,6 +2452,9 @@ async def stata_run_selection_stream(selection: str, timeout: int = 600, working
     Streams output incrementally by creating a temp file and monitoring the log file during execution.
     Works with both single-session and multi-session modes.
 
+    Structured to match run_file_stream approach - no try-finally wrapper to avoid
+    h11 protocol errors on client disconnect.
+
     Args:
         selection: The Stata code to run
         timeout: Timeout in seconds
@@ -2464,121 +2475,139 @@ async def stata_run_selection_stream(selection: str, timeout: int = 600, working
     START_MARKER = "__STATA_MCP_OUTPUT_START__"
     END_MARKER = "__STATA_MCP_OUTPUT_END__"
 
-    # Create a temp .do file with the selection code
-    temp_file = None
+    # Create temp file BEFORE the generator logic (not in try-finally)
+    # This matches run_file_stream approach
+    fd, temp_file = tempfile.mkstemp(suffix='.do', prefix='stata_selection_')
+    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        # If working directory specified, prepend cd command
+        if working_dir and os.path.isdir(working_dir):
+            working_dir_stata = os.path.normpath(working_dir).replace('\\', '/')
+            f.write(f'cd "{working_dir_stata}"\n')
+        # Add start marker before user code
+        f.write(f'display "{START_MARKER}"\n')
+        f.write(processed_selection)
+        # Add end marker after user code
+        f.write(f'\ndisplay "{END_MARKER}"\n')
+
+    logging.info(f"[STREAM-SEL] Created temp file: {temp_file}")
+
+    # Queue to communicate between threads
+    result_queue = queue_module.Queue()
+
+    # Determine log file path
+    base_name = os.path.splitext(os.path.basename(temp_file))[0]
+    log_file = get_log_file_path(temp_file, base_name, session_id)
+
+    logging.info(f"[STREAM-SEL] Monitoring log file: {log_file}")
+
+    # Clear (truncate) the log file before starting new execution
     try:
-        # Create temp file in a writable location
-        fd, temp_file = tempfile.mkstemp(suffix='.do', prefix='stata_selection_')
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            # If working directory specified, prepend cd command
-            if working_dir and os.path.isdir(working_dir):
-                working_dir_stata = os.path.normpath(working_dir).replace('\\', '/')
-                f.write(f'cd "{working_dir_stata}"\n')
-            # Add start marker before user code
-            f.write(f'display "{START_MARKER}"\n')
-            f.write(processed_selection)
-            # Add end marker after user code
-            f.write(f'\ndisplay "{END_MARKER}"\n')
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+        with open(log_file, 'w') as f:
+            pass
+        logging.debug(f"[STREAM-SEL] Cleared log file: {log_file}")
+    except Exception as e:
+        logging.warning(f"[STREAM-SEL] Could not clear log file: {e}")
 
-        logging.info(f"[STREAM-SEL] Created temp file: {temp_file}")
+    # Pre-process the temp file to auto-name graphs
+    processed_file = preprocess_do_file_for_graphs(temp_file)
+    logging.debug(f"[STREAM-SEL] Pre-processed file: {processed_file}")
 
-        # Queue to communicate between threads
-        result_queue = queue_module.Queue()
-
-        # Determine log file path
-        base_name = os.path.splitext(os.path.basename(temp_file))[0]
-        log_file = get_log_file_path(temp_file, base_name, session_id)
-
-        logging.info(f"[STREAM-SEL] Monitoring log file: {log_file}")
-
-        # Clear (truncate) the log file before starting new execution
+    def run_with_progress():
+        """Run Stata selection in thread and cleanup temp file when done"""
         try:
-            os.makedirs(os.path.dirname(log_file), exist_ok=True)
-            with open(log_file, 'w') as f:
-                pass
-            logging.debug(f"[STREAM-SEL] Cleared log file: {log_file}")
-        except Exception as e:
-            logging.warning(f"[STREAM-SEL] Could not clear log file: {e}")
-
-        # Pre-process the temp file to auto-name graphs
-        processed_file = preprocess_do_file_for_graphs(temp_file)
-        logging.debug(f"[STREAM-SEL] Pre-processed file: {processed_file}")
-
-        def run_with_progress():
-            """Run Stata selection in thread"""
-            try:
-                graphs = []
-                if multi_session_enabled and session_manager is not None:
-                    logging.info(f"[STREAM-SEL] Using multi-session mode, session_id={session_id or 'default'}")
-                    result_dict = session_manager.execute_file(
-                        processed_file,
-                        session_id=session_id,
-                        timeout=float(timeout),
-                        log_file=log_file,
-                        working_dir=working_dir
-                    )
-                    if result_dict.get('status') == 'success':
-                        result = result_dict.get('output', '')
-                        extra = result_dict.get('extra', {})
-                        graphs = extra.get('graphs', []) if extra else []
-                    else:
-                        result = f"Error: {result_dict.get('error', 'Unknown error')}"
+            graphs = []
+            if multi_session_enabled and session_manager is not None:
+                logging.info(f"[STREAM-SEL] Using multi-session mode, session_id={session_id or 'default'}")
+                result_dict = session_manager.execute_file(
+                    processed_file,
+                    session_id=session_id,
+                    timeout=float(timeout),
+                    log_file=log_file,
+                    working_dir=working_dir
+                )
+                if result_dict.get('status') == 'success':
+                    result = result_dict.get('output', '')
+                    extra = result_dict.get('extra', {})
+                    graphs = extra.get('graphs', []) if extra else []
                 else:
-                    logging.info("[STREAM-SEL] Using single-session mode")
-                    result = run_stata_file(processed_file, timeout=timeout, working_dir=working_dir, auto_name_graphs=True)
-                    try:
-                        logging.debug("[STREAM-SEL] Detecting graphs for single-session mode...")
-                        graphs = display_graphs_interactive(graph_format='png', width=800, height=600)
-                        if graphs:
-                            logging.info(f"[STREAM-SEL] Detected {len(graphs)} graph(s)")
-                    except Exception as e:
-                        logging.warning(f"[STREAM-SEL] Error detecting graphs: {str(e)}")
-                result_queue.put(('success', result, graphs))
-            except Exception as e:
-                logging.error(f"[STREAM-SEL] Execution error: {str(e)}")
-                result_queue.put(('error', str(e), []))
+                    result = f"Error: {result_dict.get('error', 'Unknown error')}"
+            else:
+                logging.info("[STREAM-SEL] Using single-session mode")
+                result = run_stata_file(processed_file, timeout=timeout, working_dir=working_dir, auto_name_graphs=True)
+                try:
+                    logging.debug("[STREAM-SEL] Detecting graphs for single-session mode...")
+                    graphs = display_graphs_interactive(graph_format='png', width=800, height=600)
+                    if graphs:
+                        logging.info(f"[STREAM-SEL] Detected {len(graphs)} graph(s)")
+                except Exception as e:
+                    logging.warning(f"[STREAM-SEL] Error detecting graphs: {str(e)}")
+            result_queue.put(('success', result, graphs))
+        except Exception as e:
+            logging.error(f"[STREAM-SEL] Execution error: {str(e)}")
+            result_queue.put(('error', str(e), []))
+        finally:
+            # Clean up temp files in the worker thread (not in generator)
+            # This avoids the try-finally in generator that causes h11 issues
+            # Clean up processed_file first (created by preprocess_do_file_for_graphs)
+            if processed_file and processed_file != temp_file and os.path.exists(processed_file):
+                try:
+                    os.unlink(processed_file)
+                    logging.debug(f"[STREAM-SEL] Cleaned up processed file: {processed_file}")
+                except Exception as e:
+                    logging.warning(f"[STREAM-SEL] Could not delete processed file: {e}")
+            # Clean up original temp file
+            if temp_file and os.path.exists(temp_file):
+                try:
+                    os.unlink(temp_file)
+                    logging.debug(f"[STREAM-SEL] Cleaned up temp file: {temp_file}")
+                except Exception as e:
+                    logging.warning(f"[STREAM-SEL] Could not delete temp file: {e}")
 
-        # Start execution thread
-        thread = threading.Thread(target=run_with_progress, daemon=True)
-        thread.start()
+    # Start execution thread
+    thread = threading.Thread(target=run_with_progress, daemon=True)
+    thread.start()
 
-        # State-based filtering: only output lines between START and END markers
-        in_user_output = False
+    # State-based filtering: only output lines between START and END markers
+    in_user_output = False
 
-        def process_line(line: str) -> tuple:
-            """Process a line and return (should_output, new_state).
+    def process_line(line: str) -> tuple:
+        """Process a line and return (should_output, new_state).
 
-            Returns:
-                (output_line, new_in_user_output_state)
-                output_line is None if line should be skipped
-            """
-            nonlocal in_user_output
-            stripped = line.strip()
+        Returns:
+            (output_line, new_in_user_output_state)
+            output_line is None if line should be skipped
+        """
+        nonlocal in_user_output
+        stripped = line.strip()
 
-            # Check for start marker - transition to user output mode
-            if START_MARKER in stripped:
-                in_user_output = True
-                return (None, True)  # Skip the marker line itself
+        # Check for start marker - transition to user output mode
+        if START_MARKER in stripped:
+            in_user_output = True
+            return (None, True)  # Skip the marker line itself
 
-            # Check for end marker - transition out of user output mode
-            if END_MARKER in stripped:
-                in_user_output = False
-                return (None, False)  # Skip the marker line itself
+        # Check for end marker - transition out of user output mode
+        if END_MARKER in stripped:
+            in_user_output = False
+            return (None, False)  # Skip the marker line itself
 
-            # Only output if we're in user output mode
-            if in_user_output and stripped:
-                return (line, True)
+        # Only output if we're in user output mode
+        if in_user_output and stripped:
+            return (line, True)
 
-            return (None, in_user_output)
+        return (None, in_user_output)
 
+    start_time = time.time()
+    last_read_pos = 0
+    check_interval = 0.5
+
+    # Monitor progress by reading log file incrementally
+    # Same structure as run_file_stream - wrap in try-except for client disconnect
+    # All yields are inside try-except to handle client disconnect at any point
+    try:
         # Yield initial separator for new execution
         yield f"data: \n\n"
 
-        start_time = time.time()
-        last_read_pos = 0
-        check_interval = 0.5
-
-        # Monitor progress by reading log file incrementally
         while thread.is_alive():
             current_time = time.time()
             elapsed = current_time - start_time
@@ -2646,14 +2675,11 @@ async def stata_run_selection_stream(selection: str, timeout: int = 600, working
         except queue_module.Empty:
             yield "data: ERROR: Failed to get execution result (timeout)\n\n"
 
-    finally:
-        # Clean up temp files
-        if temp_file and os.path.exists(temp_file):
-            try:
-                os.unlink(temp_file)
-                logging.debug(f"[STREAM-SEL] Cleaned up temp file: {temp_file}")
-            except Exception as e:
-                logging.warning(f"[STREAM-SEL] Could not delete temp file: {e}")
+    except (GeneratorExit, asyncio.CancelledError):
+        # Client disconnected - exit cleanly without trying to yield more data
+        # Temp file cleanup is handled by the worker thread
+        logging.debug("[STREAM-SEL] Client disconnected, stopping stream")
+        return
 
 
 @app.get(
