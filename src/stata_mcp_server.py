@@ -2398,6 +2398,7 @@ async def stata_run_file_endpoint(
     tags=["Execution"],
     summary="Run Stata .do file with streaming output",
     description="Execute a Stata .do file and stream output via Server-Sent Events (SSE) for real-time updates.",
+    include_in_schema=False,  # Hide from MCP tools - this is for HTTP streaming only
 )
 async def stata_run_file_stream_endpoint(
     file_path: str,
@@ -2687,6 +2688,7 @@ async def stata_run_selection_stream(selection: str, timeout: int = 600, working
     tags=["Execution"],
     summary="Run Stata selection with streaming output",
     description="Execute Stata code selection and stream output via Server-Sent Events (SSE) for real-time updates.",
+    include_in_schema=False,  # Hide from MCP tools - this is for HTTP streaming only
 )
 async def stata_run_selection_stream_endpoint(
     selection: str,
