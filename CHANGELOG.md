@@ -2,6 +2,14 @@
 
 All notable changes to the Stata MCP extension will be documented in this file.
 
+## [0.4.5] - 2026-01-26
+
+### Fixed
+- **MCP Tool Name Too Long**: Fixed 400 error caused by auto-generated tool names exceeding API length limits (Issue #48)
+  - Hidden streaming endpoints (`/run_file/stream`, `/run_selection/stream`) from MCP schema
+  - Streaming endpoints remain functional for HTTP but are no longer exposed as MCP tools
+  - Prevents `invalid_request_error` when using Claude Code or other MCP clients
+
 ## [0.4.4] - 2026-01-18
 
 ### Fixed

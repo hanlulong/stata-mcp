@@ -61,11 +61,11 @@ Or:
 
 #### Option 2: From .vsix file
 
-1. Download the extension package `stata-mcp-0.4.4.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
+1. Download the extension package `stata-mcp-0.4.5.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
 2. Install using one of these methods:
 
 ```bash
-code --install-extension path/to/stata-mcp-0.4.4.vsix
+code --install-extension path/to/stata-mcp-0.4.5.vsix
 ```
 
 Or:
@@ -77,11 +77,11 @@ Or:
 
 ### Cursor Installation
 
-1. Download the extension package `stata-mcp-0.4.4.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
+1. Download the extension package `stata-mcp-0.4.5.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
 2. Install using one of these methods:
 
 ```bash
-cursor --install-extension path/to/stata-mcp-0.4.4.vsix
+cursor --install-extension path/to/stata-mcp-0.4.5.vsix
 ```
 
 Or:
@@ -103,7 +103,7 @@ Google Antigravity uses the [Open VSX Registry](https://open-vsx.org/extension/D
 Or install from .vsix file:
 
 ```bash
-antigravity --install-extension path/to/stata-mcp-0.4.4.vsix
+antigravity --install-extension path/to/stata-mcp-0.4.5.vsix
 ```
 
 Starting with version 0.1.8, the extension integrates a fast Python package installer called `uv` to set up the environment. If uv is not found on your system, the extension will attempt to install it automatically.
