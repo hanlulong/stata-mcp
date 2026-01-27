@@ -630,6 +630,7 @@ class SessionManager:
         self,
         session_id: Optional[str] = None,
         if_condition: Optional[str] = None,
+        max_rows: int = 10000,
         timeout: Optional[float] = None
     ) -> Dict[str, Any]:
         """
@@ -638,10 +639,12 @@ class SessionManager:
         Args:
             session_id: Target session ID (None for default)
             if_condition: Optional Stata if condition for filtering
+            max_rows: Maximum number of rows to return (default 10000). User can configure via extension settings.
             timeout: Command timeout in seconds
 
         Returns:
-            Result dictionary with status, data, columns, dtypes, rows, index
+            Result dictionary with status, data, columns, dtypes, rows, index,
+            total_rows, displayed_rows, max_rows
         """
         session = self.get_session(session_id)
         if not session:
@@ -659,7 +662,7 @@ class SessionManager:
         result = self._execute_command(
             session,
             CommandType.GET_DATA,
-            {"if_condition": if_condition},
+            {"if_condition": if_condition, "max_rows": max_rows},
             timeout or 30.0  # 30 second timeout for data retrieval
         )
 
@@ -672,7 +675,10 @@ class SessionManager:
                 "columns": extra.get('columns', []),
                 "dtypes": extra.get('dtypes', {}),
                 "rows": extra.get('rows', 0),
-                "index": extra.get('index', [])
+                "index": extra.get('index', []),
+                "total_rows": extra.get('total_rows', extra.get('rows', 0)),
+                "displayed_rows": extra.get('displayed_rows', extra.get('rows', 0)),
+                "max_rows": extra.get('max_rows', max_rows)
             }
         return result
 

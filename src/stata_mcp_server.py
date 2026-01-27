@@ -3396,14 +3396,18 @@ async def clear_history_endpoint():
         return {"status": "error", "message": str(e)}
 
 @app.get("/view_data", include_in_schema=False)
-async def view_data_endpoint(if_condition: str = None, session_id: str = None):
+async def view_data_endpoint(if_condition: str = None, session_id: str = None, max_rows: int = 10000):
     """Get current Stata data as a pandas DataFrame and return as JSON
 
     Args:
         if_condition: Optional Stata if condition (e.g., "price > 5000 & mpg < 30")
         session_id: Optional session ID for multi-session mode
+        max_rows: Maximum number of rows to return (default 10000). User can configure via extension settings.
     """
     global stata_available, stata, multi_session_enabled, session_manager
+
+    # Ensure max_rows has minimum value (no hard upper limit - controlled by extension settings)
+    max_rows = max(100, max_rows)
 
     try:
         # Route through session manager if multi-session mode is enabled
@@ -3411,7 +3415,8 @@ async def view_data_endpoint(if_condition: str = None, session_id: str = None):
             result = await asyncio.to_thread(
                 session_manager.get_data,
                 session_id=session_id,
-                if_condition=if_condition
+                if_condition=if_condition,
+                max_rows=max_rows
             )
 
             if result.get('status') == 'error':
@@ -3431,7 +3436,10 @@ async def view_data_endpoint(if_condition: str = None, session_id: str = None):
                     "columns": result.get('columns', []),
                     "dtypes": result.get('dtypes', {}),
                     "rows": result.get('rows', 0),
-                    "index": result.get('index', [])
+                    "index": result.get('index', []),
+                    "total_rows": result.get('total_rows', result.get('rows', 0)),
+                    "displayed_rows": result.get('displayed_rows', result.get('rows', 0)),
+                    "max_rows": result.get('max_rows', max_rows)
                 }),
                 media_type="application/json"
             )
@@ -3448,107 +3456,12 @@ async def view_data_endpoint(if_condition: str = None, session_id: str = None):
                 status_code=500
             )
 
-        # Apply if condition if provided
-        if if_condition:
-            logging.info(f"Applying filter: if {if_condition}")
-            try:
-                # Get full data first
-                df = stata.pdataframe_from_data()
+        # Use efficient Stata-native filtering with preserve/restore
+        # This is MUCH faster than the old O(n) SFI approach
+        import sfi
 
-                if df is None or df.empty:
-                    raise Exception("No data currently loaded in Stata")
-
-                # Use Stata to create a filter marker variable
-                try:
-                    import sfi
-
-                    # First, check if variable already exists and drop it
-                    try:
-                        stata.run("capture drop _filter_marker", inline=False, echo=False)
-                    except:
-                        pass
-
-                    # Generate marker for rows that match the condition
-                    gen_cmd = f"quietly generate byte _filter_marker = ({if_condition})"
-                    logging.debug(f"Running filter command: {gen_cmd}")
-
-                    try:
-                        stata.run(gen_cmd, inline=False, echo=False)
-                        logging.debug(f"Generate command executed successfully")
-                    except SystemError as se:
-                        logging.error(f"SystemError in generate command: {str(se)}")
-                        raise Exception(f"Invalid condition syntax: {if_condition}")
-                    except Exception as e:
-                        logging.error(f"Exception in generate command: {type(e).__name__}: {str(e)}")
-                        raise Exception(f"Error creating filter: {str(e)}")
-
-                    # Get the marker variable values using SFI
-                    n_obs = sfi.Data.getObsTotal()
-                    logging.debug(f"Total observations: {n_obs}")
-
-                    # Get the variable index for _filter_marker
-                    var_index = sfi.Data.getVarIndex('_filter_marker')
-                    logging.debug(f"Filter marker variable index: {var_index}")
-
-                    if var_index < 0:
-                        raise Exception("Failed to create filter marker variable")
-
-                    # Read the filter values for all observations
-                    # NOTE: sfi.Data.get() returns nested lists like [[1]] or [[0]]
-                    # We need to extract the actual value
-                    filter_mask = []
-                    for i in range(n_obs):
-                        val = sfi.Data.get('_filter_marker', i)
-                        # Extract the actual value from nested list structure
-                        if isinstance(val, list) and len(val) > 0:
-                            if isinstance(val[0], list) and len(val[0]) > 0:
-                                actual_val = val[0][0]
-                            else:
-                                actual_val = val[0]
-                        else:
-                            actual_val = val
-                        filter_mask.append(actual_val == 1)
-
-                    # Debug: Log first few values and count
-                    true_count = sum(filter_mask)
-                    if n_obs > 0:
-                        sample_vals = [sfi.Data.get('_filter_marker', i) for i in range(min(5, n_obs))]
-                        logging.debug(f"First 5 marker values (raw): {sample_vals}")
-                    logging.debug(f"Filter mask true count: {true_count} out of {n_obs}")
-
-                    # Drop the temporary marker
-                    stata.run("quietly drop _filter_marker", inline=False, echo=False)
-
-                    # Filter the DataFrame using the mask
-                    df = df[filter_mask].reset_index(drop=True)
-                    logging.info(f"Filtered data: {len(df)} rows match condition (out of {n_obs} total)")
-
-                except Exception as stata_err:
-                    # Clean up if there's an error
-                    try:
-                        stata.run("capture drop _filter_marker", inline=False, echo=False)
-                    except:
-                        pass
-                    logging.error(f"Filter processing error: {type(stata_err).__name__}: {str(stata_err)}")
-                    raise Exception(f"{str(stata_err)}")
-
-            except Exception as filter_err:
-                logging.error(f"Filter error: {str(filter_err)}")
-                return Response(
-                    content=json.dumps({
-                        "status": "error",
-                        "message": f"Filter error: {str(filter_err)}"
-                    }),
-                    media_type="application/json",
-                    status_code=400
-                )
-        else:
-            # Get data as pandas DataFrame without filtering
-            logging.info("Getting data from Stata using pdataframe_from_data()")
-            df = stata.pdataframe_from_data()
-
-        # Check if data is empty
-        if df is None or df.empty:
+        total_obs = sfi.Data.getObsTotal()
+        if total_obs == 0:
             logging.info("No data currently loaded in Stata")
             return Response(
                 content=json.dumps({
@@ -3556,7 +3469,103 @@ async def view_data_endpoint(if_condition: str = None, session_id: str = None):
                     "message": "No data currently loaded",
                     "data": [],
                     "columns": [],
-                    "rows": 0
+                    "rows": 0,
+                    "total_rows": 0,
+                    "displayed_rows": 0
+                }),
+                media_type="application/json"
+            )
+
+        logging.info(f"Total observations in Stata: {total_obs}")
+
+        # Apply if condition using Stata's native filtering (much faster)
+        if if_condition:
+            logging.info(f"Applying filter: if {if_condition}")
+            try:
+                # Preserve current data state
+                stata.run("preserve", inline=False, echo=False)
+
+                try:
+                    # Create temp variable to track original observation numbers (0-based for JS)
+                    stata.run("quietly gen long _stata_mcp_orig_obs = _n - 1", inline=False, echo=False)
+
+                    # Use Stata's native keep if - this is very fast even for millions of rows
+                    keep_cmd = f"quietly keep if {if_condition}"
+                    logging.debug(f"Running: {keep_cmd}")
+                    stata.run(keep_cmd, inline=False, echo=False)
+
+                    # Get count of matching rows
+                    filtered_obs = sfi.Data.getObsTotal()
+                    logging.info(f"Filter matched {filtered_obs} rows (out of {total_obs})")
+
+                    # If more than max_rows, limit the data
+                    if filtered_obs > max_rows:
+                        stata.run(f"quietly keep in 1/{max_rows}", inline=False, echo=False)
+                        logging.info(f"Limited to first {max_rows} rows")
+
+                    # Get the filtered data
+                    df = stata.pdataframe_from_data()
+
+                    # Extract original obs numbers as index, then drop the temp column
+                    orig_obs_index = df['_stata_mcp_orig_obs'].tolist()
+                    df = df.drop(columns=['_stata_mcp_orig_obs'])
+
+                    # Restore original data
+                    stata.run("restore", inline=False, echo=False)
+
+                    total_matching = filtered_obs
+                    displayed_rows = min(filtered_obs, max_rows)
+
+                except Exception as filter_err:
+                    # Make sure to restore on error
+                    try:
+                        stata.run("restore", inline=False, echo=False)
+                    except:
+                        pass
+                    raise filter_err
+
+            except Exception as e:
+                error_msg = str(e)
+                # Check for common Stata error patterns
+                if "invalid syntax" in error_msg.lower() or "unknown function" in error_msg.lower():
+                    error_msg = f"Invalid condition syntax: {if_condition}"
+                logging.error(f"Filter error: {error_msg}")
+                return Response(
+                    content=json.dumps({
+                        "status": "error",
+                        "message": f"Filter error: {error_msg}"
+                    }),
+                    media_type="application/json",
+                    status_code=400
+                )
+            # For filtered case, orig_obs_index is already set above
+        else:
+            # No filter - just get data with row limit
+            total_matching = total_obs
+            displayed_rows = min(total_obs, max_rows)
+
+            if total_obs > max_rows:
+                # Use range() for obs parameter (0-based Python indexing)
+                logging.info(f"Limiting to first {max_rows} rows (total: {total_obs})")
+                df = stata.pdataframe_from_data(obs=range(max_rows))
+            else:
+                df = stata.pdataframe_from_data()
+
+            # Sequential index for non-filtered case (0-based, JS adds 1)
+            orig_obs_index = list(range(len(df))) if df is not None and not df.empty else []
+
+        # Check if data is empty
+        if df is None or df.empty:
+            logging.info("No data returned from Stata")
+            return Response(
+                content=json.dumps({
+                    "status": "success",
+                    "message": "No data matches the condition" if if_condition else "No data loaded",
+                    "data": [],
+                    "columns": [],
+                    "rows": 0,
+                    "total_rows": total_matching,
+                    "displayed_rows": 0
                 }),
                 media_type="application/json"
             )
@@ -3583,7 +3592,10 @@ async def view_data_endpoint(if_condition: str = None, session_id: str = None):
                 "columns": column_names,
                 "dtypes": dtypes,
                 "rows": int(rows),
-                "index": df.index.tolist()
+                "total_rows": int(total_matching),
+                "displayed_rows": int(displayed_rows),
+                "max_rows": max_rows,
+                "index": orig_obs_index  # Original observation numbers (0-based, JS adds 1)
             }),
             media_type="application/json"
         )

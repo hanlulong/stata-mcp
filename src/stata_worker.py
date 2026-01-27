@@ -845,8 +845,12 @@ capture log close _all
                     )
 
                 elif cmd_type == CommandType.GET_DATA:
-                    # Get current dataset as DataFrame (PyStata mode only)
+                    # Get current dataset as DataFrame with efficient filtering and row limits
                     if_condition = payload.get('if_condition', None)
+                    max_rows = payload.get('max_rows', 10000)
+                    # Ensure minimum value (no hard upper limit - controlled by extension settings)
+                    max_rows = max(100, max_rows)
+
                     try:
                         if stata is None:
                             send_result(
@@ -855,8 +859,89 @@ capture log close _all
                                 error="Stata is not initialized"
                             )
                         else:
-                            # Get data as pandas DataFrame
-                            df = stata.pdataframe_from_data()
+                            import sfi
+                            import numpy as np
+
+                            total_obs = sfi.Data.getObsTotal()
+
+                            if total_obs == 0:
+                                send_result(
+                                    command_id=cmd_id,
+                                    status="success",
+                                    output="",
+                                    extra={
+                                        "data": [],
+                                        "columns": [],
+                                        "dtypes": {},
+                                        "rows": 0,
+                                        "index": [],
+                                        "total_rows": 0,
+                                        "displayed_rows": 0,
+                                        "max_rows": max_rows
+                                    }
+                                )
+                            elif if_condition:
+                                # Use efficient Stata-native filtering with preserve/restore
+                                try:
+                                    stata.run("preserve", inline=False, echo=False)
+
+                                    try:
+                                        # Create temp variable to track original observation numbers (0-based for JS)
+                                        stata.run("quietly gen long _stata_mcp_orig_obs = _n - 1", inline=False, echo=False)
+
+                                        # Use Stata's native keep if - very fast even for millions of rows
+                                        stata.run(f"quietly keep if {if_condition}", inline=False, echo=False)
+
+                                        filtered_obs = sfi.Data.getObsTotal()
+
+                                        # Apply row limit if needed
+                                        if filtered_obs > max_rows:
+                                            stata.run(f"quietly keep in 1/{max_rows}", inline=False, echo=False)
+
+                                        df = stata.pdataframe_from_data()
+
+                                        # Extract original obs numbers as index, then drop the temp column
+                                        orig_obs_index = df['_stata_mcp_orig_obs'].tolist()
+                                        df = df.drop(columns=['_stata_mcp_orig_obs'])
+
+                                        stata.run("restore", inline=False, echo=False)
+
+                                        total_matching = filtered_obs
+                                        displayed_rows = min(filtered_obs, max_rows)
+
+                                    except Exception as filter_err:
+                                        try:
+                                            stata.run("restore", inline=False, echo=False)
+                                        except:
+                                            pass
+                                        send_result(
+                                            command_id=cmd_id,
+                                            status="error",
+                                            error=f"Filter error: {str(filter_err)}"
+                                        )
+                                        continue
+
+                                except Exception as preserve_err:
+                                    send_result(
+                                        command_id=cmd_id,
+                                        status="error",
+                                        error=f"Filter error: {str(preserve_err)}"
+                                    )
+                                    continue
+                                # For filtered case, orig_obs_index is already set above
+                            else:
+                                # No filter - just apply row limit
+                                total_matching = total_obs
+                                displayed_rows = min(total_obs, max_rows)
+
+                                if total_obs > max_rows:
+                                    # Use range() for obs parameter (0-based Python indexing)
+                                    df = stata.pdataframe_from_data(obs=range(max_rows))
+                                else:
+                                    df = stata.pdataframe_from_data()
+
+                                # Sequential index for non-filtered case (0-based, JS adds 1)
+                                orig_obs_index = list(range(len(df))) if df is not None else []
 
                             if df is None or df.empty:
                                 send_result(
@@ -868,47 +953,14 @@ capture log close _all
                                         "columns": [],
                                         "dtypes": {},
                                         "rows": 0,
-                                        "index": []
+                                        "index": [],
+                                        "total_rows": total_matching if 'total_matching' in dir() else 0,
+                                        "displayed_rows": 0,
+                                        "max_rows": max_rows
                                     }
                                 )
                             else:
-                                # Apply if condition filter if provided
-                                if if_condition:
-                                    try:
-                                        # Use Stata to filter
-                                        stata.run("capture drop _filter_marker", quietly=True)
-                                        stata.run(f"quietly generate byte _filter_marker = ({if_condition})", quietly=True)
-
-                                        import sfi
-                                        n_obs = sfi.Data.getObsTotal()
-                                        filter_mask = []
-                                        for i in range(n_obs):
-                                            val = sfi.Data.get('_filter_marker', i)
-                                            if isinstance(val, list) and len(val) > 0:
-                                                if isinstance(val[0], list) and len(val[0]) > 0:
-                                                    actual_val = val[0][0]
-                                                else:
-                                                    actual_val = val[0]
-                                            else:
-                                                actual_val = val
-                                            filter_mask.append(actual_val == 1)
-
-                                        stata.run("quietly drop _filter_marker", quietly=True)
-                                        df = df[filter_mask].reset_index(drop=True)
-                                    except Exception as filter_err:
-                                        try:
-                                            stata.run("capture drop _filter_marker", quietly=True)
-                                        except:
-                                            pass
-                                        send_result(
-                                            command_id=cmd_id,
-                                            status="error",
-                                            error=f"Filter error: {str(filter_err)}"
-                                        )
-                                        continue
-
                                 # Clean data for JSON serialization
-                                import numpy as np
                                 df_clean = df.replace({np.nan: None})
 
                                 send_result(
@@ -920,7 +972,10 @@ capture log close _all
                                         "columns": df_clean.columns.tolist(),
                                         "dtypes": {col: str(df[col].dtype) for col in df.columns},
                                         "rows": len(df),
-                                        "index": df.index.tolist()
+                                        "index": orig_obs_index,
+                                        "total_rows": total_matching,
+                                        "displayed_rows": displayed_rows,
+                                        "max_rows": max_rows
                                     }
                                 )
                     except Exception as data_err:
