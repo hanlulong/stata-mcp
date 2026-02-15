@@ -21,6 +21,7 @@ let debugMode = false;
 
 // Execution tracking for stop functionality
 let isExecuting = false;
+let isRestarting = false;
 let currentExecutionFile = null;
 let currentStreamAbortController = null;  // AbortController for active stream
 
@@ -276,7 +277,8 @@ function activate(context) {
         vscode.commands.registerCommand('stata-vscode.testMcpServer', testMcpServer),
         vscode.commands.registerCommand('stata-vscode.detectStataPath', detectAndUpdateStataPath),
         vscode.commands.registerCommand('stata-vscode.askAgent', askAgent),
-        vscode.commands.registerCommand('stata-vscode.viewData', viewStataData)
+        vscode.commands.registerCommand('stata-vscode.viewData', viewStataData),
+        vscode.commands.registerCommand('stata-vscode.restartSession', restartStataSession)
     );
 
     // Auto-detect Stata path
@@ -357,6 +359,11 @@ function handleConfigurationChange(event) {
             event.affectsConfiguration('stata-vscode.sessionTimeout')) {
 
             if (mcpServerRunning && mcpServerProcess) {
+                if (isRestarting) {
+                    Logger.info('Configuration change deferred — session restart is in progress.');
+                    vscode.window.showWarningMessage('Configuration change requires server restart, but a session restart is in progress. Please try again after the restart completes.');
+                    return;
+                }
                 Logger.info('Configuration changed, restarting MCP server...');
                 mcpServerProcess.kill();
                 mcpServerRunning = false;
@@ -369,7 +376,7 @@ function handleConfigurationChange(event) {
 
 // Update status bar
 function updateStatusBar(state = null) {
-    // State can be: null (auto-detect), 'running', 'stopping'
+    // State can be: null (auto-detect), 'running', 'stopping', 'restarting'
     if (state === 'running' || (state === null && isExecuting)) {
         statusBarItem.text = "$(sync~spin) Stata: Running...";
         statusBarItem.tooltip = `Executing: ${currentExecutionFile || 'command'}\nClick to stop`;
@@ -380,6 +387,11 @@ function updateStatusBar(state = null) {
         statusBarItem.tooltip = "Stopping execution...";
         statusBarItem.command = undefined;
         statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+    } else if (state === 'restarting') {
+        statusBarItem.text = "$(sync~spin) Stata: Restarting...";
+        statusBarItem.tooltip = "Restarting Stata session...";
+        statusBarItem.command = undefined;
+        statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
     } else if (mcpServerRunning) {
         statusBarItem.text = "$(beaker) Stata: Connected";
         statusBarItem.tooltip = "Stata MCP Server is connected";
@@ -667,14 +679,19 @@ async function startMcpServer() {
 
         if (IS_WINDOWS) {
             const scriptDir = path.dirname(mcpServerPath);
+            // On Windows with exec(), trailing backslash in paths escapes the closing quote
+            // e.g., --stata-path "C:\Program Files\StataNow19\" breaks argument parsing
+            // Strip trailing backslashes from all paths to prevent this (Issue #52)
+            const stripTrailingBackslash = (p) => p ? p.replace(/\\+$/, '') : p;
+
             cmdString = `"${pythonCommand}" -m stata_mcp_server --host ${host} --port ${port}`;
 
             if (forcePort) cmdString += ' --force-port';
-            if (stataPath) cmdString += ` --stata-path "${stataPath}"`;
-            cmdString += ` --log-file "${logFile}" --stata-edition ${stataEdition} --log-level ${logLevel}`;
+            if (stataPath) cmdString += ` --stata-path "${stripTrailingBackslash(stataPath)}"`;
+            cmdString += ` --log-file "${stripTrailingBackslash(logFile)}" --stata-edition ${stataEdition} --log-level ${logLevel}`;
             cmdString += ` --log-file-location ${logFileLocation}`;
-            if (customLogDirectory) cmdString += ` --custom-log-directory "${customLogDirectory}"`;
-            if (workspaceRoot) cmdString += ` --workspace-root "${workspaceRoot}"`;
+            if (customLogDirectory) cmdString += ` --custom-log-directory "${stripTrailingBackslash(customLogDirectory)}"`;
+            if (workspaceRoot) cmdString += ` --workspace-root "${stripTrailingBackslash(workspaceRoot)}"`;
             cmdString += ` --result-display-mode ${resultDisplayMode} --max-output-tokens ${maxOutputTokens}`;
             if (multiSession) {
                 cmdString += ` --multi-session --max-sessions ${maxSessions} --session-timeout ${sessionTimeout}`;
@@ -881,6 +898,70 @@ async function stopExecution() {
     }
 }
 
+async function restartStataSession() {
+    if (isRestarting) {
+        return;
+    }
+
+    const config = getConfig();
+    const host = config.get('mcpServerHost') || 'localhost';
+    const port = config.get('mcpServerPort') || 4000;
+
+    if (isExecuting) {
+        vscode.window.showWarningMessage('Cannot restart session while an execution is in progress. Stop the execution first.');
+        return;
+    }
+
+    // Confirm before restarting — this clears all in-memory state
+    const confirmed = await vscode.window.showWarningMessage(
+        'Restart Stata session? This will clear all in-memory data, globals, and programs.',
+        { modal: true },
+        'Restart'
+    );
+    if (confirmed !== 'Restart') {
+        return;
+    }
+
+    // Guard against a second restart triggered while the dialog was open
+    if (isRestarting) {
+        return;
+    }
+
+    // Re-check after dialog — user could have started execution while dialog was open
+    if (isExecuting) {
+        vscode.window.showWarningMessage('An execution started while the dialog was open. Restart cancelled.');
+        return;
+    }
+
+    isRestarting = true;
+    try {
+        updateStatusBar('restarting');
+        const response = await axios.post(
+            `http://${host}:${port}/sessions/restart`,
+            {},
+            { timeout: 75000 }
+        );
+
+        if (response.data.status === 'success') {
+            vscode.window.showInformationMessage('Stata session restarted successfully.');
+        } else {
+            vscode.window.showErrorMessage(`Failed to restart session: ${response.data.message || 'Unknown error'}`);
+        }
+    } catch (error) {
+        Logger.error(`Error restarting Stata session: ${error.message}`);
+        if (error.code === 'ECONNREFUSED' || (error.message && error.message.includes('ECONNREFUSED'))) {
+            vscode.window.showErrorMessage('MCP server is not running. Cannot restart session.');
+        } else if (error.code === 'ECONNABORTED') {
+            vscode.window.showErrorMessage('Session restart timed out. The server may still be restarting — try again in a moment.');
+        } else {
+            vscode.window.showErrorMessage(`Failed to restart session: ${error.message}`);
+        }
+    } finally {
+        isRestarting = false;
+        updateStatusBar();
+    }
+}
+
 let interactivePanel = null; // Global reference to interactive window
 
 async function runInteractive() {
@@ -989,6 +1070,14 @@ async function showInteractiveWindow(filePath, output, graphs, host, port) {
             async message => {
                 switch (message.command) {
                     case 'runCommand':
+                        if (isRestarting) {
+                            interactivePanel.webview.postMessage({
+                                command: 'output',
+                                text: 'Stata session is restarting. Please wait.',
+                                isError: true
+                            });
+                            break;
+                        }
                         try {
                             const config = getConfig();
                             const cmdHost = config.get('mcpServerHost') || 'localhost';
@@ -1301,6 +1390,12 @@ function escapeHtml(text) {
 }
 
 async function executeStataCode(code, toolName = 'run_command', workingDir = null) {
+    // Check if session is restarting
+    if (isRestarting) {
+        vscode.window.showWarningMessage('Stata session is restarting. Please wait for it to finish.');
+        return;
+    }
+
     // Check if already executing
     if (isExecuting) {
         vscode.window.showWarningMessage('A Stata execution is already in progress. Please wait or stop it first.');
@@ -1501,6 +1596,12 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
 }
 
 async function executeStataFile(filePath) {
+    // Check if session is restarting
+    if (isRestarting) {
+        vscode.window.showWarningMessage('Stata session is restarting. Please wait for it to finish.');
+        return;
+    }
+
     // Check if already executing
     if (isExecuting) {
         vscode.window.showWarningMessage('A Stata execution is already in progress. Please wait or stop it first.');
@@ -1763,6 +1864,11 @@ function showStataOutputWebview(content = null) {
 let dataViewerPanel = null;
 
 async function viewStataData() {
+    if (isRestarting) {
+        vscode.window.showWarningMessage('Stata session is restarting. Please wait for it to finish.');
+        return;
+    }
+
     Logger.info('View Stata Data command triggered');
 
     const config = getConfig();
@@ -2267,10 +2373,15 @@ function getStataDataViewerHtml(data, columns, index, dtypes, totalRows, ifCondi
 }
 
 async function testMcpServer() {
+    if (isRestarting) {
+        vscode.window.showWarningMessage('Stata session is restarting. Please wait for it to finish.');
+        return;
+    }
+
     const config = getConfig();
     const host = config.get('mcpServerHost') || 'localhost';
     const port = config.get('mcpServerPort') || 4000;
-    
+
     try {
         const testCommand = "di \"Hello from Stata MCP Server!\"";
         const testResponse = await axios.post(

@@ -397,16 +397,124 @@ class SessionManager:
         self._logger.info(f"Session {session_id} destroyed")
         return True, ""
 
-    def _terminate_worker(self, session: Session):
-        """Force terminate a worker process"""
-        if session.process and session.process.is_alive():
+    def restart_default_session(self) -> Dict[str, Any]:
+        """
+        Restart the default session by destroying and recreating it.
+        This gives users a clean Stata state, equivalent to closing and reopening Stata.
+
+        The session entry is kept in the dict (in DESTROYING state) throughout
+        the restart to avoid a race condition where incoming requests would fail
+        with "Session not found" during the gap between destroy and create.
+
+        Returns:
+            Dict with 'success' and 'error' keys
+        """
+        # Find the default session, check state, and mark as DESTROYING atomically
+        old_session = None
+        old_queues = []
+        with self._lock:
+            for sid, session in self._sessions.items():
+                if session.is_default:
+                    old_session = session
+                    break
+
+            if old_session is None:
+                return {"success": False, "error": "No default session found"}
+
+            # Guard against concurrent restart calls
+            if old_session.state == SessionState.DESTROYING:
+                return {"success": False, "error": "Session is already being restarted"}
+
+            # Mark as DESTROYING so execute() returns a clear error instead of queueing
+            old_session.state = SessionState.DESTROYING
+
+            # Save references to old queues for cleanup after worker termination
+            # (multiprocessing.Event does not have close()/join_thread(), so skip it)
+            old_queues = [old_session.command_queue, old_session.result_queue]
+
+        default_id = old_session.session_id
+        self._logger.info(f"Restarting default session {default_id}")
+
+        # Gracefully stop the old worker, then force-terminate
+        if old_session.command_queue:
             try:
+                old_session.command_queue.put({
+                    'type': CommandType.EXIT.value,
+                    'command_id': 'restart-shutdown'
+                })
+                if old_session.process and old_session.process.is_alive():
+                    old_session.process.join(timeout=5.0)
+            except Exception:
+                pass
+        self._terminate_worker(old_session)
+
+        # Close old multiprocessing queues to prevent file descriptor leaks
+        for q in old_queues:
+            if q is None:
+                continue
+            try:
+                q.close()
+                q.join_thread()
+            except Exception:
+                pass
+
+        # Recreate with the same ID — _create_session_internal() overwrites the
+        # old entry in self._sessions, so there is no gap where the session is missing.
+        # Retry once on failure to handle transient resource issues.
+        created = False
+        last_error = ""
+        for attempt in range(2):
+            try:
+                created = self._create_session_internal(default_id, is_default=True)
+            except Exception as e:
+                self._logger.error(f"Exception recreating default session (attempt {attempt + 1}): {e}")
+                last_error = str(e)
+                created = False
+
+            if created:
+                self._logger.info(f"Default session {default_id} restarted successfully")
+                return {"success": True, "error": ""}
+
+            # Clean up resources left by the failed attempt before retrying
+            if attempt == 0:
+                self._logger.warning("First attempt to recreate default session failed, retrying...")
+                with self._lock:
+                    failed_session = self._sessions.get(default_id)
+                if failed_session:
+                    self._terminate_worker(failed_session)
+                    for q in [failed_session.command_queue, failed_session.result_queue]:
+                        if q is not None:
+                            try:
+                                q.close()
+                                q.join_thread()
+                            except Exception:
+                                pass
+                time.sleep(1.0)
+
+        # Both attempts failed — remove the stale entry
+        with self._lock:
+            if default_id in self._sessions:
+                stale = self._sessions[default_id]
+                if stale.state in (SessionState.DESTROYING, SessionState.ERROR, SessionState.CREATING):
+                    del self._sessions[default_id]
+        return {"success": False, "error": f"Failed to create new default session: {last_error}"}
+
+    def _terminate_worker(self, session: Session):
+        """Force terminate a worker process and reap it to prevent zombies."""
+        if not session.process:
+            return
+        try:
+            if session.process.is_alive():
                 session.process.terminate()
                 session.process.join(timeout=2.0)
                 if session.process.is_alive():
                     session.process.kill()
-            except Exception as e:
-                self._logger.error(f"Error terminating worker: {e}")
+                    session.process.join(timeout=1.0)
+            else:
+                # Reap already-dead process to prevent zombie
+                session.process.join(timeout=1.0)
+        except Exception as e:
+            self._logger.error(f"Error terminating worker: {e}")
 
     def get_session(self, session_id: Optional[str] = None) -> Optional[Session]:
         """

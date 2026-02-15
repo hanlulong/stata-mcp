@@ -60,11 +60,11 @@ code --install-extension DeepEcon.stata-mcp
 
 #### 选项 2：从 .vsix 文件安装
 
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.4.6.vsix`。
+1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.4.7.vsix`。
 2. 使用以下方法之一安装：
 
 ```bash
-code --install-extension path/to/stata-mcp-0.4.6.vsix
+code --install-extension path/to/stata-mcp-0.4.7.vsix
 ```
 
 或：
@@ -76,11 +76,11 @@ code --install-extension path/to/stata-mcp-0.4.6.vsix
 
 ### Cursor 安装
 
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.4.6.vsix`。
+1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.4.7.vsix`。
 2. 使用以下方法之一安装：
 
 ```bash
-cursor --install-extension path/to/stata-mcp-0.4.6.vsix
+cursor --install-extension path/to/stata-mcp-0.4.7.vsix
 ```
 
 或：
@@ -102,7 +102,7 @@ Google Antigravity 默认使用 [Open VSX Registry](https://open-vsx.org/extensi
 或从 .vsix 文件安装：
 
 ```bash
-antigravity --install-extension path/to/stata-mcp-0.4.6.vsix
+antigravity --install-extension path/to/stata-mcp-0.4.7.vsix
 ```
 
 从 0.1.8 版本开始，该扩展集成了名为 `uv` 的快速 Python 包安装器来设置环境。如果在您的系统上找不到 uv，扩展将尝试自动安装它。
@@ -116,13 +116,14 @@ antigravity --install-extension path/to/stata-mcp-0.4.6.vsix
    - **运行选中部分**：选中 Stata 代码并按 `Ctrl+Shift+Enter`（Mac 上为 `Cmd+Shift+Enter`），或点击编辑器工具栏中的播放按钮
    - **运行文件**：按 `Ctrl+Shift+D`（Mac 上为 `Cmd+Shift+D`）运行整个 .do 文件，或点击工具栏中的运行全部按钮
    - **停止执行**：按 `Ctrl+Shift+C`（Mac 上为 `Cmd+Shift+C`）停止正在运行的命令
+   - **重启会话**：点击编辑器工具栏中的重启按钮或使用命令面板（"Stata: Restart Session"）重置 Stata 会话。这将清除所有内存中的数据、全局宏和程序——等同于关闭并重新打开 Stata
    - **交互模式**：点击编辑器工具栏中的图表按钮在交互浏览器窗口中运行代码
 3. 在 Stata 输出面板中查看输出
 
 > **Cursor/Antigravity 用户注意**：工具栏按钮可能默认隐藏。要显示它们：
 > 1. 点击编辑器标题栏中的 **...** （三个点）菜单
 > 2. 选择 **"Configure Icon Visibility"**（配置图标可见性）
-> 3. 启用您想要看到的 Stata 按钮（运行选中、运行文件、停止、查看数据、交互模式）
+> 3. 启用您想要看到的 Stata 按钮（运行选中、运行文件、停止、查看数据、重启会话、交互模式）
 
 ### 数据查看器
 

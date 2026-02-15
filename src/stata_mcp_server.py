@@ -1470,11 +1470,6 @@ def run_stata_file(
             ) as temp_do:
                 # First close any existing log files
                 temp_do.write(f"capture log close _all\n")
-                # Clean up Stata session state to prevent pollution from interrupted executions
-                # Drop all temporary programs (especially loop programs like 1while, 2while, etc.)
-                temp_do.write(f"capture program drop _all\n")
-                # Clear all macros to prevent conflicts
-                temp_do.write(f"capture macro drop _all\n")
                 # Change working directory based on working_dir parameter
                 # If working_dir is None, default to .do file's directory (like native Stata)
                 # Otherwise, cd to the specified directory
@@ -3330,6 +3325,63 @@ async def stop_session_execution(session_id: str):
             "status": "error",
             "message": str(e)
         }
+
+
+_single_session_restart_lock = threading.Lock()
+
+def _single_session_restart():
+    """Run single-session restart commands in a thread to avoid blocking the event loop."""
+    stata.run("capture log close _all", inline=False, echo=False)
+    stata.run("capture clear all", inline=False, echo=False)
+    stata.run("capture graph drop _all", inline=False, echo=False)
+    # clear all resets Stata defaults including `set more on`,
+    # which would deadlock the session on long output
+    stata.run("capture set more off", inline=False, echo=False)
+    stata.run("set more off", inline=False, echo=False)
+
+@app.post("/sessions/restart", include_in_schema=False)
+async def restart_session():
+    """Restart the default Stata session to get a clean state.
+
+    In multi-session mode: destroys and recreates the default worker process.
+    In single-session mode: runs cleanup commands to reset Stata state.
+    """
+    global session_manager, multi_session_enabled, stata_available
+
+    if multi_session_enabled and session_manager is not None:
+        try:
+            result = await asyncio.to_thread(session_manager.restart_default_session)
+            if result.get("success"):
+                return {"status": "success", "message": "Stata session restarted"}
+            else:
+                return {"status": "error", "message": result.get("error", "Unknown error")}
+        except Exception as e:
+            logging.error(f"Error restarting session: {str(e)}")
+            return {"status": "error", "message": str(e)}
+    else:
+        # Single-session mode: run cleanup commands as soft reset
+        if not stata_available or 'stata' not in globals():
+            return {"status": "error", "message": "Stata is not available"}
+
+        if not _single_session_restart_lock.acquire(blocking=False):
+            return {"status": "error", "message": "Session is already being restarted"}
+
+        try:
+            await asyncio.to_thread(_single_session_restart)
+            return {"status": "success", "message": "Stata session state cleared (single-session mode)"}
+        except Exception as e:
+            # If clear all ran but set more off failed, the session is in
+            # `set more on` mode which deadlocks on long output. Try to recover.
+            try:
+                await asyncio.to_thread(
+                    lambda: stata.run("capture set more off", inline=False, echo=False)
+                )
+            except Exception:
+                pass
+            logging.error(f"Error resetting Stata state: {str(e)}")
+            return {"status": "error", "message": str(e)}
+        finally:
+            _single_session_restart_lock.release()
 
 
 # Endpoint to serve graph images

@@ -61,11 +61,11 @@ Or:
 
 #### Option 2: From .vsix file
 
-1. Download the extension package `stata-mcp-0.4.5.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
+1. Download the extension package `stata-mcp-0.4.7.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
 2. Install using one of these methods:
 
 ```bash
-code --install-extension path/to/stata-mcp-0.4.5.vsix
+code --install-extension path/to/stata-mcp-0.4.7.vsix
 ```
 
 Or:
@@ -77,11 +77,11 @@ Or:
 
 ### Cursor Installation
 
-1. Download the extension package `stata-mcp-0.4.5.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
+1. Download the extension package `stata-mcp-0.4.7.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
 2. Install using one of these methods:
 
 ```bash
-cursor --install-extension path/to/stata-mcp-0.4.5.vsix
+cursor --install-extension path/to/stata-mcp-0.4.7.vsix
 ```
 
 Or:
@@ -103,7 +103,7 @@ Google Antigravity uses the [Open VSX Registry](https://open-vsx.org/extension/D
 Or install from .vsix file:
 
 ```bash
-antigravity --install-extension path/to/stata-mcp-0.4.5.vsix
+antigravity --install-extension path/to/stata-mcp-0.4.7.vsix
 ```
 
 Starting with version 0.1.8, the extension integrates a fast Python package installer called `uv` to set up the environment. If uv is not found on your system, the extension will attempt to install it automatically.
@@ -117,13 +117,14 @@ Starting with version 0.1.8, the extension integrates a fast Python package inst
    - **Run Selection**: Select Stata code and press `Ctrl+Shift+Enter` (or `Cmd+Shift+Enter` on Mac), or click the play button in the editor toolbar
    - **Run File**: Press `Ctrl+Shift+D` (or `Cmd+Shift+D` on Mac) to run the entire .do file, or click the run-all button in the toolbar
    - **Stop Execution**: Press `Ctrl+Shift+C` (or `Cmd+Shift+C` on Mac) to stop a running command
+   - **Restart Session**: Click the restart button in the editor toolbar or use the Command Palette ("Stata: Restart Session") to reset the Stata session. This clears all in-memory data, globals, and programs — equivalent to closing and reopening Stata
    - **Interactive Mode**: Click the graph button in the editor toolbar to run code in an interactive browser window
 3. View output in the Stata Output panel
 
 > **Note for Cursor/Antigravity Users**: Toolbar buttons may be hidden by default. To show them:
 > 1. Click the **...** (three dots) menu in the editor title bar
 > 2. Select **"Configure Icon Visibility"**
-> 3. Enable the Stata buttons you want to see (Run Selection, Run File, Stop, View Data, Interactive)
+> 3. Enable the Stata buttons you want to see (Run Selection, Run File, Stop, View Data, Restart Session, Interactive)
 
 ### Data Viewer
 

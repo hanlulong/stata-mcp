@@ -605,8 +605,6 @@ capture log close _all
             # This avoids race conditions from separate stata.run() calls that might fail silently
             # NOTE: cd to .do file's directory so outputs go there (log file location is separate)
             wrapped_code = f"""capture log close _all
-capture program drop _all
-capture macro drop _all
 set seed {seed_hash}
 cd "{do_file_dir}"
 log using "{log_file_stata}", replace text

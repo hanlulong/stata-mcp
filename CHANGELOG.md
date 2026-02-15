@@ -2,6 +2,49 @@
 
 All notable changes to the Stata MCP extension will be documented in this file.
 
+## [0.4.7] - 2026-02-14
+
+### Added
+- **Restart Stata Session**: New command to reset the Stata session to a clean state (Issue #51)
+  - Available in the editor toolbar (restart icon), right-click context menu, and Command Palette ("Stata: Restart Session")
+  - Clears all in-memory data, globals, macros, and programs — equivalent to closing and reopening Stata
+  - Modal confirmation dialog to prevent accidental restarts
+  - Status bar shows "Restarting..." with spinner during the operation
+  - Works in both multi-session mode (destroys and recreates worker process) and single-session mode (runs cleanup commands)
+
+### Fixed
+- **Globals and Macros Lost Between Runs**: Fixed critical bug where user-defined globals, macros, and programs were wiped before every "Run File" execution (Issue #51)
+  - Removed `capture program drop _all` and `capture macro drop _all` from the Run File wrapper
+  - Sequential workflows now work correctly: run `config.do` to define globals, then `analysis.do` can access them
+  - Matches native Stata behavior — session state persists between runs
+
+- **Windows Path with Trailing Backslash**: Fixed working directory path issue on Windows when path ends with `\` (Issue #52)
+  - Added `stripTrailingBackslash()` to remove trailing backslashes before passing paths to Stata
+  - Prevents Stata from interpreting trailing `\` as an escape character
+
+## [0.4.6] - 2026-01-27
+
+### Added
+- **Data Viewer Large Dataset Support**: Efficient virtual scrolling for handling up to 500K rows
+  - Only renders visible rows (~50-100 DOM elements) instead of all rows
+  - Smooth scrolling experience even with large datasets
+  - New setting `stata-vscode.dataViewerMaxRows` (default: 100K, max: 500K)
+  - Warning: Setting above 500K may cause slow loading due to JSON transfer size
+
+### Fixed
+- **Row Number Display After Filtering**: Row numbers now correctly show original Stata observation numbers
+  - Previously showed sequential numbers (1, 2, 3...) after filtering
+  - Now displays actual observation numbers from original dataset (e.g., 10, 25, 50...)
+  - Uses efficient `_n - 1` tracking before filtering, restored after
+
+- **Number Formatting in Data Viewer**: Fixed regex escaping issue in template literals
+  - Replaced problematic regex pattern with string manipulation
+  - Trailing zeros now correctly removed from decimal numbers
+
+- **Data Loading with obs Parameter**: Fixed `pdataframe_from_data(obs=...)` usage
+  - Changed from tuple `(0, N-1)` to `range(N)` for correct row limiting
+  - Efficient row limiting without data copying
+
 ## [0.4.5] - 2026-01-26
 
 ### Fixed
