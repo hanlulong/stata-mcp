@@ -2,6 +2,22 @@
 
 All notable changes to the Stata MCP extension will be documented in this file.
 
+## [0.5.0] - 2026-03-14
+
+### Added
+- **Interactive Window as VS Code Panel**: New `interactiveDisplayMode` setting to open the Interactive Window inside VS Code instead of an external browser (Issue #54)
+  - Setting options: `panel` (default, opens as VS Code webview tab) or `browser` (opens in external browser)
+  - Panel mode executes code and displays output/graphs inline with interactive command input
+  - Browser mode retains the original external browser behavior
+
+### Fixed
+- **Interactive Window URL broken in code-server**: Fixed `asExternalUri()` stripping the `/interactive` path in proxied environments (Issue #54)
+  - Resolve base URL first via `asExternalUri()`, then re-append path and query
+  - Same fix applied to external browser graph display URLs
+- **Graph Viewer scrolling lockup**: Fixed webview panel freezing after accumulating many graphs (Issue #54)
+  - Added proper `height: 100vh; overflow-y: auto` CSS to graph viewer and interactive window bodies
+  - Capped graph history at 50 entries to prevent unbounded DOM growth
+
 ## [0.4.9] - 2026-02-25
 
 ### Added

@@ -1014,19 +1014,54 @@ async function runInteractive() {
         console.log('[runInteractive] Using full file:', filePath);
     }
 
-    // Open the interactive webpage in the browser
-    // Use asExternalUri for remote environment compatibility (code-server, Remote-SSH)
-    const localUrl = vscode.Uri.parse(`http://${host}:${port}/interactive?${urlParams}`);
-    console.log('[runInteractive] Opening URL:', localUrl.toString());
+    // Check display mode setting
+    const displayMode = config.get('interactiveDisplayMode') || 'panel';
 
-    try {
-        const externalUri = await vscode.env.asExternalUri(localUrl);
-        console.log('[runInteractive] External URI:', externalUri.toString());
-        await vscode.env.openExternal(externalUri);
-        vscode.window.showInformationMessage('Stata Interactive Window opened in your browser!');
-    } catch (error) {
-        console.error('[runInteractive] Error:', error);
-        vscode.window.showErrorMessage(`Failed to open browser: ${error.message}`);
+    if (displayMode === 'panel') {
+        // Open in VS Code webview panel
+        try {
+            const cmdTimeout = config.get('runSelectionTimeout') || 600;
+            const tool = codeToRun ? 'run_selection' : 'run_file';
+            const params = codeToRun
+                ? { selection: codeToRun, skip_filter: true }
+                : { file_path: filePath, skip_filter: true };
+
+            const response = await axios.post(
+                `http://${host}:${port}/v1/tools`,
+                { tool, parameters: params },
+                { headers: { 'Content-Type': 'application/json' }, timeout: cmdTimeout * 1000 }
+            );
+
+            if (!response.data || response.data.status !== 'success') {
+                throw new Error(response.data?.message || 'Command execution failed');
+            }
+            const output = response.data.result || '';
+            const graphs = parseGraphsFromOutput(output);
+            await showInteractiveWindow(filePath, output, graphs, host, port);
+        } catch (error) {
+            const rawErr = error.response && error.response.data ? error.response.data : error.message;
+            const errMsg = typeof rawErr === 'string' ? rawErr : (rawErr.message || JSON.stringify(rawErr));
+            vscode.window.showErrorMessage(`Failed to open interactive panel: ${errMsg}`);
+        }
+    } else {
+        // Open in external browser
+        // Use asExternalUri for remote environment compatibility (code-server, Remote-SSH)
+        // Note: asExternalUri may strip the path in code-server environments,
+        // so we resolve the base URL first, then re-append path and query.
+        try {
+            const baseUri = await vscode.env.asExternalUri(vscode.Uri.parse(`http://${host}:${port}`));
+            const basePath = baseUri.path.replace(/\/+$/, '');
+            const fullUri = baseUri.with({
+                path: basePath + '/interactive',
+                query: urlParams
+            });
+            console.log('[runInteractive] Opening URL:', fullUri.toString());
+            await vscode.env.openExternal(fullUri);
+            vscode.window.showInformationMessage('Stata Interactive Window opened in your browser!');
+        } catch (error) {
+            console.error('[runInteractive] Error:', error);
+            vscode.window.showErrorMessage(`Failed to open browser: ${error.message}`);
+        }
     }
 }
 
@@ -1181,6 +1216,9 @@ function getInteractiveWindowHtml(fileName, output, graphsHtml, cspSource) {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             margin: 0;
             padding: 20px;
+            height: 100vh;
+            overflow-y: auto;
+            box-sizing: border-box;
             background-color: var(--vscode-editor-background);
             color: var(--vscode-editor-foreground);
         }
@@ -3076,6 +3114,14 @@ function displayGraphsInVSCode(graphs, host, port) {
 function updateGraphViewerPanel() {
     if (!graphViewerPanel) return;
 
+    // Cap graph history at 50 to prevent DOM bloat and scroll lockup
+    const graphKeys = Object.keys(allGraphs);
+    if (graphKeys.length > 50) {
+        const sorted = graphKeys.sort((a, b) => (allGraphs[a].timestamp || 0) - (allGraphs[b].timestamp || 0));
+        const toRemove = sorted.slice(0, sorted.length - 50);
+        toRemove.forEach(key => delete allGraphs[key]);
+    }
+
     // Display: last graph at top (duplicated), then all graphs in order
     // e.g., for 4 graphs: graph4, graph1, graph2, graph3, graph4 (5 figures total)
     const allGraphsArray = Object.values(allGraphs);
@@ -3126,11 +3172,15 @@ function updateGraphViewerPanel() {
 async function displayGraphsInBrowser(graphs, host, port) {
     for (const graph of graphs) {
         try {
-            // Use asExternalUri to get a URL that works in remote environments
-            const localUrl = vscode.Uri.parse(`http://${host}:${port}/graphs/${encodeURIComponent(graph.name)}`);
-            const externalUri = await vscode.env.asExternalUri(localUrl);
-            Logger.info(`Opening graph in external browser: ${externalUri.toString()}`);
-            await vscode.env.openExternal(externalUri);
+            // Resolve base URL first, then append path — asExternalUri may strip
+            // the path in code-server environments
+            const baseUri = await vscode.env.asExternalUri(vscode.Uri.parse(`http://${host}:${port}`));
+            const basePath = baseUri.path.replace(/\/+$/, '');
+            const fullUri = baseUri.with({
+                path: basePath + '/graphs/' + encodeURIComponent(graph.name)
+            });
+            Logger.info(`Opening graph in external browser: ${fullUri.toString()}`);
+            await vscode.env.openExternal(fullUri);
         } catch (error) {
             Logger.error(`Error displaying graph ${graph.name}: ${error.message}`);
         }
@@ -3150,6 +3200,9 @@ function getGraphViewerHtml(graphsHtml, graphCount, cspSource) {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             margin: 0;
             padding: 20px;
+            height: 100vh;
+            overflow-y: auto;
+            box-sizing: border-box;
             background-color: var(--vscode-editor-background);
             color: var(--vscode-editor-foreground);
         }
