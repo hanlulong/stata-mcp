@@ -1690,6 +1690,7 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
 
             const response = await axios.get(streamUrl, {
                 responseType: 'stream',
+                adapter: 'http',
                 timeout: (runSelectionTimeout * 1000) + 10000,
                 signal: currentStreamAbortController.signal
             });
@@ -1950,6 +1951,7 @@ async function executeStataFile(filePath) {
 
         const response = await axios.get(streamUrl, {
             responseType: 'stream',
+            adapter: 'http',
             timeout: (runFileTimeout * 1000) + 10000,
             signal: currentStreamAbortController.signal
         });

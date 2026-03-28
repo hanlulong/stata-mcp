@@ -2,6 +2,11 @@
 
 All notable changes to the Stata MCP extension will be documented in this file.
 
+## [0.5.1] - 2026-03-28
+
+### Fixed
+- **Streaming output not displaying in Cursor/Trae**: Force Node.js HTTP adapter for streaming requests to prevent axios from selecting the incompatible XHR adapter in VS Code forks (Issue #57)
+
 ## [0.5.0] - 2026-03-14
 
 ### Added

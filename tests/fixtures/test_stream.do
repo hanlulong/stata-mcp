@@ -3,7 +3,7 @@ display "Line 1: Starting test"
 display "Line 2: This is output"
 display "Line 3: More output"
 
-forvalues i = 1/5 {
+forvalues i = 1/20 {
     sleep 500
     display "Count: `i'"
 }
