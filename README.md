@@ -91,15 +91,17 @@ Once the extension is running (status bar shows **"Stata"**), the local MCP serv
 - **`http://localhost:4000/mcp-streamable`** — Streamable HTTP (preferred for modern clients)
 - `http://localhost:4000/mcp` — SSE (legacy fallback)
 
+Quick health check: `curl -s http://localhost:4000/health` should print `{"status":"ok",...}`.
+
 ### 📋 One-prompt setup
 
 Paste the block below into any MCP-aware assistant — **Claude Code**, **OpenAI Codex**, **Cursor AI**, **Copilot Chat**, etc. Hover the box on GitHub and click the copy icon in the top-right corner.
 
 ```text
-Set up the Stata MCP server for me. Endpoint: http://localhost:4000/mcp-streamable — setup guide: https://github.com/hanlulong/stata-mcp#detailed-configurations — verify by confirming the stata_run_selection tool is available.
+Set up the Stata MCP server for me. Endpoint: http://localhost:4000/mcp-streamable — setup guide: https://github.com/hanlulong/stata-mcp#detailed-configurations — if I already have a stata-mcp entry in my MCP config (e.g. using mcp-proxy), replace it rather than appending. When registration succeeds, tell me to restart the client so the stata_run_selection tool becomes available.
 ```
 
-The assistant reads the guide, detects which client it is, writes the right config (or runs the right CLI command), and restarts itself if needed.
+The assistant reads the guide, detects which client it is, writes the right config (or runs the right CLI command), and tells you to restart. The `stata_run_selection` tool becomes visible after the restart — MCP tool lists do not refresh mid-session.
 
 Prefer manual setup? Expand **Detailed Configurations** below for per-client instructions.
 
@@ -417,7 +419,9 @@ Or append this block manually to `~/.codex/config.toml` (or `%USERPROFILE%\.code
 url = "http://localhost:4000/mcp-streamable"
 ```
 
-Then restart Codex — the `stata_run_selection` and `stata_run_file` tools will appear.
+> **Upgrading from an older setup?** If an existing `[mcp_servers.stata-mcp]` block uses `command = "mcp-proxy"` (or `command = "uvx"` + `mcp-proxy` in args), **delete that block** before adding the one above — TOML forbids duplicate keys, and Codex will silently skip the server if both are present.
+
+Then restart Codex — the `stata_run_selection` and `stata_run_file` tools will appear. Run `codex mcp list` to confirm the server is registered.
 
 > **Note on transports.** Codex only speaks MCP's *Streamable HTTP* transport (single endpoint at `/mcp-streamable`). The extension's legacy SSE endpoint (`/mcp`) is for older clients like GitHub Copilot — don't point Codex at it.
 
@@ -511,19 +515,12 @@ The extension automatically configures [Cursor](https://www.cursor.com/) MCP int
 
 ### Cursor Configuration File Paths
 
-The location of Cursor MCP configuration files varies by operating system:
+Cursor reads user-level MCP config from:
 
-- **macOS**:
-  - Primary location: `~/.cursor/mcp.json`
-  - Alternative location: `~/Library/Application Support/Cursor/User/mcp.json`
+- **macOS / Linux**: `~/.cursor/mcp.json`
+- **Windows**: `%USERPROFILE%\.cursor\mcp.json`
 
-- **Windows**:
-  - Primary location: `%USERPROFILE%\.cursor\mcp.json`
-  - Alternative location: `%APPDATA%\Cursor\User\mcp.json`
-
-- **Linux**:
-  - Primary location: `~/.cursor/mcp.json`
-  - Alternative location: `~/.config/Cursor/User/mcp.json`
+Workspace-level config (overrides user-level for that project) goes in `.cursor/mcp.json` at the workspace root.
 
 ### Manual Cursor Configuration
 

@@ -91,15 +91,17 @@ antigravity --install-extension path/to/stata-mcp-0.5.2.vsix
 - **`http://localhost:4000/mcp-streamable`** — Streamable HTTP（推荐给现代客户端）
 - `http://localhost:4000/mcp` — SSE（旧版兼容）
 
+快速自检：`curl -s http://localhost:4000/health` 应返回 `{"status":"ok",...}`。
+
 ### 📋 一次粘贴完成配置
 
 把下面的代码块粘贴给任意支持 MCP 的助手 — **Claude Code**、**OpenAI Codex**、**Cursor AI**、**Copilot Chat** 等都可以。在 GitHub 上把鼠标悬停在代码框上，点右上角的复制图标即可一键复制。
 
 ```text
-Set up the Stata MCP server for me. Endpoint: http://localhost:4000/mcp-streamable — setup guide: https://github.com/hanlulong/stata-mcp#detailed-configurations — verify by confirming the stata_run_selection tool is available.
+Set up the Stata MCP server for me. Endpoint: http://localhost:4000/mcp-streamable — setup guide: https://github.com/hanlulong/stata-mcp#detailed-configurations — if I already have a stata-mcp entry in my MCP config (e.g. using mcp-proxy), replace it rather than appending. When registration succeeds, tell me to restart the client so the stata_run_selection tool becomes available.
 ```
 
-助手会按图索骥：读配置指南、识别自己是哪类客户端、写入对应配置（或运行对应的 CLI 命令），需要时自动重启。
+助手会按图索骥：读配置指南、识别自己是哪类客户端、写入对应配置（或运行对应的 CLI 命令），然后告诉您重启客户端。`stata_run_selection` 工具在重启后才能出现 — MCP 工具列表不会在同一次会话中刷新。
 
 想手动配置？展开下方的 **详细配置** 查看每个客户端的说明。
 
@@ -417,7 +419,9 @@ codex mcp add stata-mcp --url http://localhost:4000/mcp-streamable
 url = "http://localhost:4000/mcp-streamable"
 ```
 
-然后重启 Codex，`stata_run_selection` 和 `stata_run_file` 就会出现在工具列表中。
+> **从老配置升级？** 如果文件中已有 `[mcp_servers.stata-mcp]` 块使用 `command = "mcp-proxy"`（或 `command = "uvx"` + args 里带 `mcp-proxy`），**先删掉那一段** 再加上面的新块 — TOML 不允许重复键，两段并存 Codex 会静默跳过这个服务器。
+
+然后重启 Codex，`stata_run_selection` 和 `stata_run_file` 就会出现在工具列表中。可以用 `codex mcp list` 确认服务器已注册。
 
 > **传输格式说明。** Codex 只支持 MCP 的 *Streamable HTTP* 传输（单端点 `/mcp-streamable`）。扩展的老版 SSE 端点（`/mcp`）是为 GitHub Copilot 等老客户端准备的 — 不要把 Codex 指向它。
 
@@ -511,19 +515,12 @@ args = ["mcp-proxy", "http://localhost:4000/mcp"]
 
 ### Cursor 配置文件路径
 
-Cursor MCP 配置文件的位置因操作系统而异：
+Cursor 的用户级 MCP 配置位置：
 
-- **macOS**：
-  - 主要位置：`~/.cursor/mcp.json`
-  - 替代位置：`~/Library/Application Support/Cursor/User/mcp.json`
+- **macOS / Linux**：`~/.cursor/mcp.json`
+- **Windows**：`%USERPROFILE%\.cursor\mcp.json`
 
-- **Windows**：
-  - 主要位置：`%USERPROFILE%\.cursor\mcp.json`
-  - 替代位置：`%APPDATA%\Cursor\User\mcp.json`
-
-- **Linux**：
-  - 主要位置：`~/.cursor/mcp.json`
-  - 替代位置：`~/.config/Cursor/User/mcp.json`
+工作区级配置（针对单个项目覆盖用户级设置）放在工作区根目录的 `.cursor/mcp.json`。
 
 ### 手动 Cursor 配置
 
