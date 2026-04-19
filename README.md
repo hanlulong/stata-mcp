@@ -247,8 +247,8 @@ Enable parallel Stata execution with isolated sessions. Each session has its own
    {
      "servers": {
        "stata-mcp": {
-         "type": "sse",
-         "url": "http://localhost:4000/mcp"
+         "type": "http",
+         "url": "http://localhost:4000/mcp-streamable"
        }
      }
    }
@@ -263,12 +263,14 @@ Enable parallel Stata execution with isolated sessions. Each session has its own
       {
         "servers": {
           "stata-mcp": {
-            "type": "sse",
-            "url": "http://localhost:4000/mcp"
+            "type": "http",
+            "url": "http://localhost:4000/mcp-streamable"
           }
         }
       }
       ```
+
+   > On older VS Code versions without Streamable HTTP support, use `"type": "sse"` with `http://localhost:4000/mcp` instead.
 
    The user-level `mcp.json` file is located at:
    - **Windows**: `%APPDATA%\Code\User\mcp.json`
@@ -322,8 +324,10 @@ Once the Stata MCP server is running, configure Claude Code to connect to it:
 
 2. Run the following command to add the Stata MCP server:
    ```bash
-   claude mcp add --transport sse stata-mcp http://localhost:4000/mcp --scope user
+   claude mcp add --transport http stata-mcp http://localhost:4000/mcp-streamable --scope user
    ```
+
+   > Older Claude Code versions (pre-2026) may not recognize `--transport http`. On those, use `--transport sse` with `http://localhost:4000/mcp` instead. Claude Code now treats SSE as legacy — prefer `http` whenever it is supported.
 
 3. Restart your IDE
 
@@ -357,57 +361,38 @@ If Claude Code is not recognizing the Stata MCP server:
 <details>
 <summary><strong>Claude Desktop</strong></summary>
 
-You can use this extension with [Claude Desktop](https://claude.ai/download) through [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):
+[Claude Desktop](https://claude.ai/download) connects to remote MCP servers like the one this extension exposes. Make sure the Stata MCP extension is installed and its status bar shows **"Stata"** before configuring Claude Desktop.
 
-1. Make sure the Stata MCP extension is installed in VS Code, Cursor, or Antigravity and currently running before attempting to configure Claude Desktop
-2. Install [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):
-   ```bash
-   # Using pip
-   pip install mcp-proxy
+**Option A (recommended): add as a Custom Connector**
 
-   # Or using uv (faster)
-   uv install mcp-proxy
-   ```
+1. Open Claude Desktop → **Settings** → **Connectors** → **Add custom connector**
+2. Name: `Stata MCP`
+3. URL: `http://localhost:4000/mcp-streamable`
+4. Save and restart Claude Desktop
 
-3. Find the path to mcp-proxy:
-   ```bash
-   # On Mac/Linux
-   which mcp-proxy
+No wrapper, no config file editing, no Python/Node install required. This is Anthropic's current recommended way to add remote MCP servers to Claude Desktop.
 
-   # On Windows (PowerShell)
-   (Get-Command mcp-proxy).Path
-   ```
+**Option B: JSON config with a stdio wrapper** (if you prefer editing `claude_desktop_config.json`)
 
-4. Configure Claude Desktop by editing the MCP config file:
+Anthropic's JSON config doesn't yet accept remote URLs directly — you still need a local stdio wrapper. The easiest is [`mcp-remote`](https://www.npmjs.com/package/mcp-remote), which is zero-install if you have Node:
 
-   **On Windows** (typically at `%APPDATA%\Claude Desktop\claude_desktop_config.json`):
+1. Open the config file:
+   - **macOS**: `~/Library/Application Support/Claude Desktop/claude_desktop_config.json`
+   - **Windows**: `%APPDATA%\Claude Desktop\claude_desktop_config.json`
+
+2. Add this block (merge with any existing `mcpServers` object):
    ```json
    {
      "mcpServers": {
        "stata-mcp": {
-         "command": "mcp-proxy",
-         "args": ["http://127.0.0.1:4000/mcp"]
+         "command": "npx",
+         "args": ["-y", "mcp-remote", "http://localhost:4000/mcp-streamable"]
        }
      }
    }
    ```
 
-   **On macOS** (typically at `~/Library/Application Support/Claude Desktop/claude_desktop_config.json`):
-   ```json
-   {
-     "mcpServers": {
-       "stata-mcp": {
-         "command": "/path/to/mcp-proxy",
-         "args": ["http://127.0.0.1:4000/mcp"]
-       }
-     }
-   }
-   ```
-   Replace `/path/to/mcp-proxy` with the actual path you found in step 3.
-
-5. Restart Claude Desktop
-
-6. Claude Desktop will automatically discover the available Stata tools, allowing you to run Stata commands and analyze data directly from your conversations.
+3. Restart Claude Desktop. The Stata tools will appear in the available-tools list.
 
 <br>
 
@@ -478,12 +463,13 @@ args = ["mcp-proxy", "http://localhost:4000/mcp"]
    {
      "mcpServers": {
        "stata-mcp": {
-         "url": "http://localhost:4000/mcp",
-         "transport": "sse"
+         "url": "http://localhost:4000/mcp-streamable"
        }
      }
    }
    ```
+
+   Cline auto-detects the transport from the URL — no `transport` key needed. Point it at `http://localhost:4000/mcp` if you need SSE for any reason.
 
 3. If the file already contains other MCP servers, just add the `"stata-mcp"` entry to the existing `"mcpServers"` object.
 
@@ -493,8 +479,7 @@ You can also configure Cline through VS Code settings:
 ```json
 "cline.mcpSettings": {
   "stata-mcp": {
-    "url": "http://localhost:4000/mcp",
-    "transport": "sse"
+    "url": "http://localhost:4000/mcp-streamable"
   }
 }
 ```
@@ -549,12 +534,13 @@ If you need to manually configure Cursor MCP:
    {
      "mcpServers": {
        "stata-mcp": {
-         "url": "http://localhost:4000/mcp",
-         "transport": "sse"
+         "url": "http://localhost:4000/mcp-streamable"
        }
      }
    }
    ```
+
+   Cursor auto-detects the transport from the URL — no `transport` key needed. It tries Streamable HTTP first and falls back to SSE if the server advertises it.
 
 3. If the file already contains other MCP servers, just add the `"stata-mcp"` entry to the existing `"mcpServers"` object.
 
