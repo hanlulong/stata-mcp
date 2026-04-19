@@ -110,6 +110,74 @@ antigravity --install-extension path/to/stata-mcp-0.5.2.vsix
 
 Starting with version 0.1.8, the extension integrates a fast Python package installer called `uv` to set up the environment. If uv is not found on your system, the extension will attempt to install it automatically.
 
+## ⚡ Connect AI Assistants (Quick Setup)
+
+Once the extension is installed and its status bar shows **"Stata"**, your local MCP server is listening at `http://localhost:4000/mcp`. You just need to point your AI assistant at it.
+
+Full per-client walkthroughs (including Claude Desktop, Cline, Cursor) are in [Detailed Configurations](#detailed-configurations) below — the snippets here are the minimum paste-ready setup for the two most common clients.
+
+### Claude Code — CLI and VS Code / Cursor / Antigravity extensions
+
+The CLI and every IDE variant of Claude Code share the same config, so **one command works everywhere**. Paste into any terminal:
+
+```bash
+claude mcp add --transport sse stata-mcp http://localhost:4000/mcp --scope user
+```
+
+Then restart Claude Code. Verify with `claude mcp list` — `stata-mcp` should appear.
+
+> 💬 **Or let Claude Code set itself up** — paste this prompt into any Claude Code chat:
+>
+> > I just installed the Stata MCP VS Code extension. Please run `claude mcp add --transport sse stata-mcp http://localhost:4000/mcp --scope user` to connect to it, then show me the output of `claude mcp list` so I can confirm it's registered.
+
+### OpenAI Codex — CLI and IDE extensions
+
+Codex CLI and the Codex IDE extensions read **one shared config** at `~/.codex/config.toml` (macOS/Linux) or `%USERPROFILE%\.codex\config.toml` (Windows). Append this block:
+
+```toml
+[mcp_servers.stata-mcp]
+command = "uvx"
+args = ["mcp-proxy", "http://localhost:4000/mcp"]
+```
+
+This uses [`uvx`](https://docs.astral.sh/uv/guides/tools/) to run `mcp-proxy` on demand — no pre-install needed if you already have [`uv`](https://docs.astral.sh/uv/). If you don't, install it first:
+
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows (PowerShell)
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Then restart Codex. It will auto-discover the `stata_run_selection` and `stata_run_file` tools.
+
+> 💬 **Or let Codex set itself up** — paste this prompt into any Codex session:
+>
+> > I just installed the Stata MCP VS Code extension. Please append the following block to my Codex MCP config (`~/.codex/config.toml` on macOS/Linux, `%USERPROFILE%\.codex\config.toml` on Windows), creating the file if it doesn't exist. If `uv` is not installed, install it first.
+> > ```toml
+> > [mcp_servers.stata-mcp]
+> > command = "uvx"
+> > args = ["mcp-proxy", "http://localhost:4000/mcp"]
+> > ```
+
+### GitHub Copilot — VS Code 1.102+
+
+Drop into `.vscode/mcp.json` in your workspace (or the user-level file via Command Palette → *MCP: Open User Configuration*):
+
+```json
+{
+  "servers": {
+    "stata-mcp": {
+      "type": "sse",
+      "url": "http://localhost:4000/mcp"
+    }
+  }
+}
+```
+
+Reload VS Code, then type `@mcp` in Copilot Chat to confirm.
+
 ## Usage
 
 ### Running Stata Code
@@ -426,51 +494,47 @@ You can use this extension with [Claude Desktop](https://claude.ai/download) thr
 <details>
 <summary><strong>OpenAI Codex</strong></summary>
 
-You can use this extension with [OpenAI Codex](https://github.com/openai/codex) through [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):
+You can use this extension with [OpenAI Codex](https://github.com/openai/codex) (CLI and every IDE extension) — they all read the same `~/.codex/config.toml` file.
 
-1. Make sure the Stata MCP extension is installed in VS Code, Cursor, or Antigravity and currently running before attempting to configure Codex
-2. Install [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy):
+1. Make sure the Stata MCP extension is installed and its status bar shows **"Stata"** before configuring Codex.
+
+2. Install [`uv`](https://docs.astral.sh/uv/) if you don't already have it — we use `uvx` to run [`mcp-proxy`](https://github.com/modelcontextprotocol/mcp-proxy) on demand so you don't have to manage its lifecycle manually:
    ```bash
-   # Using pip
-   pip install mcp-proxy
+   # macOS / Linux
+   curl -LsSf https://astral.sh/uv/install.sh | sh
 
-   # Or using uv (faster)
-   uv install mcp-proxy
+   # Windows (PowerShell)
+   powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
    ```
 
-3. Configure Codex by editing the config file at `~/.codex/config.toml`:
+3. Append the following block to your Codex config file. Create the file if it doesn't exist:
 
-   **On macOS/Linux** (`~/.codex/config.toml`):
+   **macOS / Linux** — `~/.codex/config.toml`
+   **Windows** — `%USERPROFILE%\.codex\config.toml`
+
    ```toml
-   # Stata MCP Server (SSE Transport)
+   # Stata MCP Server (SSE transport, proxied via uvx mcp-proxy)
    [mcp_servers.stata-mcp]
-   command = "mcp-proxy"
-   args = ["http://localhost:4000/mcp"]
+   command = "uvx"
+   args = ["mcp-proxy", "http://localhost:4000/mcp"]
    ```
 
-   **On Windows** (`%USERPROFILE%\.codex\config.toml`):
-   ```toml
-   # Stata MCP Server (SSE Transport)
-   [mcp_servers.stata-mcp]
-   command = "mcp-proxy"
-   args = ["http://localhost:4000/mcp"]
-   ```
+4. If the file already contains other MCP servers, just add the `[mcp_servers.stata-mcp]` section alongside them.
 
-4. If the file already contains other MCP servers, just add the `[mcp_servers.stata-mcp]` section.
+5. Restart Codex (CLI) or the Codex IDE extension.
 
-5. Restart Codex or your IDE
-
-6. Codex will automatically discover the available Stata tools, allowing you to run Stata commands and analyze data directly from your conversations.
+6. Codex will automatically discover the available Stata tools (`stata_run_selection`, `stata_run_file`), allowing you to run Stata code and analyze data directly from your conversations.
 
 ### Troubleshooting Codex Configuration
 
 If Codex is not recognizing the Stata MCP server:
-1. Verify the MCP server is running (Status bar should show "Stata")
-2. Check that the configuration file exists at `~/.codex/config.toml` with the correct content
-3. Ensure mcp-proxy is installed: `pip list | grep mcp-proxy` or `which mcp-proxy`
-4. Try restarting your IDE
-5. Check the extension output panel (View > Output > Stata MCP) for any errors
-6. Ensure there are no port conflicts (default port is 4000)
+1. Verify the MCP server is running (status bar should show "Stata")
+2. Verify the config file exists at the path above and contains the `[mcp_servers.stata-mcp]` block verbatim
+3. Verify `uv` is on your PATH: `uv --version`. If Codex complains `uvx not found`, re-run the uv installer or restart your shell so the PATH is reloaded.
+4. If you prefer a pinned install instead of `uvx` on-demand, you can replace `uvx` + `["mcp-proxy", ...]` with `mcp-proxy` + `["http://localhost:4000/mcp"]` after `uv tool install mcp-proxy` (or `pip install mcp-proxy`).
+5. Try restarting Codex / your IDE
+6. Check the extension output panel (View → Output → *Stata*) for any errors
+7. Ensure there are no port conflicts (default port is 4000)
 
 <br>
 

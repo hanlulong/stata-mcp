@@ -109,6 +109,74 @@ antigravity --install-extension path/to/stata-mcp-0.5.2.vsix
 
 从 0.1.8 版本开始，该扩展集成了名为 `uv` 的快速 Python 包安装器来设置环境。如果在您的系统上找不到 uv，扩展将尝试自动安装它。
 
+## ⚡ 连接 AI 助手（快速配置）
+
+扩展安装完成且状态栏显示 **"Stata"** 后，本地 MCP 服务已监听在 `http://localhost:4000/mcp`，您只需把 AI 助手指向它即可。
+
+其它客户端（Claude Desktop、Cline、Cursor 等）的完整教程见下方 [详细配置](#详细配置)。这里只列出两大主流客户端的最小化可粘贴配置。
+
+### Claude Code — CLI 与 VS Code / Cursor / Antigravity 扩展
+
+Claude Code 的 CLI 和各 IDE 版本共享同一份配置，**一条命令全部搞定**。在任意终端中执行：
+
+```bash
+claude mcp add --transport sse stata-mcp http://localhost:4000/mcp --scope user
+```
+
+重启 Claude Code，然后运行 `claude mcp list` 确认 `stata-mcp` 已注册。
+
+> 💬 **或者让 Claude Code 自己配置** — 把下面这段提示粘贴到 Claude Code 对话中：
+>
+> > 我刚刚安装了 Stata MCP VS Code 扩展。请运行 `claude mcp add --transport sse stata-mcp http://localhost:4000/mcp --scope user` 连接它，然后运行 `claude mcp list` 确认已注册。
+
+### OpenAI Codex — CLI 与 IDE 扩展
+
+Codex CLI 和所有 Codex IDE 扩展共享同一份配置文件：macOS/Linux 上是 `~/.codex/config.toml`，Windows 上是 `%USERPROFILE%\.codex\config.toml`。在文件末尾添加下面这一段：
+
+```toml
+[mcp_servers.stata-mcp]
+command = "uvx"
+args = ["mcp-proxy", "http://localhost:4000/mcp"]
+```
+
+这里使用 [`uvx`](https://docs.astral.sh/uv/guides/tools/) 按需运行 `mcp-proxy`，只要您装了 [`uv`](https://docs.astral.sh/uv/) 就不必手动安装其它包。如果还没装 `uv`：
+
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows（PowerShell）
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+重启 Codex，它会自动发现 `stata_run_selection` 和 `stata_run_file` 工具。
+
+> 💬 **或者让 Codex 自己配置** — 把下面这段提示粘贴到 Codex 对话中：
+>
+> > 我刚刚安装了 Stata MCP VS Code 扩展。请把下面这段追加到我的 Codex MCP 配置文件（macOS/Linux 上是 `~/.codex/config.toml`，Windows 上是 `%USERPROFILE%\.codex\config.toml`），文件不存在就创建它。如果我还没装 `uv`，请先帮我装上。
+> > ```toml
+> > [mcp_servers.stata-mcp]
+> > command = "uvx"
+> > args = ["mcp-proxy", "http://localhost:4000/mcp"]
+> > ```
+
+### GitHub Copilot — VS Code 1.102+
+
+在工作区根目录创建 `.vscode/mcp.json`（或通过命令面板 *MCP: Open User Configuration* 编辑用户级文件），写入：
+
+```json
+{
+  "servers": {
+    "stata-mcp": {
+      "type": "sse",
+      "url": "http://localhost:4000/mcp"
+    }
+  }
+}
+```
+
+重新加载 VS Code，然后在 Copilot Chat 中输入 `@mcp` 确认工具已注册。
+
 ## 使用方法
 
 ### 运行 Stata 代码
@@ -425,51 +493,47 @@ antigravity --install-extension path/to/stata-mcp-0.5.2.vsix
 <details>
 <summary><strong>OpenAI Codex</strong></summary>
 
-您可以通过 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy) 将此扩展与 [OpenAI Codex](https://github.com/openai/codex) 一起使用：
+您可以将此扩展与 [OpenAI Codex](https://github.com/openai/codex) 一起使用（CLI 和所有 IDE 扩展共用 `~/.codex/config.toml` 同一份配置）。
 
-1. 确保 Stata MCP 扩展已安装在 VS Code、Cursor 或 Antigravity 中并且当前正在运行，然后再尝试配置 Codex
-2. 安装 [mcp-proxy](https://github.com/modelcontextprotocol/mcp-proxy)：
+1. 确保 Stata MCP 扩展已安装并且状态栏显示 **"Stata"**，再配置 Codex。
+
+2. 如果还没装 [`uv`](https://docs.astral.sh/uv/)，先安装它。我们用 `uvx` 按需运行 [`mcp-proxy`](https://github.com/modelcontextprotocol/mcp-proxy)，您就不需要手动管理它：
    ```bash
-   # 使用 pip
-   pip install mcp-proxy
+   # macOS / Linux
+   curl -LsSf https://astral.sh/uv/install.sh | sh
 
-   # 或使用 uv（更快）
-   uv install mcp-proxy
+   # Windows（PowerShell）
+   powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
    ```
 
-3. 通过编辑 `~/.codex/config.toml` 配置文件来配置 Codex：
+3. 在 Codex 配置文件末尾追加下面的片段。文件不存在就创建它：
 
-   **在 macOS/Linux**（`~/.codex/config.toml`）：
+   **macOS / Linux** — `~/.codex/config.toml`
+   **Windows** — `%USERPROFILE%\.codex\config.toml`
+
    ```toml
-   # Stata MCP Server (SSE Transport)
+   # Stata MCP Server（SSE 传输，通过 uvx mcp-proxy 代理）
    [mcp_servers.stata-mcp]
-   command = "mcp-proxy"
-   args = ["http://localhost:4000/mcp"]
+   command = "uvx"
+   args = ["mcp-proxy", "http://localhost:4000/mcp"]
    ```
 
-   **在 Windows**（`%USERPROFILE%\.codex\config.toml`）：
-   ```toml
-   # Stata MCP Server (SSE Transport)
-   [mcp_servers.stata-mcp]
-   command = "mcp-proxy"
-   args = ["http://localhost:4000/mcp"]
-   ```
+4. 如果文件已经有其它 MCP 服务器，并排加一个 `[mcp_servers.stata-mcp]` 段落即可。
 
-4. 如果文件已包含其他 MCP 服务器，只需添加 `[mcp_servers.stata-mcp]` 部分。
+5. 重启 Codex（CLI）或 Codex IDE 扩展。
 
-5. 重启 Codex 或您的 IDE
-
-6. Codex 将自动发现可用的 Stata 工具，允许您直接从对话中运行 Stata 命令和分析数据。
+6. Codex 会自动发现 Stata 工具（`stata_run_selection`、`stata_run_file`），您就能在对话里直接运行 Stata 代码、分析数据。
 
 ### Codex 配置故障排除
 
 如果 Codex 无法识别 Stata MCP 服务器：
-1. 验证 MCP 服务器正在运行（状态栏应显示"Stata"）
-2. 检查配置文件是否存在于 `~/.codex/config.toml` 并且内容正确
-3. 确保已安装 mcp-proxy：`pip list | grep mcp-proxy` 或 `which mcp-proxy`
-4. 尝试重启您的 IDE
-5. 检查扩展输出面板（查看 > 输出 > Stata MCP）是否有任何错误
-6. 确保没有端口冲突（默认端口为 4000）
+1. 确认 MCP 服务器正在运行（状态栏应显示 "Stata"）
+2. 确认配置文件存在于上面的路径，并且包含完整的 `[mcp_servers.stata-mcp]` 段落
+3. 确认 `uv` 在 PATH 中：`uv --version`。如果 Codex 报 `uvx not found`，重跑 uv 安装脚本或重启终端刷新 PATH。
+4. 如果更偏好固定安装而不是 `uvx` 按需运行，可以先 `uv tool install mcp-proxy`（或 `pip install mcp-proxy`），然后把 `uvx` + `["mcp-proxy", ...]` 改成 `mcp-proxy` + `["http://localhost:4000/mcp"]`。
+5. 尝试重启 Codex / 您的 IDE
+6. 检查扩展输出面板（查看 → 输出 → *Stata*）是否有错误
+7. 确认没有端口冲突（默认端口 4000）
 
 <br>
 
