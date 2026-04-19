@@ -2,10 +2,12 @@
 
 [![en](https://img.shields.io/badge/lang-English-red.svg)](./README.md)
 [![cn](https://img.shields.io/badge/语言-中文-yellow.svg)](./README.zh-CN.md)
-[![VS Code Marketplace](https://img.shields.io/badge/VS%20Code-Marketplace-blue)](https://marketplace.visualstudio.com/items?itemName=DeepEcon.stata-mcp)
-![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/i/deepecon.stata-mcp.svg)
-![GitHub all releases](https://img.shields.io/github/downloads/hanlulong/stata-mcp/total.svg)
-[![GitHub license](https://img.shields.io/github/license/hanlulong/stata-mcp)](https://github.com/hanlulong/stata-mcp/blob/main/LICENSE) 
+[![VS Code Marketplace](https://vsmarketplacebadges.dev/version-short/DeepEcon.stata-mcp.svg?label=VS%20Code)](https://marketplace.visualstudio.com/items?itemName=DeepEcon.stata-mcp)
+[![VS Code Installs](https://vsmarketplacebadges.dev/installs-short/DeepEcon.stata-mcp.svg?label=VS%20Code%20installs)](https://marketplace.visualstudio.com/items?itemName=DeepEcon.stata-mcp)
+[![Open VSX](https://img.shields.io/open-vsx/v/DeepEcon/stata-mcp?label=Open%20VSX)](https://open-vsx.org/extension/DeepEcon/stata-mcp)
+[![Open VSX Downloads](https://img.shields.io/open-vsx/dt/DeepEcon/stata-mcp?label=Open%20VSX%20downloads)](https://open-vsx.org/extension/DeepEcon/stata-mcp)
+[![GitHub Downloads](https://img.shields.io/github/downloads/hanlulong/stata-mcp/total.svg)](https://github.com/hanlulong/stata-mcp/releases)
+[![GitHub License](https://img.shields.io/github/license/hanlulong/stata-mcp)](https://github.com/hanlulong/stata-mcp/blob/main/LICENSE) 
 
 
 This extension provides Stata integration for Visual Studio Code, Cursor, and Antigravity IDE using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/docs/getting-started/intro). It enables AI-powered Stata development with [GitHub Copilot](https://github.com/features/copilot), [Cursor](https://www.cursor.com/), [Antigravity](https://antigravity.google/), [Cline](https://github.com/cline/cline), [Claude Code](https://claude.com/product/claude-code), or [Codex](https://github.com/openai/codex).
