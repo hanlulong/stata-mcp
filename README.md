@@ -728,4 +728,4 @@ MIT
 ## Credits
 
 Created by Lu Han,
-Published by [DeepEcon.ai](https://deepecon.ai/)
+Published by [OpenEcon.ai](https://openecon.ai/)
