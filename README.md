@@ -86,7 +86,12 @@ Starting with version 0.1.8, the extension integrates a fast Python package inst
 
 ## ⚡ Connect Your AI Assistant
 
-Once the extension is running (status bar shows **"Stata"**), copy this **one line** into your AI assistant — Claude Code, OpenAI Codex, Cursor AI, Copilot Chat, or any other MCP-aware client:
+Once the extension is running (status bar shows **"Stata"**), the local MCP server is listening on two endpoints:
+
+- **Streamable HTTP** (preferred for modern clients): `http://localhost:4000/mcp-streamable`
+- **SSE** (legacy): `http://localhost:4000/mcp`
+
+Copy this **one line** into your AI assistant — Claude Code, OpenAI Codex, Cursor AI, Copilot Chat, or any other MCP-aware client:
 
 > I installed the Stata MCP extension (https://github.com/hanlulong/stata-mcp). Please read the "Detailed Configurations" section of that README and set yourself up to use the local Stata MCP server. Then confirm the `stata_run_selection` tool is available.
 
@@ -410,47 +415,52 @@ You can use this extension with [Claude Desktop](https://claude.ai/download) thr
 <details>
 <summary><strong>OpenAI Codex</strong></summary>
 
-You can use this extension with [OpenAI Codex](https://github.com/openai/codex) (CLI and every IDE extension) — they all read the same `~/.codex/config.toml` file.
+You can use this extension with [OpenAI Codex](https://github.com/openai/codex) — the CLI and every IDE extension share the same `~/.codex/config.toml`. Codex CLI **0.46.0+** (October 2025) supports MCP servers over HTTP natively, so no wrapper is needed. Either drive it from the command line:
 
-1. Make sure the Stata MCP extension is installed and its status bar shows **"Stata"** before configuring Codex.
+```bash
+codex mcp add stata-mcp --url http://localhost:4000/mcp-streamable
+```
 
-2. Install [`uv`](https://docs.astral.sh/uv/) if you don't already have it — we use `uvx` to run [`mcp-proxy`](https://github.com/modelcontextprotocol/mcp-proxy) on demand so you don't have to manage its lifecycle manually:
-   ```bash
-   # macOS / Linux
-   curl -LsSf https://astral.sh/uv/install.sh | sh
+Or append this block manually to `~/.codex/config.toml` (or `%USERPROFILE%\.codex\config.toml` on Windows):
 
-   # Windows (PowerShell)
-   powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-   ```
+```toml
+[mcp_servers.stata-mcp]
+url = "http://localhost:4000/mcp-streamable"
+```
 
-3. Append the following block to your Codex config file. Create the file if it doesn't exist:
+Then restart Codex — the `stata_run_selection` and `stata_run_file` tools will appear.
 
-   **macOS / Linux** — `~/.codex/config.toml`
-   **Windows** — `%USERPROFILE%\.codex\config.toml`
-
-   ```toml
-   # Stata MCP Server (SSE transport, proxied via uvx mcp-proxy)
-   [mcp_servers.stata-mcp]
-   command = "uvx"
-   args = ["mcp-proxy", "http://localhost:4000/mcp"]
-   ```
-
-4. If the file already contains other MCP servers, just add the `[mcp_servers.stata-mcp]` section alongside them.
-
-5. Restart Codex (CLI) or the Codex IDE extension.
-
-6. Codex will automatically discover the available Stata tools (`stata_run_selection`, `stata_run_file`), allowing you to run Stata code and analyze data directly from your conversations.
+> **Note on transports.** Codex only speaks MCP's *Streamable HTTP* transport (single endpoint at `/mcp-streamable`). The extension's legacy SSE endpoint (`/mcp`) is for older clients like GitHub Copilot — don't point Codex at it.
 
 ### Troubleshooting Codex Configuration
 
-If Codex is not recognizing the Stata MCP server:
-1. Verify the MCP server is running (status bar should show "Stata")
-2. Verify the config file exists at the path above and contains the `[mcp_servers.stata-mcp]` block verbatim
-3. Verify `uv` is on your PATH: `uv --version`. If Codex complains `uvx not found`, re-run the uv installer or restart your shell so the PATH is reloaded.
-4. If you prefer a pinned install instead of `uvx` on-demand, you can replace `uvx` + `["mcp-proxy", ...]` with `mcp-proxy` + `["http://localhost:4000/mcp"]` after `uv tool install mcp-proxy` (or `pip install mcp-proxy`).
-5. Try restarting Codex / your IDE
-6. Check the extension output panel (View → Output → *Stata*) for any errors
-7. Ensure there are no port conflicts (default port is 4000)
+If Codex doesn't see the Stata tools:
+1. Verify the MCP server is running (status bar shows "Stata") — try `curl -s http://localhost:4000/health`
+2. Check `codex --version` — make sure you're on **0.46.0** or newer. Older Codex versions need the `mcp-proxy` wrapper (see note below).
+3. Verify the config file exists at `~/.codex/config.toml` and contains the exact `[mcp_servers.stata-mcp]` block above
+4. Run `codex mcp list` — `stata-mcp` should appear as registered
+5. Restart Codex (CLI or IDE) after config changes
+6. Check the extension output panel (View → Output → *Stata*) for any server-side errors
+7. Ensure no port conflict (default is 4000 — change via `stata-vscode.mcpServerPort` if needed)
+
+<details>
+<summary>Stuck on Codex &lt; 0.46.0?</summary>
+
+If you cannot upgrade, use [`mcp-proxy`](https://github.com/modelcontextprotocol/mcp-proxy) as a stdio wrapper around the SSE endpoint:
+
+```bash
+# Install uv first if needed:
+curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS/Linux
+# Windows: powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+```toml
+[mcp_servers.stata-mcp]
+command = "uvx"
+args = ["mcp-proxy", "http://localhost:4000/mcp"]
+```
+
+</details>
 
 <br>
 
@@ -580,9 +590,7 @@ This extension uses [uv](https://github.com/astral-sh/uv), a fast Python package
    # macOS/Linux
    curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
-2. Follow the [Troubleshooting](#troubleshooting) steps to reinstall the extension
-
-Starting with version 0.1.8, this extension integrates the fast Python package installer [uv](https://github.com/astral-sh/uv) to set up the environment. If uv is not found on your system, the extension will attempt to install it automatically.
+2. Follow the [clean-reinstall steps in the troubleshooting guide](docs/troubleshooting.md) to reinstall the extension.
 
 <br>
 
