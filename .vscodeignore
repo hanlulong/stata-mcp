@@ -6,6 +6,8 @@ src/**
 !src/session_manager.py
 !src/stata_worker.py
 !src/api_models.py
+!src/graph_artifacts.py
+!src/graph-store.js
 !src/output_filter.py
 !src/utils.py
 !src/smcl_parser.py

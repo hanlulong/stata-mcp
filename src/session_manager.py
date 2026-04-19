@@ -105,6 +105,8 @@ class Session:
     created_at: float = field(default_factory=time.time)
     last_activity: float = field(default_factory=time.time)
     current_command_id: Optional[str] = None
+    current_command_timeout: Optional[float] = None
+    busy_since: Optional[float] = None
     error_message: str = ""
     is_default: bool = False
 
@@ -131,6 +133,8 @@ class SessionManager:
     """
 
     DEFAULT_SESSION_ID = "default"
+    BUSY_WAIT_TIMEOUT = 1.0
+    STALE_BUSY_GRACE = 5.0
 
     def __init__(
         self,
@@ -239,7 +243,7 @@ class SessionManager:
 
         self._logger.info("Session manager stopped")
 
-    def create_session(self, session_id: Optional[str] = None) -> Dict[str, Any]:
+    def create_session(self, session_id: Optional[str] = None) -> tuple:
         """
         Create a new session.
 
@@ -247,8 +251,11 @@ class SessionManager:
             session_id: Optional session ID. If not provided, a unique ID will be generated.
 
         Returns:
-            Dict with 'success', 'session_id', and 'error' keys
+            Tuple of (success, session_id, error)
         """
+        if not self.enabled:
+            return False, "", "Multi-session mode is not enabled"
+
         with self._lock:
             # Check session limit
             active_count = sum(
@@ -256,11 +263,11 @@ class SessionManager:
                 if s.state in (SessionState.READY, SessionState.BUSY, SessionState.CREATING)
             )
             if active_count >= self.max_sessions:
-                return {"success": False, "session_id": "", "error": f"Maximum sessions ({self.max_sessions}) reached"}
+                return False, "", f"Maximum sessions ({self.max_sessions}) reached"
 
             # Check if session already exists
             if session_id and session_id in self._sessions:
-                return {"success": True, "session_id": session_id, "error": ""}
+                return True, session_id, ""
 
         # Generate unique session ID if not provided
         if not session_id:
@@ -268,9 +275,9 @@ class SessionManager:
 
         success = self._create_session_internal(session_id, is_default=False)
         if success:
-            return {"success": True, "session_id": session_id, "error": ""}
+            return True, session_id, ""
         else:
-            return {"success": False, "session_id": "", "error": "Failed to create worker process"}
+            return False, "", "Failed to create worker process"
 
     def _create_session_internal(self, session_id: str, is_default: bool = False) -> bool:
         """
@@ -397,10 +404,9 @@ class SessionManager:
         self._logger.info(f"Session {session_id} destroyed")
         return True, ""
 
-    def restart_default_session(self) -> Dict[str, Any]:
+    def _restart_session_with_same_id(self, session_id: str) -> Dict[str, Any]:
         """
-        Restart the default session by destroying and recreating it.
-        This gives users a clean Stata state, equivalent to closing and reopening Stata.
+        Restart an existing session by destroying and recreating it with the same ID.
 
         The session entry is kept in the dict (in DESTROYING state) throughout
         the restart to avoid a race condition where incoming requests would fail
@@ -409,21 +415,18 @@ class SessionManager:
         Returns:
             Dict with 'success' and 'error' keys
         """
-        # Find the default session, check state, and mark as DESTROYING atomically
+        # Find the session, check state, and mark as DESTROYING atomically
         old_session = None
         old_queues = []
         with self._lock:
-            for sid, session in self._sessions.items():
-                if session.is_default:
-                    old_session = session
-                    break
+            old_session = self._sessions.get(session_id)
 
             if old_session is None:
-                return {"success": False, "error": "No default session found"}
+                return {"success": False, "error": f"Session not found: {session_id}"}
 
             # Guard against concurrent restart calls
             if old_session.state == SessionState.DESTROYING:
-                return {"success": False, "error": "Session is already being restarted"}
+                return {"success": False, "error": f"Session is already being restarted: {session_id}"}
 
             # Mark as DESTROYING so execute() returns a clear error instead of queueing
             old_session.state = SessionState.DESTROYING
@@ -432,8 +435,9 @@ class SessionManager:
             # (multiprocessing.Event does not have close()/join_thread(), so skip it)
             old_queues = [old_session.command_queue, old_session.result_queue]
 
-        default_id = old_session.session_id
-        self._logger.info(f"Restarting default session {default_id}")
+        restart_id = old_session.session_id
+        is_default = old_session.is_default
+        self._logger.info(f"Restarting session {restart_id} (default={is_default})")
 
         # Gracefully stop the old worker, then force-terminate
         if old_session.command_queue:
@@ -458,28 +462,28 @@ class SessionManager:
             except Exception:
                 pass
 
-        # Recreate with the same ID — _create_session_internal() overwrites the
+        # Recreate with the same ID. _create_session_internal() overwrites the
         # old entry in self._sessions, so there is no gap where the session is missing.
         # Retry once on failure to handle transient resource issues.
         created = False
         last_error = ""
         for attempt in range(2):
             try:
-                created = self._create_session_internal(default_id, is_default=True)
+                created = self._create_session_internal(restart_id, is_default=is_default)
             except Exception as e:
-                self._logger.error(f"Exception recreating default session (attempt {attempt + 1}): {e}")
+                self._logger.error(f"Exception recreating session {restart_id} (attempt {attempt + 1}): {e}")
                 last_error = str(e)
                 created = False
 
             if created:
-                self._logger.info(f"Default session {default_id} restarted successfully")
+                self._logger.info(f"Session {restart_id} restarted successfully")
                 return {"success": True, "error": ""}
 
             # Clean up resources left by the failed attempt before retrying
             if attempt == 0:
-                self._logger.warning("First attempt to recreate default session failed, retrying...")
+                self._logger.warning(f"First attempt to recreate session {restart_id} failed, retrying...")
                 with self._lock:
-                    failed_session = self._sessions.get(default_id)
+                    failed_session = self._sessions.get(restart_id)
                 if failed_session:
                     self._terminate_worker(failed_session)
                     for q in [failed_session.command_queue, failed_session.result_queue]:
@@ -493,11 +497,21 @@ class SessionManager:
 
         # Both attempts failed — remove the stale entry
         with self._lock:
-            if default_id in self._sessions:
-                stale = self._sessions[default_id]
+            if restart_id in self._sessions:
+                stale = self._sessions[restart_id]
                 if stale.state in (SessionState.DESTROYING, SessionState.ERROR, SessionState.CREATING):
-                    del self._sessions[default_id]
-        return {"success": False, "error": f"Failed to create new default session: {last_error}"}
+                    del self._sessions[restart_id]
+        return {"success": False, "error": f"Failed to recreate session {restart_id}: {last_error}"}
+
+    def restart_default_session(self) -> Dict[str, Any]:
+        """
+        Restart the default session by destroying and recreating it.
+        This gives users a clean Stata state, equivalent to closing and reopening Stata.
+
+        Returns:
+            Dict with 'success' and 'error' keys
+        """
+        return self._restart_session_with_same_id(self.DEFAULT_SESSION_ID)
 
     def _terminate_worker(self, session: Session):
         """Force terminate a worker process and reap it to prevent zombies."""
@@ -559,6 +573,175 @@ class SessionManager:
 
         return False
 
+    def _mark_session_ready(self, session: Session):
+        """Reset session state after a command finishes or recovery succeeds."""
+        with self._lock:
+            session.state = SessionState.READY
+            session.current_command_id = None
+            session.current_command_timeout = None
+            session.busy_since = None
+            session.error_message = ""
+            session.last_activity = time.time()
+
+    def _mark_session_error(self, session: Session, message: str):
+        """Put a session into ERROR state with cleanup of command bookkeeping."""
+        with self._lock:
+            session.state = SessionState.ERROR
+            session.current_command_id = None
+            session.current_command_timeout = None
+            session.busy_since = None
+            session.error_message = message
+            session.last_activity = time.time()
+
+    def _is_session_busy_stale(self, session: Session, current_time: Optional[float] = None) -> bool:
+        """Whether a BUSY session has exceeded its own timeout budget."""
+        if session.state != SessionState.BUSY:
+            return False
+        if session.busy_since is None or session.current_command_timeout is None:
+            return False
+        if current_time is None:
+            current_time = time.time()
+        stale_after = session.current_command_timeout + self.STALE_BUSY_GRACE
+        return current_time - session.busy_since > stale_after
+
+    def _recover_session(self, session: Session, reason: str) -> bool:
+        """Restart a session in place when its state can no longer be trusted."""
+        self._logger.warning(f"Recovering session {session.session_id}: {reason}")
+        result = self._restart_session_with_same_id(session.session_id)
+        if not result.get("success"):
+            self._logger.error(
+                f"Failed to recover session {session.session_id}: {result.get('error', 'Unknown error')}"
+            )
+            return False
+        return True
+
+    def _get_or_create_session(self, session_id: Optional[str]) -> tuple[Optional[Session], str]:
+        """Resolve a session, creating it on demand when allowed."""
+        requested_session_id = session_id or self.DEFAULT_SESSION_ID
+        session = self.get_session(requested_session_id)
+        if session:
+            return session, ""
+
+        if not self.enabled:
+            return None, f"Session not found: {requested_session_id}"
+
+        self._logger.info(f"Auto-creating session: {requested_session_id}")
+        if requested_session_id == self.DEFAULT_SESSION_ID:
+            created = self._create_session_internal(requested_session_id, is_default=True)
+            if not created:
+                self._logger.error("Failed to auto-create default session")
+                return None, "Failed to auto-create default session"
+            return self.get_session(requested_session_id), ""
+
+        create_success, _, create_error = self.create_session(requested_session_id)
+        if not create_success:
+            self._logger.error(
+                f"Failed to auto-create session {requested_session_id}: {create_error or 'Unknown error'}"
+            )
+            return None, create_error or "Unknown error"
+        return self.get_session(requested_session_id), ""
+
+    def _prepare_session_for_execution(
+        self,
+        session_id: Optional[str],
+        timeout: Optional[float]
+    ) -> tuple[Optional[Session], Optional[Dict[str, Any]], Optional[str]]:
+        """Resolve a session and make sure it is safe to execute against."""
+        requested_session_id = session_id or self.DEFAULT_SESSION_ID
+        session, session_error = self._get_or_create_session(requested_session_id)
+        if not session:
+            if session_error.startswith("Session "):
+                error_message = session_error
+            else:
+                error_message = (
+                    f"Session unavailable: {requested_session_id} "
+                    f"({session_error or 'Unknown error'})"
+                )
+            return None, {
+                "status": "error",
+                "error": error_message,
+                "session_id": requested_session_id
+            }, None
+
+        recovery_reason = None
+
+        if session.process and not session.process.is_alive():
+            if not self._recover_session(session, "Worker process died"):
+                self._mark_session_error(session, "Worker process died")
+                return None, {
+                    "status": "error",
+                    "error": "Worker process died",
+                    "session_id": requested_session_id
+                }, None
+            session = self.get_session(requested_session_id)
+            if not session:
+                return None, {
+                    "status": "error",
+                    "error": f"Session not found after recovery: {requested_session_id}",
+                    "session_id": requested_session_id
+                }, None
+            recovery_reason = "Worker process died"
+
+        if session.state == SessionState.ERROR:
+            error_message = session.error_message or "Session is in error state"
+            if not self._recover_session(session, error_message):
+                return None, {
+                    "status": "error",
+                    "error": error_message,
+                    "session_id": requested_session_id
+                }, None
+            session = self.get_session(requested_session_id)
+            if not session:
+                return None, {
+                    "status": "error",
+                    "error": f"Session not found after recovery: {requested_session_id}",
+                    "session_id": requested_session_id
+                }, None
+            recovery_reason = error_message
+
+        if session.state == SessionState.BUSY:
+            wait_timeout = self.BUSY_WAIT_TIMEOUT
+            if timeout is not None:
+                wait_timeout = min(wait_timeout, max(timeout, 0.0))
+
+            if wait_timeout > 0:
+                self.wait_for_ready(session, timeout=wait_timeout)
+                session = self.get_session(requested_session_id) or session
+
+        if session.state == SessionState.BUSY and self._is_session_busy_stale(session):
+            if not self._recover_session(session, "Session stayed busy past its timeout budget"):
+                return None, {
+                    "status": "error",
+                    "error": f"Session busy and recovery failed: {requested_session_id}",
+                    "session_id": requested_session_id
+                }, None
+            session = self.get_session(requested_session_id)
+            if not session:
+                return None, {
+                    "status": "error",
+                    "error": f"Session not found after recovery: {requested_session_id}",
+                    "session_id": requested_session_id
+                }, None
+            recovery_reason = "Session stayed busy past its timeout budget"
+
+        if session.state == SessionState.BUSY:
+            busy_for = time.time() - session.busy_since if session.busy_since is not None else None
+            busy_suffix = f" ({busy_for:.1f}s)" if busy_for is not None else ""
+            return None, {
+                "status": "error",
+                "error": f"Session busy: {requested_session_id}{busy_suffix}",
+                "session_id": requested_session_id
+            }, None
+
+        if session.state != SessionState.READY:
+            return None, {
+                "status": "error",
+                "error": f"Session not ready: {session.state.value}",
+                "session_id": requested_session_id
+            }, None
+
+        return session, None, recovery_reason
+
     def list_sessions(self) -> List[Dict[str, Any]]:
         """
         List all active sessions.
@@ -577,7 +760,8 @@ class SessionManager:
         self,
         code: str,
         session_id: Optional[str] = None,
-        timeout: Optional[float] = None
+        timeout: Optional[float] = None,
+        execution_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Execute Stata code in a session.
@@ -590,61 +774,26 @@ class SessionManager:
         Returns:
             Result dictionary with status, output, error
         """
-        session = self.get_session(session_id)
-        if not session:
-            # Auto-create session on demand if session_id is provided
-            if session_id and session_id != self.DEFAULT_SESSION_ID:
-                self._logger.info(f"Auto-creating session: {session_id}")
-                create_result = self.create_session(session_id)
-                if not create_result.get('success'):
-                    return {
-                        "status": "error",
-                        "error": f"Failed to auto-create session: {create_result.get('error', 'Unknown error')}"
-                    }
-                session = self.get_session(session_id)
-                if not session:
-                    return {
-                        "status": "error",
-                        "error": f"Session creation succeeded but session not found: {session_id}"
-                    }
-            else:
-                return {
-                    "status": "error",
-                    "error": f"Session not found: {session_id or 'default'}"
-                }
-
-        # If session is busy, auto-create a new session for parallel execution
-        if session.state == SessionState.BUSY:
-            self._logger.info(f"Session {session.session_id} is busy, creating new session for parallel execution")
-            new_session_id = str(uuid.uuid4())[:8]
-            create_result = self.create_session(new_session_id)
-            if create_result.get('success'):
-                session = self.get_session(new_session_id)
-                if session is None:
-                    return {
-                        "status": "error",
-                        "error": "Failed to get newly created session"
-                    }
-                self._logger.info(f"Using new session {new_session_id} for parallel execution")
-            else:
-                return {
-                    "status": "error",
-                    "error": f"Session busy and failed to create new session: {create_result.get('error', 'Unknown error')}"
-                }
-        elif session.state != SessionState.READY:
-            return {
-                "status": "error",
-                "error": f"Session not ready: {session.state.value}"
-            }
+        session, error_result, recovery_reason = self._prepare_session_for_execution(session_id, timeout)
+        if error_result:
+            return error_result
 
         # Process line continuations (///) before execution
         processed_code = join_stata_line_continuations(code)
-        return self._execute_command(
+        result = self._execute_command(
             session,
             CommandType.EXECUTE,
-            {"code": processed_code, "timeout": timeout or self.command_timeout},
+            {
+                "code": processed_code,
+                "timeout": timeout or self.command_timeout,
+                "execution_id": execution_id
+            },
             timeout or self.command_timeout
         )
+        if recovery_reason:
+            result["session_recovered"] = True
+            result["session_recovery_reason"] = recovery_reason
+        return result
 
     def execute_file(
         self,
@@ -652,7 +801,8 @@ class SessionManager:
         session_id: Optional[str] = None,
         timeout: Optional[float] = None,
         log_file: Optional[str] = None,
-        working_dir: Optional[str] = None
+        working_dir: Optional[str] = None,
+        execution_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Execute a .do file in a session.
@@ -668,52 +818,9 @@ class SessionManager:
         Returns:
             Result dictionary with status, output, error, log_file
         """
-        session = self.get_session(session_id)
-        if not session:
-            # Auto-create session on demand if session_id is provided
-            if session_id and session_id != self.DEFAULT_SESSION_ID:
-                self._logger.info(f"Auto-creating session: {session_id}")
-                create_result = self.create_session(session_id)
-                if not create_result.get('success'):
-                    return {
-                        "status": "error",
-                        "error": f"Failed to auto-create session: {create_result.get('error', 'Unknown error')}"
-                    }
-                session = self.get_session(session_id)
-                if not session:
-                    return {
-                        "status": "error",
-                        "error": f"Session creation succeeded but session not found: {session_id}"
-                    }
-            else:
-                return {
-                    "status": "error",
-                    "error": f"Session not found: {session_id or 'default'}"
-                }
-
-        # If session is busy, auto-create a new session for parallel execution
-        if session.state == SessionState.BUSY:
-            self._logger.info(f"Session {session.session_id} is busy, creating new session for parallel file execution")
-            new_session_id = str(uuid.uuid4())[:8]
-            create_result = self.create_session(new_session_id)
-            if create_result.get('success'):
-                session = self.get_session(new_session_id)
-                if session is None:
-                    return {
-                        "status": "error",
-                        "error": "Failed to get newly created session"
-                    }
-                self._logger.info(f"Using new session {new_session_id} for parallel file execution")
-            else:
-                return {
-                    "status": "error",
-                    "error": f"Session busy and failed to create new session: {create_result.get('error', 'Unknown error')}"
-                }
-        elif session.state != SessionState.READY:
-            return {
-                "status": "error",
-                "error": f"Session not ready: {session.state.value}"
-            }
+        session, error_result, recovery_reason = self._prepare_session_for_execution(session_id, timeout)
+        if error_result:
+            return error_result
 
         # Determine log file path if not provided
         # Include session_id to prevent file locking conflicts in parallel execution
@@ -722,17 +829,22 @@ class SessionManager:
             log_dir = os.path.dirname(os.path.abspath(file_path))
             log_file = os.path.join(log_dir, f"{base_name}_{session.session_id}_mcp.log")
 
-        return self._execute_command(
+        result = self._execute_command(
             session,
             CommandType.EXECUTE_FILE,
             {
                 "file_path": file_path,
                 "timeout": timeout or self.command_timeout,
                 "log_file": log_file,
-                "working_dir": working_dir
+                "working_dir": working_dir,
+                "execution_id": execution_id
             },
             timeout or self.command_timeout
         )
+        if recovery_reason:
+            result["session_recovered"] = True
+            result["session_recovery_reason"] = recovery_reason
+        return result
 
     def get_data(
         self,
@@ -853,19 +965,23 @@ class SessionManager:
             Result dictionary
         """
         command_id = str(uuid.uuid4())[:8]
+        requested_timeout = float(timeout)
+        can_reset_session = command_type in (CommandType.EXECUTE, CommandType.EXECUTE_FILE)
 
         # Check worker health
         if session.process and not session.process.is_alive():
-            session.state = SessionState.ERROR
-            session.error_message = "Worker process died"
+            self._mark_session_error(session, "Worker process died")
             return {"status": "error", "error": "Worker process died"}
 
         # Update session state
         with self._lock:
             if command_type in (CommandType.EXECUTE, CommandType.EXECUTE_FILE):
                 session.state = SessionState.BUSY
+                session.busy_since = time.time()
+                session.current_command_timeout = requested_timeout
             session.current_command_id = command_id
             session.last_activity = time.time()
+            session.error_message = ""
 
         try:
             # Send command
@@ -878,42 +994,12 @@ class SessionManager:
             # Wait for result - loop to find matching command_id
             # (Drains any leftover results from stop signals or previous cancelled commands)
             try:
-                start_wait = time.time()
-                deadline = start_wait + timeout + 5.0
-                result = None
-
-                while time.time() < deadline:
-                    remaining_timeout = deadline - time.time()
-                    if remaining_timeout <= 0:
-                        break
-
-                    try:
-                        candidate = session.result_queue.get(timeout=min(remaining_timeout, 1.0))
-                        candidate_id = candidate.get('command_id', '')
-
-                        # Check if this result matches our command
-                        if candidate_id == command_id:
-                            result = candidate
-                            break
-                        else:
-                            # Discard results from stop signals or previous commands
-                            self._logger.debug(
-                                f"Discarding stale result with command_id={candidate_id} "
-                                f"(expected {command_id})"
-                            )
-                            continue
-                    except queue.Empty:
-                        # No result yet, keep waiting until deadline
-                        continue
-
+                result = self._wait_for_matching_result(session, command_id, requested_timeout)
                 if result is None:
                     raise queue.Empty()
 
                 # Update session state
-                with self._lock:
-                    session.state = SessionState.READY
-                    session.current_command_id = None
-                    session.last_activity = time.time()
+                self._mark_session_ready(session)
 
                 # Get extra data (includes log_file for file execution)
                 extra = result.get('extra', {})
@@ -929,26 +1015,60 @@ class SessionManager:
                 }
 
             except queue.Empty:
-                with self._lock:
-                    session.state = SessionState.READY
-                    session.current_command_id = None
+                timeout_message = f"Command timeout after {requested_timeout}s"
+                recovered = False
+                if can_reset_session:
+                    recovered = self._recover_session(session, timeout_message)
+                    if not recovered:
+                        self._mark_session_error(session, timeout_message)
+                else:
+                    self._mark_session_ready(session)
 
                 return {
                     "status": "timeout",
-                    "error": f"Command timeout after {timeout}s",
-                    "session_id": session.session_id
+                    "error": timeout_message,
+                    "session_id": session.session_id,
+                    "session_recovered": recovered
                 }
 
         except Exception as e:
-            with self._lock:
-                session.state = SessionState.ERROR
-                session.error_message = str(e)
+            self._mark_session_error(session, str(e))
 
             return {
                 "status": "error",
                 "error": str(e),
                 "session_id": session.session_id
             }
+
+    def _wait_for_matching_result(
+        self,
+        session: Session,
+        command_id: str,
+        timeout: float
+    ) -> Optional[Dict[str, Any]]:
+        """Wait for the result corresponding to a command_id, discarding stale results."""
+        deadline = time.time() + timeout + 5.0
+
+        while time.time() < deadline:
+            remaining_timeout = deadline - time.time()
+            if remaining_timeout <= 0:
+                break
+
+            try:
+                candidate = session.result_queue.get(timeout=min(remaining_timeout, 1.0))
+                candidate_id = candidate.get('command_id', '')
+
+                if candidate_id == command_id:
+                    return candidate
+
+                self._logger.debug(
+                    f"Discarding stale result with command_id={candidate_id} "
+                    f"(expected {command_id})"
+                )
+            except queue.Empty:
+                continue
+
+        return None
 
     def _cleanup_loop(self):
         """Background thread for session cleanup"""
@@ -967,12 +1087,9 @@ class SessionManager:
             sessions_to_check = list(self._sessions.items())
 
         for session_id, session in sessions_to_check:
-            # Skip default session for timeout cleanup
-            if session.is_default:
-                continue
-
             # Check for idle timeout
-            if (session.state == SessionState.READY and
+            if (not session.is_default and
+                session.state == SessionState.READY and
                 current_time - session.last_activity > self.session_timeout):
                 self._logger.info(f"Session {session_id} idle timeout, destroying")
                 self.destroy_session(session_id)
@@ -982,8 +1099,14 @@ class SessionManager:
             if session.process and not session.process.is_alive():
                 if session.state not in (SessionState.DESTROYED, SessionState.DESTROYING):
                     self._logger.warning(f"Session {session_id} worker died unexpectedly")
-                    session.state = SessionState.ERROR
-                    session.error_message = "Worker process died"
+                    if session.is_default:
+                        self._recover_session(session, "Default worker died unexpectedly")
+                    else:
+                        self._mark_session_error(session, "Worker process died")
+                continue
+
+            if self._is_session_busy_stale(session, current_time):
+                self._recover_session(session, "Session stayed busy past its timeout budget")
 
     @property
     def available_slots(self) -> int:
@@ -1071,9 +1194,8 @@ if __name__ == "__main__":
 
         # Create a new session
         print("\nCreating new session...")
-        create_result = manager.create_session()
-        if create_result.get("success"):
-            new_session_id = create_result.get("session_id")
+        create_success, new_session_id, create_error = manager.create_session()
+        if create_success:
             print(f"Created session: {new_session_id}")
 
             # Execute on new session

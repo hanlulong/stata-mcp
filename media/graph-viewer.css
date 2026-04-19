@@ -1,0 +1,100 @@
+html {
+    box-sizing: border-box;
+}
+
+*, *:before, *:after {
+    box-sizing: inherit;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    margin: 0;
+    padding: 20px;
+    background-color: var(--vscode-editor-background, #1e1e1e);
+    color: var(--vscode-editor-foreground, #cccccc);
+}
+
+.header {
+    border-bottom: 2px solid var(--vscode-panel-border, #3e3e42);
+    padding-bottom: 15px;
+    margin-bottom: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+
+.header-left h1 {
+    margin: 0;
+    font-size: 24px;
+    color: var(--vscode-foreground, #cccccc);
+}
+
+.graph-count {
+    color: var(--vscode-descriptionForeground, #858585);
+    font-size: 14px;
+    margin-top: 5px;
+}
+
+.clear-button {
+    background-color: var(--vscode-button-background, #0e639c);
+    color: var(--vscode-button-foreground, #ffffff);
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: background-color 0.2s ease;
+    flex-shrink: 0;
+}
+
+.clear-button:hover {
+    background-color: var(--vscode-button-hoverBackground, #1177bb);
+}
+
+#graphs-container {
+    display: block;
+}
+
+.graph-container {
+    background-color: var(--vscode-editor-background, #1e1e1e);
+    border: 1px solid var(--vscode-panel-border, #3e3e42);
+    border-radius: 4px;
+    padding: 20px;
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+.graph-container h3 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    color: var(--vscode-foreground, #cccccc);
+    font-size: 16px;
+}
+
+.graph-image {
+    max-width: 100%;
+    height: auto;
+    border: 1px solid var(--vscode-panel-border, #3e3e42);
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.error {
+    color: var(--vscode-errorForeground, #f48771);
+    background-color: var(--vscode-inputValidation-errorBackground, #5f1f1f);
+    padding: 10px;
+    border-radius: 4px;
+    margin-top: 10px;
+}
+
+.error[hidden] {
+    display: none;
+}
+
+.no-graphs {
+    color: var(--vscode-descriptionForeground, #858585);
+    font-style: italic;
+    padding: 20px;
+    text-align: center;
+}

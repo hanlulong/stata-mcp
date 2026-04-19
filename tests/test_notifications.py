@@ -1,224 +1,125 @@
 #!/usr/bin/env python3
 """
-Test MCP HTTP transport notifications using Python SDK.
+Integration test for MCP HTTP notifications.
 
-This script tests that notifications are properly routed through the HTTP transport
-when using the /mcp-streamable endpoint.
+This test is intentionally skip-based when the local integration prerequisites
+are absent. If a server is available, the assertions are real and verify that
+log and progress notifications are delivered through the MCP HTTP transport.
 """
 
-import asyncio
-import logging
-import sys
-import time
+from __future__ import annotations
+
+import os
+from datetime import timedelta
 from pathlib import Path
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+import pytest
+import requests
 
-try:
-    from mcp import ClientSession
-    from mcp.client.streamable_http import streamablehttp_client
-    logger.info("✓ MCP SDK imported successfully")
-except ImportError as e:
-    logger.error(f"Failed to import MCP SDK: {e}")
-    logger.error("Install with: pip install mcp")
-    sys.exit(1)
+
+TESTS_DIR = Path(__file__).resolve().parent
+FIXTURES_DIR = TESTS_DIR / "fixtures"
+DEFAULT_SERVER_URL = os.environ.get("STATA_MCP_SERVER_URL", "http://localhost:4000")
+DEFAULT_STREAMABLE_URL = os.environ.get("STATA_MCP_STREAMABLE_URL", f"{DEFAULT_SERVER_URL}/mcp-streamable")
+DEFAULT_TEST_FILE = FIXTURES_DIR / "test_streaming.do"
 
 
 class NotificationMonitor:
-    """Monitor and display MCP notifications."""
+    """Collect log and progress callbacks emitted by the MCP client."""
 
     def __init__(self):
-        self.notifications = []
-        self.log_messages = []
-        self.progress_updates = []
+        self.log_messages: list[dict[str, str]] = []
+        self.progress_updates: list[dict[str, float | str | None]] = []
 
-    def handle_notification(self, notification):
-        """Handle incoming notifications."""
-        self.notifications.append(notification)
+    async def logging_callback(self, params):
+        self.log_messages.append(
+            {
+                "level": str(getattr(params, "level", "")),
+                "data": str(getattr(params, "data", "")),
+            }
+        )
 
-        # Parse notification type
-        method = getattr(notification, 'method', None)
-        params = getattr(notification, 'params', None)
-
-        if method == 'notifications/message':
-            # Log message notification
-            level = params.get('level', 'info') if params else 'info'
-            data = params.get('data', '') if params else ''
-            logger.info(f"📢 Notification [{level}]: {data}")
-            self.log_messages.append({'level': level, 'data': data, 'time': time.time()})
-
-        elif method == 'notifications/progress':
-            # Progress notification
-            progress = params.get('progress', 0) if params else 0
-            total = params.get('total', 0) if params else 0
-            message = params.get('message', '') if params else ''
-            logger.info(f"⏳ Progress: {progress}/{total} - {message}")
-            self.progress_updates.append({'progress': progress, 'total': total, 'message': message, 'time': time.time()})
-
-        else:
-            logger.info(f"📨 Other notification: {method}")
-
-    def summary(self):
-        """Print summary of received notifications."""
-        logger.info("\n" + "=" * 80)
-        logger.info("NOTIFICATION SUMMARY")
-        logger.info("=" * 80)
-        logger.info(f"Total notifications: {len(self.notifications)}")
-        logger.info(f"Log messages: {len(self.log_messages)}")
-        logger.info(f"Progress updates: {len(self.progress_updates)}")
-
-        if self.log_messages:
-            logger.info("\nLog messages received:")
-            for i, msg in enumerate(self.log_messages, 1):
-                logger.info(f"  {i}. [{msg['level']}] {msg['data']}")
-
-        if self.progress_updates:
-            logger.info("\nProgress updates received:")
-            for i, update in enumerate(self.progress_updates, 1):
-                logger.info(f"  {i}. {update['progress']}/{update['total']} - {update['message']}")
-
-        logger.info("=" * 80)
+    async def progress_callback(self, progress, total, message):
+        self.progress_updates.append(
+            {
+                "progress": progress,
+                "total": total,
+                "message": message,
+            }
+        )
 
 
-DEFAULT_TEST_FILE = Path(__file__).resolve().parent / "test_timeout.do"
+def _require_running_server(base_url: str) -> dict:
+    """Return health payload or skip if the local integration server is unavailable."""
+    try:
+        response = requests.get(f"{base_url}/health", timeout=3)
+        response.raise_for_status()
+        payload = response.json()
+    except requests.RequestException as exc:
+        pytest.skip(f"Integration server not available at {base_url}: {exc}")
+
+    if not payload.get("stata_available", False):
+        pytest.skip("Integration server is running, but Stata is not available")
+
+    return payload
 
 
-async def test_notifications(
-    url: str = "http://localhost:4000/mcp-streamable",
-    test_file: str | Path | None = None,
-) -> bool:
-    """Test notifications through HTTP transport."""
-
-    logger.info("=" * 80)
-    logger.info("MCP HTTP Transport Notification Test")
-    logger.info("=" * 80)
-    if test_file is None:
-        test_file = DEFAULT_TEST_FILE
-    else:
-        test_file = Path(test_file)
-
-    logger.info(f"Endpoint: {url}")
-    logger.info(f"Test file: {test_file}")
-    logger.info("=" * 80)
-
-    # Verify test file exists
-    if not test_file.exists():
-        logger.error(f"Test file not found: {test_file}")
-        return False
+async def _run_notification_probe(
+    streamable_url: str,
+    test_file: Path,
+) -> tuple[NotificationMonitor, object]:
+    """Execute a file through MCP HTTP and capture notification callbacks."""
+    pytest.importorskip("mcp")
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamablehttp_client
 
     monitor = NotificationMonitor()
 
-    try:
-        # Connect to server
-        logger.info("\n[1/4] Connecting to MCP server...")
-        start_time = time.time()
+    async with streamablehttp_client(streamable_url) as (read_stream, write_stream, _session_info):
+        async with ClientSession(
+            read_stream,
+            write_stream,
+            logging_callback=monitor.logging_callback,
+        ) as session:
+            await session.initialize()
+            tools_result = await session.list_tools()
+            tool_names = {tool.name for tool in tools_result.tools}
+            assert "stata_run_file" in tool_names
 
-        async with streamablehttp_client(url) as (read_stream, write_stream, session_info):
-            connect_time = time.time() - start_time
-            logger.info(f"✓ Connected in {connect_time:.2f}s")
+            result = await session.call_tool(
+                "stata_run_file",
+                arguments={
+                    "file_path": str(test_file),
+                    "timeout": 60,
+                },
+                read_timeout_seconds=timedelta(seconds=90),
+                progress_callback=monitor.progress_callback,
+            )
 
-            # Initialize session
-            logger.info("\n[2/4] Initializing session...")
-            start_time = time.time()
-
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-                init_time = time.time() - start_time
-                logger.info(f"✓ Session initialized in {init_time:.2f}s")
-
-                # Set up notification handler
-                # Note: The SDK handles notifications internally through the session
-                # We'll monitor them by checking the session's internal state
-
-                # Discover tools
-                logger.info("\n[3/4] Discovering tools...")
-                tools_result = await session.list_tools()
-                logger.info(f"✓ Discovered {len(tools_result.tools)} tools")
-                for tool in tools_result.tools:
-                    logger.info(f"  - {tool.name}")
-
-                # Execute stata_run_file
-                logger.info("\n[4/4] Executing stata_run_file...")
-                logger.info(f"  File: {test_file}")
-                logger.info(f"  This will run for ~70 seconds (70 iterations @ 1s each)")
-                logger.info(f"  Watch for real-time notifications below:")
-                logger.info("-" * 80)
-
-                start_time = time.time()
-
-                # Call the tool - notifications should arrive during execution
-                result = await session.call_tool(
-                    "stata_run_file",
-                    arguments={
-                        "file_path": str(test_file),
-                        "timeout": 600
-                    }
-                )
-
-                exec_time = time.time() - start_time
-                logger.info("-" * 80)
-                logger.info(f"✓ Execution completed in {exec_time:.2f}s")
-
-                # Display result
-                logger.info("\nExecution Result:")
-                for i, content in enumerate(result.content, 1):
-                    if hasattr(content, 'text'):
-                        text = content.text
-                        # Show first and last 500 chars
-                        if len(text) > 1000:
-                            logger.info(f"  Output (truncated):\n{text[:500]}\n...\n{text[-500:]}")
-                        else:
-                            logger.info(f"  Output:\n{text}")
-
-                if result.isError:
-                    logger.error("  ✗ Tool reported an error!")
-                    return False
-
-                # Display notification summary
-                monitor.summary()
-
-                # Check if we received notifications
-                logger.info("\n" + "=" * 80)
-                if monitor.notifications or monitor.log_messages:
-                    logger.info("✅ SUCCESS: Notifications were received through HTTP transport!")
-                    return True
-                else:
-                    logger.warning("⚠️  WARNING: No notifications received during execution")
-                    logger.warning("   This suggests notifications are not reaching the HTTP transport")
-                    return False
-
-    except Exception as e:
-        logger.error(f"\n✗ Test failed: {e}", exc_info=True)
-        return False
+    return monitor, result
 
 
-async def main():
-    """Main test runner."""
-    import argparse
+@pytest.mark.asyncio
+async def test_notifications():
+    """Verify MCP logging and progress notifications when a local server is available."""
+    if not DEFAULT_TEST_FILE.exists():
+        pytest.skip(f"Test fixture not found: {DEFAULT_TEST_FILE}")
 
-    parser = argparse.ArgumentParser(description="Test MCP HTTP notifications")
-    parser.add_argument(
-        "--url",
-        default="http://localhost:4000/mcp-streamable",
-        help="MCP server URL"
-    )
-    parser.add_argument(
-        "--test-file",
-        default=str(DEFAULT_TEST_FILE),
-        help="Path to test .do file"
-    )
+    _require_running_server(DEFAULT_SERVER_URL)
 
-    args = parser.parse_args()
+    monitor, result = await _run_notification_probe(DEFAULT_STREAMABLE_URL, DEFAULT_TEST_FILE)
 
-    success = await test_notifications(args.url, args.test_file)
+    assert not result.isError
+    assert monitor.log_messages, "Expected at least one MCP log notification"
+    assert monitor.progress_updates, "Expected at least one MCP progress notification"
 
-    sys.exit(0 if success else 1)
+    joined_logs = "\n".join(message["data"] for message in monitor.log_messages)
+    assert "Starting Stata execution" in joined_logs
+    assert "Execution completed" in joined_logs
 
+    progress_messages = [str(update["message"]) for update in monitor.progress_updates if update["message"]]
+    assert any("Starting Stata execution" in message for message in progress_messages)
 
-if __name__ == "__main__":
-    asyncio.run(main())
+    text_chunks = [content.text for content in result.content if hasattr(content, "text")]
+    combined_result = "\n".join(text_chunks)
+    assert "Test complete!" in combined_result

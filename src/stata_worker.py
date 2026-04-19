@@ -26,6 +26,7 @@ import sys
 import io
 import re
 import time
+import uuid
 import queue
 import logging
 import platform
@@ -35,6 +36,19 @@ import tempfile
 import shutil
 from typing import Optional, Dict, Any, Tuple
 from enum import Enum
+
+# Ensure local helper modules in this directory resolve regardless of cwd/module launch mode.
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+if _script_dir not in sys.path:
+    sys.path.insert(0, _script_dir)
+
+from graph_artifacts import (
+    build_graph_record,
+    cleanup_graph_batches,
+    create_batch_context,
+    ensure_graphs_root,
+    write_batch_manifest,
+)
 
 
 def deduplicate_break_messages(output: str) -> str:
@@ -47,6 +61,11 @@ def deduplicate_break_messages(output: str) -> str:
 
 from contextlib import redirect_stdout
 from dataclasses import dataclass, field
+
+
+# Unique frame name for view_data filter requests. Each worker process gets
+# its own UUID-suffixed frame, so it cannot collide with a user-named frame.
+_view_data_frame = f"_stata_mcp_flt_{uuid.uuid4().hex[:8]}"
 
 
 class WorkerState(Enum):
@@ -164,7 +183,7 @@ def reset_graph_tracking(stlib) -> bool:
         return False
 
 
-def detect_and_export_graphs_worker(stata, stlib, graphs_dir: str) -> list:
+def detect_and_export_graphs_worker(stata, stlib, graphs_dir: str, execution_id: Optional[str] = None) -> list:
     """Detect and export graphs created during Stata execution.
 
     Uses _gr_list low-level API to get list of graphs, then exports each one.
@@ -211,12 +230,11 @@ def detect_and_export_graphs_worker(stata, stlib, graphs_dir: str) -> list:
         logging.info(f"detect_and_export_graphs_worker: Found {len(graph_names)} graph(s): {graph_names}")
 
         graphs_info = []
-
-        # Create graphs directory
-        os.makedirs(graphs_dir, exist_ok=True)
+        graphs_root = ensure_graphs_root(graphs_dir)
+        batch_context = create_batch_context(graphs_root, execution_id=execution_id, source="worker")
 
         # Export each graph to PNG using low-level API
-        for gname in graph_names:
+        for order_in_batch, gname in enumerate(graph_names):
             try:
                 # First display the graph to make it the active window
                 # This is required before export, especially for non-current graphs
@@ -228,7 +246,7 @@ def detect_and_export_graphs_worker(stata, stlib, graphs_dir: str) -> list:
 
                 # Export as PNG using low-level API
                 # Use forward slashes in path to avoid Stata interpreting backslashes as escape sequences
-                graph_file = os.path.join(graphs_dir, f'{gname}.png')
+                graph_file = os.path.join(batch_context['batch_dir'], f'{gname}.png')
                 graph_file_stata = graph_file.replace('\\', '/')
                 export_cmd = f'quietly graph export "{graph_file_stata}", name({gname}) replace width(800) height(600)'
 
@@ -243,24 +261,30 @@ def detect_and_export_graphs_worker(stata, stlib, graphs_dir: str) -> list:
                 if os.path.exists(graph_file):
                     file_size = os.path.getsize(graph_file)
                     if file_size > 0:
-                        # Normalize path to forward slashes for cross-platform compatibility
-                        normalized_path = graph_file.replace('\\', '/')
-                        graphs_info.append({
-                            "name": gname,
-                            "path": normalized_path
-                        })
-                        logging.info(f"Successfully exported graph '{gname}' ({file_size} bytes) to {normalized_path}")
+                        graph_record = build_graph_record(
+                            batch_context,
+                            gname,
+                            graph_file,
+                            order_in_batch=order_in_batch,
+                            graph_format="png"
+                        )
+                        graphs_info.append(graph_record)
+                        logging.info(f"Successfully exported graph '{gname}' ({file_size} bytes) to {graph_record['path']}")
                     else:
                         logging.warning(f"Graph file created but empty: {graph_file}")
                 else:
                     logging.warning(f"Graph file not found after export: {graph_file}")
                     # List directory contents for debugging
-                    if os.path.exists(graphs_dir):
-                        available = os.listdir(graphs_dir)
-                        logging.debug(f"Available files in {graphs_dir}: {available}")
+                    if os.path.exists(batch_context['batch_dir']):
+                        available = os.listdir(batch_context['batch_dir'])
+                        logging.debug(f"Available files in {batch_context['batch_dir']}: {available}")
             except Exception as e:
                 logging.error(f"Error processing graph '{gname}': {e}")
                 continue
+
+        if graphs_info:
+            write_batch_manifest(batch_context, graphs_info)
+            cleanup_graph_batches(graphs_root, keep_batch_ids=[batch_context["batch_id"]])
 
         logging.info(f"Graph detection complete: {len(graphs_info)} graphs exported")
         return graphs_info
@@ -787,6 +811,7 @@ capture log close _all
                 elif cmd_type == CommandType.EXECUTE:
                     code = payload.get('code', '')
                     timeout = payload.get('timeout', 600.0)
+                    execution_id = payload.get('execution_id', None)
 
                     # Reset graph tracking BEFORE execution to only detect NEW graphs
                     if stlib is not None:
@@ -798,7 +823,7 @@ capture log close _all
                     graphs = []
                     if success and stlib is not None and graphs_dir:
                         try:
-                            graphs = detect_and_export_graphs_worker(stata, stlib, graphs_dir)
+                            graphs = detect_and_export_graphs_worker(stata, stlib, graphs_dir, execution_id=execution_id)
                         except Exception:
                             pass  # Non-critical - don't fail command if graph export fails
 
@@ -816,6 +841,7 @@ capture log close _all
                     timeout = payload.get('timeout', 600.0)
                     log_file = payload.get('log_file', None)
                     working_dir = payload.get('working_dir', None)
+                    execution_id = payload.get('execution_id', None)
 
                     # Reset graph tracking BEFORE execution to only detect NEW graphs
                     if stlib is not None:
@@ -829,7 +855,7 @@ capture log close _all
                     graphs = []
                     if success and stlib is not None and graphs_dir:
                         try:
-                            graphs = detect_and_export_graphs_worker(stata, stlib, graphs_dir)
+                            graphs = detect_and_export_graphs_worker(stata, stlib, graphs_dir, execution_id=execution_id)
                         except Exception:
                             pass  # Non-critical - don't fail if graph export fails
 
@@ -879,53 +905,52 @@ capture log close _all
                                     }
                                 )
                             elif if_condition:
-                                # Use efficient Stata-native filtering with preserve/restore
+                                # Filter via an isolated frame copy. Avoids preserve/restore
+                                # state leaks that caused "already preserved r(621)" errors.
+                                # Worker process serializes commands, so no lock is needed here.
+                                # Defensive cleanup in case a prior request crashed mid-way.
+                                stata.run(f"capture frame drop {_view_data_frame}", inline=False, echo=False)
                                 try:
-                                    stata.run("preserve", inline=False, echo=False)
+                                    # Copy current working frame to isolated filter frame.
+                                    # User's frame, variables, and preserve stack are untouched.
+                                    stata.run(f"frame copy `c(frame)' {_view_data_frame}", inline=False, echo=False)
 
-                                    try:
-                                        # Create temp variable to track original observation numbers (0-based for JS)
-                                        stata.run("quietly gen long _stata_mcp_orig_obs = _n - 1", inline=False, echo=False)
+                                    # Track original 0-based observation numbers inside the copy
+                                    stata.run(f"frame {_view_data_frame}: quietly gen long _orig_obs = _n - 1", inline=False, echo=False)
 
-                                        # Use Stata's native keep if - very fast even for millions of rows
-                                        stata.run(f"quietly keep if {if_condition}", inline=False, echo=False)
+                                    # Apply filter in isolated frame
+                                    stata.run(f"frame {_view_data_frame}: quietly keep if {if_condition}", inline=False, echo=False)
 
-                                        filtered_obs = sfi.Data.getObsTotal()
+                                    # Read filtered data from isolated frame
+                                    df = stata.pdataframe_from_frame(_view_data_frame)
+                                    filtered_obs = len(df) if df is not None else 0
 
-                                        # Apply row limit if needed
-                                        if filtered_obs > max_rows:
-                                            stata.run(f"quietly keep in 1/{max_rows}", inline=False, echo=False)
+                                    # Apply row limit in pandas (cheaper than another Stata call)
+                                    if filtered_obs > max_rows:
+                                        df = df.head(max_rows)
 
-                                        df = stata.pdataframe_from_data()
+                                    if df is not None and not df.empty:
+                                        orig_obs_index = df['_orig_obs'].tolist()
+                                        df = df.drop(columns=['_orig_obs'])
+                                    else:
+                                        orig_obs_index = []
 
-                                        # Extract original obs numbers as index, then drop the temp column
-                                        orig_obs_index = df['_stata_mcp_orig_obs'].tolist()
-                                        df = df.drop(columns=['_stata_mcp_orig_obs'])
-
-                                        stata.run("restore", inline=False, echo=False)
-
-                                        total_matching = filtered_obs
-                                        displayed_rows = min(filtered_obs, max_rows)
-
-                                    except Exception as filter_err:
-                                        try:
-                                            stata.run("restore", inline=False, echo=False)
-                                        except:
-                                            pass
-                                        send_result(
-                                            command_id=cmd_id,
-                                            status="error",
-                                            error=f"Filter error: {str(filter_err)}"
-                                        )
-                                        continue
-
-                                except Exception as preserve_err:
+                                    total_matching = filtered_obs
+                                    displayed_rows = min(filtered_obs, max_rows)
+                                except Exception as filter_err:
                                     send_result(
                                         command_id=cmd_id,
                                         status="error",
-                                        error=f"Filter error: {str(preserve_err)}"
+                                        error=f"Filter error: {str(filter_err)}"
                                     )
                                     continue
+                                finally:
+                                    # Always drop the filter frame, even on error.
+                                    # capture makes this safe if frame copy never ran.
+                                    try:
+                                        stata.run(f"capture frame drop {_view_data_frame}", inline=False, echo=False)
+                                    except Exception as cleanup_err:
+                                        logging.error(f"Failed to drop filter frame: {cleanup_err}")
                                 # For filtered case, orig_obs_index is already set above
                             else:
                                 # No filter - just apply row limit

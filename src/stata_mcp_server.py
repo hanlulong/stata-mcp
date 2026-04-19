@@ -10,6 +10,7 @@ import tempfile
 import json
 import sys
 import time
+import uuid
 import argparse
 import logging
 import platform
@@ -23,9 +24,27 @@ from urllib.parse import unquote
 import warnings
 import re
 
+# Ensure local helper modules in this directory resolve regardless of cwd/module launch mode.
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+if _script_dir not in sys.path:
+    sys.path.insert(0, _script_dir)
+
 # Import utility functions
 from utils import get_windows_path_help_message, normalize_path_for_platform
 from smcl_parser import smcl_to_html
+from graph_artifacts import (
+    create_batch_context,
+    build_graph_record,
+    cleanup_graph_batches,
+    ensure_graphs_root,
+    find_latest_graph_by_name,
+    generate_execution_id,
+    get_graphs_root,
+    load_batch_manifest,
+    normalize_graph_path,
+    resolve_batch_graph_path,
+    write_batch_manifest,
+)
 
 # Import API models
 from api_models import (
@@ -46,8 +65,10 @@ if platform.system() == 'Windows':
     # Set environment variable for Python to use UTF-8
     os.environ['PYTHONIOENCODING'] = 'utf-8'
 
-# Hide Python process from Mac Dock (server should be background process)
-if platform.system() == 'Darwin':
+# Hide Python process from Mac Dock (server should be background process).
+# Only do this when the server is the main program; importing this module in
+# tests or helper scripts should not touch AppKit or require a GUI context.
+if platform.system() == 'Darwin' and __name__ == '__main__':
     try:
         from AppKit import NSApplication
         # Set activation policy to accessory - hides dock icon but allows functionality
@@ -137,6 +158,7 @@ log_file_location = 'extension'  # Default to extension directory
 custom_log_directory = ''  # Custom log directory
 workspace_root = ''  # VS Code workspace root directory
 extension_path = None  # Path to the extension directory
+graphs_root = None  # Root directory for temporary graph artifact batches
 
 # Result display settings for MCP returns (token-saving mode)
 result_display_mode = 'compact'  # 'compact' or 'full'
@@ -153,6 +175,33 @@ import threading
 execution_registry = {}  # Map: execution_id -> {'thread': thread, 'start_time': time, 'cancelled': bool, 'file': file}
 execution_lock = threading.Lock()  # Protect concurrent access to execution_registry
 current_execution_id = None  # Track the current execution ID
+GRAPH_METADATA_PREFIX = "__STATA_MCP_GRAPH_METADATA__:"
+
+
+def get_effective_graphs_root() -> str:
+    global graphs_root, extension_path
+    root = get_graphs_root(graphs_root, extension_path)
+    graphs_root = ensure_graphs_root(root)
+    return graphs_root
+
+
+def format_graph_info_block(graphs) -> str:
+    if not graphs:
+        return ""
+
+    graph_info = "\n\n" + "=" * 60 + "\n"
+    graph_info += f"GRAPHS DETECTED: {len(graphs)} graph(s) created\n"
+    graph_info += "=" * 60 + "\n"
+    for graph in graphs:
+        graph_info += f"  • {graph['name']}: {graph['path']}\n"
+    return graph_info
+
+
+def emit_graph_metadata_line(graphs) -> str:
+    if not graphs:
+        return ""
+    payload = json.dumps({"graphs": graphs}, ensure_ascii=True, separators=(",", ":"))
+    return f"{GRAPH_METADATA_PREFIX}{payload}"
 
 # Try to import pandas
 try:
@@ -747,8 +796,10 @@ def preprocess_do_file_for_graphs(file_path: str) -> str:
 def run_stata_command(
     command: str,
     clear_history: bool = False,
-    auto_detect_graphs: bool = False
-) -> str:
+    auto_detect_graphs: bool = False,
+    execution_id: Optional[str] = None,
+    return_graphs: bool = False
+):
     """Run a Stata command.
 
     Args:
@@ -764,6 +815,12 @@ def run_stata_command(
     This function is only called from /v1/tools endpoint which is excluded from MCP.
     """
     global stata_available, has_stata, command_history
+    graphs_from_interactive = []
+
+    def finalize(result_value):
+        if return_graphs:
+            return result_value, graphs_from_interactive
+        return result_value
     
     # Only log at debug level instead of info to reduce verbosity
     logging.debug(f"Running Stata command: {command}")
@@ -775,7 +832,7 @@ def run_stata_command(
         # If it's just a clear request with no command, return empty
         if not command or command.strip() == '':
             logging.info("Clear history request completed")
-            return ''
+            return finalize('')
 
     # For multi-line commands, don't add semicolons - just clean up whitespace
     if "\n" in command:
@@ -910,7 +967,12 @@ def run_stata_command(
                     # Immediately check for graphs while they're still in memory
                     try:
                         logging.debug("Checking for graphs immediately after execution (interactive mode)...")
-                        graphs_from_interactive = display_graphs_interactive(graph_format='png', width=800, height=600)
+                        graphs_from_interactive = display_graphs_interactive(
+                            graph_format='png',
+                            width=800,
+                            height=600,
+                            execution_id=execution_id
+                        )
                         if graphs_from_interactive:
                             logging.info(f"Captured {len(graphs_from_interactive)} NEW graphs in interactive mode")
                     except Exception as graph_err:
@@ -919,7 +981,7 @@ def run_stata_command(
             except Exception as exec_error:
                 error_msg = f"Error running command: {str(exec_error)}"
                 logging.error(error_msg)
-                return error_msg
+                return finalize(error_msg)
 
             # Read the log file
             log_file = f"{do_file}.log"
@@ -934,7 +996,7 @@ def run_stata_command(
             
             if not os.path.exists(log_file):
                 logging.error(f"Log file not created: {log_file}")
-                return "Command executed but no output was captured"
+                return finalize("Command executed but no output was captured")
             
             # Wait a moment for file writing to complete
             time.sleep(0.5)
@@ -998,16 +1060,7 @@ def run_stata_command(
                 # Use graphs captured in interactive mode (if any)
                 # These were already captured right after execution while still in memory
                 if graphs_from_interactive:
-                    graph_info = "\n\n" + "="*60 + "\n"
-                    graph_info += f"GRAPHS DETECTED: {len(graphs_from_interactive)} graph(s) created\n"
-                    graph_info += "="*60 + "\n"
-                    for graph in graphs_from_interactive:
-                        # Include command if available, using special format for JavaScript parsing
-                        if 'command' in graph and graph['command']:
-                            graph_info += f"  • {graph['name']}: {graph['path']} [CMD: {graph['command']}]\n"
-                        else:
-                            graph_info += f"  • {graph['name']}: {graph['path']}\n"
-                    result += graph_info
+                    result += format_graph_info_block(graphs_from_interactive)
                     logging.info(f"Added {len(graphs_from_interactive)} graphs to output (from interactive mode)")
                 else:
                     logging.debug("No graphs were captured in interactive mode")
@@ -1022,12 +1075,12 @@ def run_stata_command(
 
                 # For interactive window, just return the current result
                 # The client will handle displaying history
-                return result
+                return finalize(result)
                 
             except Exception as e:
                 error_msg = f"Error reading log file: {str(e)}"
                 logging.error(error_msg)
-                return error_msg
+                return finalize(error_msg)
                 
         except Exception as e:
             error_msg = f"Error executing Stata command: {str(e)}"
@@ -1036,7 +1089,7 @@ def run_stata_command(
             timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
             command_entry = f"[{timestamp}] {command}"
             command_history.append({"command": command_entry, "result": error_msg})
-            return error_msg
+            return finalize(error_msg)
             
     else:
         error_msg = "Stata is not available. Please check if Stata is installed and configured correctly."
@@ -1045,9 +1098,9 @@ def run_stata_command(
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         command_entry = f"[{timestamp}] {command}"
         command_history.append({"command": command_entry, "result": error_msg})
-        return error_msg
+        return finalize(error_msg)
 
-def detect_and_export_graphs():
+def detect_and_export_graphs(execution_id: Optional[str] = None):
     """Detect and export any graphs created by Stata commands
 
     Returns:
@@ -1083,14 +1136,12 @@ def detect_and_export_graphs():
         graph_names = gnamelist.split()
         logging.info(f"Found {len(graph_names)} graph(s): {graph_names}")
 
-        # Create graphs directory in extension path or temp
-        if extension_path:
-            graphs_dir = os.path.join(extension_path, 'graphs')
-        else:
-            graphs_dir = os.path.join(tempfile.gettempdir(), 'stata_mcp_graphs')
-
-        os.makedirs(graphs_dir, exist_ok=True)
-        logging.debug(f"Exporting graphs to: {graphs_dir}")
+        batch_context = create_batch_context(
+            get_effective_graphs_root(),
+            execution_id=execution_id,
+            source="selection"
+        )
+        logging.debug(f"Exporting graphs to batch directory: {batch_context['batch_dir']}")
 
         # Export each graph to PNG
         for i, gname in enumerate(graph_names):
@@ -1105,7 +1156,7 @@ def detect_and_export_graphs():
 
                 # Export as PNG (best for VS Code display)
                 # Use a sanitized filename but keep the original name for the name() option
-                graph_file = os.path.join(graphs_dir, f'{gname}.png')
+                graph_file = os.path.join(batch_context['batch_dir'], f'{gname}.png')
                 # Use forward slashes in Stata command to avoid backslash escape sequence issues on Windows
                 graph_file_stata = graph_file.replace('\\', '/')
                 # The name() option does NOT need quotes - it's a Stata name, not a string
@@ -1118,13 +1169,20 @@ def detect_and_export_graphs():
                     continue
 
                 if os.path.exists(graph_file):
-                    # Normalize path to forward slashes for cross-platform compatibility
-                    normalized_path = graph_file.replace('\\', '/')
-                    graphs_info.append({
-                        "name": gname,
-                        "path": normalized_path
-                    })
-                    logging.info(f"Exported graph '{gname}' to {graph_file}")
+                    file_size = os.path.getsize(graph_file)
+                    if file_size > 0:
+                        graphs_info.append(
+                            build_graph_record(
+                                batch_context,
+                                gname,
+                                graph_file,
+                                order_in_batch=i,
+                                graph_format="png"
+                            )
+                        )
+                        logging.info(f"Exported graph '{gname}' ({file_size} bytes) to {graph_file}")
+                    else:
+                        logging.warning(f"Graph file '{graph_file}' exists but is empty (0 bytes) - export silently failed")
                 else:
                     logging.warning(f"Failed to export graph '{gname}' - file not created")
 
@@ -1132,13 +1190,17 @@ def detect_and_export_graphs():
                 logging.error(f"Error exporting graph '{gname}': {str(e)}")
                 continue
 
+        if graphs_info:
+            write_batch_manifest(batch_context, graphs_info)
+            cleanup_graph_batches(get_effective_graphs_root(), keep_batch_ids=[batch_context["batch_id"]])
+
         return graphs_info
 
     except Exception as e:
         logging.error(f"Error detecting graphs: {str(e)}")
         return []
 
-def display_graphs_interactive(graph_format='png', width=800, height=600):
+def display_graphs_interactive(graph_format='png', width=800, height=600, execution_id: Optional[str] = None):
     """Display graphs using PyStata's interactive approach (similar to Jupyter)
 
     This function mimics PyStata's grdisplay.py approach for exporting graphs.
@@ -1185,14 +1247,12 @@ def display_graphs_interactive(graph_format='png', width=800, height=600):
         graph_names = gnamelist.split()
         logging.info(f"Found {len(graph_names)} graph(s) in interactive mode: {graph_names}")
 
-        # Create graphs directory
-        if extension_path:
-            graphs_dir = os.path.join(extension_path, 'graphs')
-        else:
-            graphs_dir = os.path.join(tempfile.gettempdir(), 'stata_mcp_graphs')
-
-        os.makedirs(graphs_dir, exist_ok=True)
-        logging.debug(f"Exporting graphs to: {graphs_dir}")
+        batch_context = create_batch_context(
+            get_effective_graphs_root(),
+            execution_id=execution_id,
+            source="interactive"
+        )
+        logging.debug(f"Exporting graphs to batch directory: {batch_context['batch_dir']}")
 
         # Export each graph using PyStata's approach
         for i, gname in enumerate(graph_names):
@@ -1209,14 +1269,14 @@ def display_graphs_interactive(graph_format='png', width=800, height=600):
                 # Determine file extension and export command based on format
                 # Use forward slashes in Stata command to avoid backslash escape sequence issues on Windows
                 if graph_format == 'svg':
-                    graph_file = os.path.join(graphs_dir, f'{gname}.svg')
+                    graph_file = os.path.join(batch_context['batch_dir'], f'{gname}.svg')
                     graph_file_stata = graph_file.replace('\\', '/')
                     if width and height:
                         gph_exp = f'qui graph export "{graph_file_stata}", name({gname}) replace width({width}) height({height})'
                     else:
                         gph_exp = f'qui graph export "{graph_file_stata}", name({gname}) replace'
                 elif graph_format == 'pdf':
-                    graph_file = os.path.join(graphs_dir, f'{gname}.pdf')
+                    graph_file = os.path.join(batch_context['batch_dir'], f'{gname}.pdf')
                     graph_file_stata = graph_file.replace('\\', '/')
                     # For PDF, use xsize/ysize instead of width/height
                     if width and height:
@@ -1224,7 +1284,7 @@ def display_graphs_interactive(graph_format='png', width=800, height=600):
                     else:
                         gph_exp = f'qui graph export "{graph_file_stata}", name({gname}) replace'
                 else:  # png (default)
-                    graph_file = os.path.join(graphs_dir, f'{gname}.png')
+                    graph_file = os.path.join(batch_context['batch_dir'], f'{gname}.png')
                     graph_file_stata = graph_file.replace('\\', '/')
                     if width and height:
                         gph_exp = f'qui graph export "{graph_file_stata}", name({gname}) replace width({width}) height({height})'
@@ -1239,21 +1299,30 @@ def display_graphs_interactive(graph_format='png', width=800, height=600):
                     continue
 
                 if os.path.exists(graph_file):
-                    # Normalize path to forward slashes for cross-platform compatibility
-                    normalized_path = graph_file.replace('\\', '/')
-                    graph_dict = {
-                        "name": gname,
-                        "path": normalized_path,
-                        "format": graph_format
-                    }
-                    graphs_info.append(graph_dict)
-                    logging.info(f"Exported graph '{gname}' to {graph_file} (format: {graph_format})")
+                    file_size = os.path.getsize(graph_file)
+                    if file_size > 0:
+                        graphs_info.append(
+                            build_graph_record(
+                                batch_context,
+                                gname,
+                                graph_file,
+                                order_in_batch=i,
+                                graph_format=graph_format
+                            )
+                        )
+                        logging.info(f"Exported graph '{gname}' ({file_size} bytes, format: {graph_format}) to {graph_file}")
+                    else:
+                        logging.warning(f"Graph file '{graph_file}' exists but is empty (0 bytes) - export silently failed")
                 else:
                     logging.warning(f"Graph file not found after export: {graph_file}")
 
             except Exception as e:
                 logging.error(f"Error exporting graph '{gname}': {str(e)}")
                 continue
+
+        if graphs_info:
+            write_batch_manifest(batch_context, graphs_info)
+            cleanup_graph_batches(get_effective_graphs_root(), keep_batch_ids=[batch_context["batch_id"]])
 
         return graphs_info
 
@@ -1265,8 +1334,10 @@ def display_graphs_interactive(graph_format='png', width=800, height=600):
 def run_stata_selection(
     selection: str,
     working_dir: Optional[str] = None,
-    auto_detect_graphs: bool = False
-) -> str:
+    auto_detect_graphs: bool = False,
+    execution_id: Optional[str] = None,
+    return_graphs: bool = False
+):
     """Run selected Stata code.
 
     Args:
@@ -1292,16 +1363,28 @@ def run_stata_selection(
         cd_command = f'cd "{working_dir_stata}"'
         # Combine cd command with the processed selection
         full_command = f"{cd_command}\n{processed_selection}"
-        return run_stata_command(full_command, auto_detect_graphs=auto_detect_graphs)
+        return run_stata_command(
+            full_command,
+            auto_detect_graphs=auto_detect_graphs,
+            execution_id=execution_id,
+            return_graphs=return_graphs
+        )
     else:
-        return run_stata_command(processed_selection, auto_detect_graphs=auto_detect_graphs)
+        return run_stata_command(
+            processed_selection,
+            auto_detect_graphs=auto_detect_graphs,
+            execution_id=execution_id,
+            return_graphs=return_graphs
+        )
 
 def run_stata_file(
     file_path: str,
     timeout: int = 600,
     auto_name_graphs: bool = False,
-    working_dir: Optional[str] = None
-) -> str:
+    working_dir: Optional[str] = None,
+    execution_id: Optional[str] = None,
+    return_graphs: bool = False
+):
     """Run a Stata .do file with improved handling for long-running processes.
 
     Args:
@@ -1315,6 +1398,13 @@ def run_stata_file(
     # Set timeout from parameter instead of hardcoding
     MAX_TIMEOUT = timeout
     
+    graphs = []
+
+    def finalize(result_value):
+        if return_graphs:
+            return result_value, graphs
+        return result_value
+
     try:
         original_path = file_path
 
@@ -1327,7 +1417,7 @@ def run_stata_file(
             # Add more helpful error message for Windows
             error_msg += get_windows_path_help_message()
 
-            return error_msg
+            return finalize(error_msg)
 
         file_path = resolved_path
         
@@ -1339,13 +1429,13 @@ def run_stata_file(
             # Add more helpful error message for Windows
             error_msg += get_windows_path_help_message()
 
-            return error_msg
+            return finalize(error_msg)
             
         # Check file extension
         if not file_path.lower().endswith('.do'):
             error_msg = f"Error: File must be a Stata .do file with .do extension: {file_path}"
             logging.error(error_msg)
-            return error_msg
+            return finalize(error_msg)
 
         logging.info(f"Running Stata do file: {file_path}")
 
@@ -1503,7 +1593,7 @@ def run_stata_file(
             if tb:
                 last_frame = tb[-1]
                 error_msg += f"\n  at line {last_frame.lineno} in {last_frame.name}"
-            return error_msg
+            return finalize(error_msg)
             
         # Prepare command entry for history
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -1771,7 +1861,7 @@ def run_stata_file(
                         result += "\n\n=== Execution stopped ==="
                         # Return result without error wrapper
                         command_history.append({"command": command_entry, "result": result})
-                        return result
+                        return finalize(result)
                     else:
                         error_msg = f"Error executing Stata command: {stata_error}"
                         logging.error(error_msg)
@@ -1779,7 +1869,7 @@ def run_stata_file(
 
                         # Add command to history and return
                         command_history.append({"command": command_entry, "result": result})
-                        return result
+                        return finalize(result)
                 
                 # Read final log output
                 if os.path.exists(custom_log_file):
@@ -1828,19 +1918,15 @@ def run_stata_file(
                                 # Using interactive mode which should work because inline=True keeps graphs in memory
                                 try:
                                     logging.debug("Attempting to detect graphs from do file (interactive mode)...")
-                                    graphs = display_graphs_interactive(graph_format='png', width=800, height=600)
+                                    graphs = display_graphs_interactive(
+                                        graph_format='png',
+                                        width=800,
+                                        height=600,
+                                        execution_id=execution_id
+                                    )
                                     logging.debug(f"Graph detection returned: {graphs}")
                                     if graphs:
-                                        graph_info = "\n\n" + "="*60 + "\n"
-                                        graph_info += f"GRAPHS DETECTED: {len(graphs)} graph(s) created\n"
-                                        graph_info += "="*60 + "\n"
-                                        for graph in graphs:
-                                            # Include command if available, using special format for JavaScript parsing
-                                            if 'command' in graph and graph['command']:
-                                                graph_info += f"  • {graph['name']}: {graph['path']} [CMD: {graph['command']}]\n"
-                                            else:
-                                                graph_info += f"  • {graph['name']}: {graph['path']}\n"
-                                        result += graph_info
+                                        result += format_graph_info_block(graphs)
                                         logging.info(f"Detected {len(graphs)} graphs from do file: {[g['name'] for g in graphs]}")
                                     else:
                                         logging.debug("No graphs detected from do file")
@@ -1883,7 +1969,7 @@ def run_stata_file(
                 logging.info(f"Unregistered execution {exec_id}")
             current_execution_id = None
 
-        return result
+        return finalize(result)
 
     except Exception as e:
         error_msg = f"Error in run_stata_file: {str(e)}"
@@ -1895,7 +1981,7 @@ def run_stata_file(
                 del execution_registry[exec_id]
             current_execution_id = None
 
-        return error_msg
+        return finalize(error_msg)
 
 # Function to kill any process using the specified port
 def kill_process_on_port(port):
@@ -2122,7 +2208,13 @@ async def stata_run_selection_endpoint(selection: str, session_id: str = None, w
     formatted_result = process_mcp_output(formatted_result, for_mcp=True)
     return Response(content=formatted_result, media_type="text/plain")
 
-async def stata_run_file_stream(file_path: str, timeout: int = 600, working_dir: str = None, session_id: str = None):
+async def stata_run_file_stream(
+    file_path: str,
+    timeout: int = 600,
+    working_dir: str = None,
+    session_id: str = None,
+    execution_id: str = None
+):
     """Async generator that runs Stata file and yields SSE progress events
 
     Streams output incrementally by monitoring the log file during execution.
@@ -2142,6 +2234,7 @@ async def stata_run_file_stream(file_path: str, timeout: int = 600, working_dir:
 
     # Queue to communicate between threads
     result_queue = queue_module.Queue()
+    execution_id = execution_id or generate_execution_id("file-stream")
 
     # Determine log file path - must match what run_stata_file/worker uses
     abs_file_path = os.path.abspath(file_path)
@@ -2185,7 +2278,8 @@ async def stata_run_file_stream(file_path: str, timeout: int = 600, working_dir:
                     session_id=session_id,
                     timeout=float(timeout),
                     log_file=log_file,  # Pass log file path to worker
-                    working_dir=original_file_dir  # Use original file's directory
+                    working_dir=original_file_dir,  # Use original file's directory
+                    execution_id=execution_id
                 )
                 if result_dict.get('status') == 'success':
                     result = result_dict.get('output', '')
@@ -2196,20 +2290,14 @@ async def stata_run_file_stream(file_path: str, timeout: int = 600, working_dir:
                     result = f"Error: {result_dict.get('error', 'Unknown error')}"
             else:
                 logging.info("[STREAM] Using single-session mode")
-                # Note: run_stata_file handles graph reset and detection internally
-                result = run_stata_file(processed_file, timeout=timeout, working_dir=working_dir, auto_name_graphs=True)
-                # Detect graphs after execution for single-session streaming mode
-                # This is needed because streaming reads log file directly, not the returned result string
-                # run_stata_file already reset the graph list before execution
-                try:
-                    logging.debug("[STREAM] Detecting graphs for single-session mode...")
-                    graphs = display_graphs_interactive(graph_format='png', width=800, height=600)
-                    if graphs:
-                        logging.info(f"[STREAM] Detected {len(graphs)} graph(s) in single-session mode")
-                    else:
-                        logging.debug("[STREAM] No graphs detected in single-session mode")
-                except Exception as e:
-                    logging.warning(f"[STREAM] Error detecting graphs: {str(e)}")
+                result, graphs = run_stata_file(
+                    processed_file,
+                    timeout=timeout,
+                    working_dir=working_dir,
+                    auto_name_graphs=True,
+                    execution_id=execution_id,
+                    return_graphs=True
+                )
             result_queue.put(('success', result, graphs))
         except Exception as e:
             logging.error(f"[STREAM] Execution error: {str(e)}")
@@ -2287,6 +2375,7 @@ async def stata_run_file_stream(file_path: str, timeout: int = 600, working_dir:
 
                 # Output graph info in the expected format for VS Code extension's parseGraphsFromOutput
                 if graphs:
+                    yield f"data: {emit_graph_metadata_line(graphs)}\n\n"
                     yield f"data: \n\n"
                     yield f"data: {'='*60}\n\n"
                     yield f"data: GRAPHS DETECTED: {len(graphs)} graph(s) created\n\n"
@@ -2400,7 +2489,8 @@ async def stata_run_file_stream_endpoint(
     file_path: str,
     timeout: int = 600,
     working_dir: str = None,
-    session_id: str = None
+    session_id: str = None,
+    execution_id: str = None
 ):
     """Run a Stata .do file and stream the output via Server-Sent Events (SSE)
 
@@ -2433,7 +2523,7 @@ async def stata_run_file_stream_endpoint(
         logging.info(f"[STREAM] Using session: {session_id}")
 
     return StreamingResponse(
-        stata_run_file_stream(file_path, timeout, working_dir, session_id),
+        stata_run_file_stream(file_path, timeout, working_dir, session_id, execution_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -2443,7 +2533,13 @@ async def stata_run_file_stream_endpoint(
     )
 
 
-async def stata_run_selection_stream(selection: str, timeout: int = 600, working_dir: str = None, session_id: str = None):
+async def stata_run_selection_stream(
+    selection: str,
+    timeout: int = 600,
+    working_dir: str = None,
+    session_id: str = None,
+    execution_id: str = None
+):
     """Async generator that runs Stata selection code and yields SSE progress events
 
     Streams output incrementally by creating a temp file and monitoring the log file during execution.
@@ -2464,6 +2560,7 @@ async def stata_run_selection_stream(selection: str, timeout: int = 600, working
     import threading
     import queue as queue_module
     import tempfile
+    execution_id = execution_id or generate_execution_id("selection-stream")
 
     # Preprocess: Join lines with /// continuation into single logical lines
     processed_selection = join_stata_line_continuations(selection)
@@ -2521,7 +2618,8 @@ async def stata_run_selection_stream(selection: str, timeout: int = 600, working
                     session_id=session_id,
                     timeout=float(timeout),
                     log_file=log_file,
-                    working_dir=working_dir
+                    working_dir=working_dir,
+                    execution_id=execution_id
                 )
                 if result_dict.get('status') == 'success':
                     result = result_dict.get('output', '')
@@ -2531,14 +2629,14 @@ async def stata_run_selection_stream(selection: str, timeout: int = 600, working
                     result = f"Error: {result_dict.get('error', 'Unknown error')}"
             else:
                 logging.info("[STREAM-SEL] Using single-session mode")
-                result = run_stata_file(processed_file, timeout=timeout, working_dir=working_dir, auto_name_graphs=True)
-                try:
-                    logging.debug("[STREAM-SEL] Detecting graphs for single-session mode...")
-                    graphs = display_graphs_interactive(graph_format='png', width=800, height=600)
-                    if graphs:
-                        logging.info(f"[STREAM-SEL] Detected {len(graphs)} graph(s)")
-                except Exception as e:
-                    logging.warning(f"[STREAM-SEL] Error detecting graphs: {str(e)}")
+                result, graphs = run_stata_file(
+                    processed_file,
+                    timeout=timeout,
+                    working_dir=working_dir,
+                    auto_name_graphs=True,
+                    execution_id=execution_id,
+                    return_graphs=True
+                )
             result_queue.put(('success', result, graphs))
         except Exception as e:
             logging.error(f"[STREAM-SEL] Execution error: {str(e)}")
@@ -2661,6 +2759,7 @@ async def stata_run_selection_stream(selection: str, timeout: int = 600, working
 
                 # Output graph info for VS Code extension's parseGraphsFromOutput
                 if graphs:
+                    yield f"data: {emit_graph_metadata_line(graphs)}\n\n"
                     yield f"data: \n\n"
                     yield f"data: {'='*60}\n\n"
                     yield f"data: GRAPHS DETECTED: {len(graphs)} graph(s) created\n\n"
@@ -2690,7 +2789,8 @@ async def stata_run_selection_stream_endpoint(
     selection: str,
     timeout: int = 600,
     working_dir: str = None,
-    session_id: str = None
+    session_id: str = None,
+    execution_id: str = None
 ):
     """Run Stata code selection and stream the output via Server-Sent Events (SSE)
 
@@ -2721,7 +2821,7 @@ async def stata_run_selection_stream_endpoint(
         logging.info(f"[STREAM-SEL] Using session: {session_id}")
 
     return StreamingResponse(
-        stata_run_selection_stream(selection, timeout, working_dir, session_id),
+        stata_run_selection_stream(selection, timeout, working_dir, session_id, execution_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -2770,6 +2870,8 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
             # Get optional parameters
             working_dir = request.parameters.get("working_dir", None)
             session_id = request.parameters.get("session_id", None)
+            execution_id = request.parameters.get("execution_id", None) or generate_execution_id("selection")
+            graphs = []
 
             # Route through session manager if multi-session is enabled
             if multi_session_enabled and session_manager is not None:
@@ -2778,7 +2880,8 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
                 result_dict = await asyncio.to_thread(
                     session_manager.execute,
                     request.parameters["selection"],
-                    session_id=session_id
+                    session_id=session_id,
+                    execution_id=execution_id
                 )
                 if result_dict.get('status') == 'success':
                     result = result_dict.get('output', '')
@@ -2787,19 +2890,21 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
                     extra = result_dict.get('extra', {})
                     graphs = extra.get('graphs', []) if extra else []
                     if graphs:
-                        graph_info = "\n\n" + "="*60 + "\n"
-                        graph_info += f"GRAPHS DETECTED: {len(graphs)} graph(s) created\n"
-                        graph_info += "="*60 + "\n"
-                        for graph in graphs:
-                            graph_info += f"  • {graph['name']}: {graph['path']}\n"
-                        result += graph_info
+                        result += format_graph_info_block(graphs)
                         logging.info(f"Multi-session: Added {len(graphs)} graphs to output")
                 else:
                     result = f"Error: {result_dict.get('error', 'Unknown error')}"
             else:
                 # Single-session mode: use direct execution
                 # Enable auto_detect_graphs for VS Code extension calls
-                result = await asyncio.to_thread(run_stata_selection, request.parameters["selection"], working_dir, True)
+                result, graphs = await asyncio.to_thread(
+                    run_stata_selection,
+                    request.parameters["selection"],
+                    working_dir,
+                    True,
+                    execution_id,
+                    True
+                )
             # Format output for better display
             result = result.replace("\\n", "\n")
             
@@ -2827,6 +2932,8 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
             # Get optional parameters
             working_dir = request.parameters.get("working_dir", None)
             session_id = request.parameters.get("session_id", None)
+            execution_id = request.parameters.get("execution_id", None) or generate_execution_id("file")
+            graphs = []
 
             logging.info(f"MCP run_file request for: {file_path} with timeout {timeout} seconds ({timeout/60:.1f} minutes)")
             if working_dir:
@@ -2863,7 +2970,8 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
                     session_id=session_id,
                     timeout=float(timeout),
                     log_file=log_file,  # Pass log file path to respect logFileLocation setting
-                    working_dir=original_file_dir
+                    working_dir=original_file_dir,
+                    execution_id=execution_id
                 )
                 if result_dict.get('status') == 'success':
                     result = result_dict.get('output', '')
@@ -2871,19 +2979,22 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
                     extra = result_dict.get('extra', {})
                     graphs = extra.get('graphs', []) if extra else []
                     if graphs:
-                        graph_info = "\n\n" + "="*60 + "\n"
-                        graph_info += f"GRAPHS DETECTED: {len(graphs)} graph(s) created\n"
-                        graph_info += "="*60 + "\n"
-                        for graph in graphs:
-                            graph_info += f"  • {graph['name']}: {graph['path']}\n"
-                        result += graph_info
+                        result += format_graph_info_block(graphs)
                         logging.info(f"Multi-session run_file: Added {len(graphs)} graphs to output")
                 else:
                     result = f"Error: {result_dict.get('error', 'Unknown error')}"
             else:
                 # Single-session mode: use direct execution
                 # Enable auto_name_graphs for VS Code extension calls
-                result = await asyncio.to_thread(run_stata_file, file_path, timeout, True, working_dir)
+                result, graphs = await asyncio.to_thread(
+                    run_stata_file,
+                    file_path,
+                    timeout,
+                    True,
+                    working_dir,
+                    execution_id,
+                    True
+                )
 
             # Format output for better display
             result = result.replace("\\n", "\n")
@@ -2979,7 +3090,8 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
         # Return successful response
         return ToolResponse(
             status="success",
-            result=result
+            result=result,
+            graphs=graphs or None
         )
         
     except Exception as e:
@@ -3114,11 +3226,7 @@ async def reload_workers():
         importlib.reload(__import__('session_manager'))
         from session_manager import SessionManager as ReloadedSessionManager
 
-        # Determine graphs directory
-        if extension_path:
-            reload_graphs_dir = os.path.join(extension_path, 'graphs')
-        else:
-            reload_graphs_dir = os.path.join(tempfile.gettempdir(), 'stata_mcp_graphs')
+        reload_graphs_dir = get_effective_graphs_root()
 
         session_manager = ReloadedSessionManager(
             stata_path=session_manager.stata_path if hasattr(session_manager, 'stata_path') else os.environ.get('SYSDIR_STATA', '/Applications/Stata'),
@@ -3188,17 +3296,17 @@ async def create_session():
         }
 
     try:
-        result = session_manager.create_session()
-        if result["success"]:
+        success, session_id, error = session_manager.create_session()
+        if success:
             return {
                 "status": "success",
-                "session_id": result["session_id"],
+                "session_id": session_id,
                 "message": "Session created successfully"
             }
         else:
             return {
                 "status": "error",
-                "message": result.get("error", "Unknown error")
+                "message": error or "Unknown error"
             }
     except Exception as e:
         logging.error(f"Error creating session: {str(e)}")
@@ -3333,6 +3441,10 @@ _single_session_restart_lock = threading.Lock()
 def _single_session_restart():
     """Run single-session restart commands in a thread to avoid blocking the event loop."""
     stata.run("capture log close _all", inline=False, echo=False)
+    # `capture restore, not` clears any stuck preserve state left over from a
+    # prior crashed operation. This lets users recover from the r(621)
+    # "already preserved" state without restarting Stata entirely.
+    stata.run("capture restore, not", inline=False, echo=False)
     stata.run("capture clear all", inline=False, echo=False)
     stata.run("capture graph drop _all", inline=False, echo=False)
     # clear all resets Stata defaults including `set more on`,
@@ -3387,6 +3499,13 @@ async def restart_session():
 
 # Lock for single-session help requests to prevent concurrent Stata access
 _help_lock = threading.Lock()
+
+# Lock and unique frame name for single-session view_data filter requests.
+# Using a UUID-suffixed frame name makes collisions with user-named frames
+# astronomically unlikely, so the defensive `capture frame drop` at the
+# start/end of each request will not destroy a user's own frame.
+_view_data_lock = threading.Lock()
+_view_data_frame = f"_stata_mcp_flt_{uuid.uuid4().hex[:8]}"
 
 # Endpoint to serve Stata help text
 # Hidden from OpenAPI schema so it won't be exposed to LLMs via MCP
@@ -3815,10 +3934,10 @@ if "`_helpfn'" != "" {{
     display "STATA_SYSDIR_STATA: `c(sysdir_stata)'"
     display "STATA_SYSDIR_OLDPLACE: `c(sysdir_oldplace)'"
 }}
-set linesize `_old_ls'
 else {{
     display as error "help file not found for: {topic}"
 }}
+set linesize `_old_ls'
 '''
 
     try:
@@ -4011,60 +4130,55 @@ else {{
         )
 
 
+def _serve_graph_file(graph_path: str):
+    if graph_path.endswith('.svg'):
+        media_type = "image/svg+xml"
+    elif graph_path.endswith('.pdf'):
+        media_type = "application/pdf"
+    else:
+        media_type = "image/png"
+
+    with open(graph_path, 'rb') as handle:
+        return Response(content=handle.read(), media_type=media_type)
+
+
+@app.get("/graphs/batch/{batch_id}/{filename}", include_in_schema=False)
+async def get_graph_from_batch(batch_id: str, filename: str):
+    try:
+        graph_path = resolve_batch_graph_path(
+            get_effective_graphs_root(),
+            unquote(batch_id),
+            unquote(filename)
+        )
+        if not graph_path:
+            return Response(content="Invalid graph path", status_code=400, media_type="text/plain")
+        if not os.path.exists(graph_path):
+            return Response(content=f"Graph not found: {filename}", status_code=404, media_type="text/plain")
+        return _serve_graph_file(graph_path)
+    except Exception as e:
+        logging.error(f"Error serving graph batch {batch_id}/{filename}: {str(e)}")
+        return Response(content=f"Error serving graph: {str(e)}", status_code=500, media_type="text/plain")
+
+
 # Endpoint to serve graph images
 # Hidden from OpenAPI schema so it won't be exposed to LLMs via MCP
 @app.get("/graphs/{graph_name}", include_in_schema=False)
 async def get_graph(graph_name: str):
-    """Serve a graph image file"""
+    """Serve the most recent graph image for a logical graph name."""
     try:
-        # CRITICAL: Decode URL-encoded graph name (e.g., "Graph%201" -> "Graph 1")
-        # The extension uses encodeURIComponent() which encodes spaces and special chars
         graph_name = unquote(graph_name)
+        if graph_name.endswith('.png'):
+            graph_name = graph_name[:-4]
 
-        # Construct the path to the graph file
-        if extension_path:
-            graphs_dir = os.path.join(extension_path, 'graphs')
-        else:
-            graphs_dir = os.path.join(tempfile.gettempdir(), 'stata_mcp_graphs')
-
-        # Support both with and without .png extension
-        if not graph_name.endswith('.png'):
-            graph_name = f"{graph_name}.png"
-
-        graph_path = os.path.join(graphs_dir, graph_name)
-
-        # Prevent path traversal attacks
-        real_graph_path = os.path.realpath(graph_path)
-        real_graphs_dir = os.path.realpath(graphs_dir)
-        if not real_graph_path.startswith(real_graphs_dir + os.sep) and real_graph_path != real_graphs_dir:
-            logging.warning(f"Path traversal attempt blocked: {graph_name}")
-            return Response(
-                content="Invalid graph name",
-                status_code=400,
-                media_type="text/plain"
-            )
-
-        logging.debug(f"Looking for graph at: {graph_path}")
-
-        # Check if file exists
-        if not os.path.exists(graph_path):
-            # Log available files for debugging
-            if os.path.exists(graphs_dir):
-                available = os.listdir(graphs_dir)
-                logging.warning(f"Graph not found: {graph_name}. Available: {available}")
-            else:
-                logging.warning(f"Graphs directory does not exist: {graphs_dir}")
+        resolved = find_latest_graph_by_name(get_effective_graphs_root(), graph_name)
+        if not resolved:
             return Response(
                 content=f"Graph not found: {graph_name}",
                 status_code=404,
                 media_type="text/plain"
             )
 
-        # Read and return the image file
-        with open(graph_path, 'rb') as f:
-            image_data = f.read()
-
-        return Response(content=image_data, media_type="image/png")
+        return _serve_graph_file(resolved["path"])
 
     except Exception as e:
         logging.error(f"Error serving graph {graph_name}: {str(e)}")
@@ -4147,8 +4261,9 @@ async def view_data_endpoint(if_condition: str = None, session_id: str = None, m
                 status_code=500
             )
 
-        # Use efficient Stata-native filtering with preserve/restore
-        # This is MUCH faster than the old O(n) SFI approach
+        # Use efficient Stata-native filtering via an isolated frame copy.
+        # This avoids touching preserve/restore state, which would leak across
+        # executions on error and cause "already preserved r(621)" failures.
         import sfi
 
         total_obs = sfi.Data.getObsTotal()
@@ -4169,66 +4284,79 @@ async def view_data_endpoint(if_condition: str = None, session_id: str = None, m
 
         logging.info(f"Total observations in Stata: {total_obs}")
 
-        # Apply if condition using Stata's native filtering (much faster)
+        # Apply if condition using an isolated frame copy (Stata 16+, required 17+)
         if if_condition:
             logging.info(f"Applying filter: if {if_condition}")
-            try:
-                # Preserve current data state
-                stata.run("preserve", inline=False, echo=False)
-
-                try:
-                    # Create temp variable to track original observation numbers (0-based for JS)
-                    stata.run("quietly gen long _stata_mcp_orig_obs = _n - 1", inline=False, echo=False)
-
-                    # Use Stata's native keep if - this is very fast even for millions of rows
-                    keep_cmd = f"quietly keep if {if_condition}"
-                    logging.debug(f"Running: {keep_cmd}")
-                    stata.run(keep_cmd, inline=False, echo=False)
-
-                    # Get count of matching rows
-                    filtered_obs = sfi.Data.getObsTotal()
-                    logging.info(f"Filter matched {filtered_obs} rows (out of {total_obs})")
-
-                    # If more than max_rows, limit the data
-                    if filtered_obs > max_rows:
-                        stata.run(f"quietly keep in 1/{max_rows}", inline=False, echo=False)
-                        logging.info(f"Limited to first {max_rows} rows")
-
-                    # Get the filtered data
-                    df = stata.pdataframe_from_data()
-
-                    # Extract original obs numbers as index, then drop the temp column
-                    orig_obs_index = df['_stata_mcp_orig_obs'].tolist()
-                    df = df.drop(columns=['_stata_mcp_orig_obs'])
-
-                    # Restore original data
-                    stata.run("restore", inline=False, echo=False)
-
-                    total_matching = filtered_obs
-                    displayed_rows = min(filtered_obs, max_rows)
-
-                except Exception as filter_err:
-                    # Make sure to restore on error
-                    try:
-                        stata.run("restore", inline=False, echo=False)
-                    except:
-                        pass
-                    raise filter_err
-
-            except Exception as e:
-                error_msg = str(e)
-                # Check for common Stata error patterns
-                if "invalid syntax" in error_msg.lower() or "unknown function" in error_msg.lower():
-                    error_msg = f"Invalid condition syntax: {if_condition}"
-                logging.error(f"Filter error: {error_msg}")
+            # Serialize concurrent view_data requests so they don't race on the filter frame
+            if not _view_data_lock.acquire(timeout=30):
+                logging.error("View data request timed out waiting for lock")
                 return Response(
                     content=json.dumps({
                         "status": "error",
-                        "message": f"Filter error: {error_msg}"
+                        "message": "View data request timed out waiting for Stata"
                     }),
                     media_type="application/json",
-                    status_code=400
+                    status_code=503
                 )
+            try:
+                # Defensive cleanup in case a previous request crashed mid-way
+                stata.run(f"capture frame drop {_view_data_frame}", inline=False, echo=False)
+                try:
+                    # Copy the current working frame into an isolated filter frame.
+                    # All filter mutations happen in the copy, so the user's frame,
+                    # variables, and preserve stack are never touched.
+                    stata.run(f"frame copy `c(frame)' {_view_data_frame}", inline=False, echo=False)
+
+                    # Track original 0-based observation numbers inside the copy
+                    stata.run(f"frame {_view_data_frame}: quietly gen long _orig_obs = _n - 1", inline=False, echo=False)
+
+                    # Apply filter in the isolated frame
+                    keep_cmd = f"frame {_view_data_frame}: quietly keep if {if_condition}"
+                    logging.debug(f"Running: {keep_cmd}")
+                    stata.run(keep_cmd, inline=False, echo=False)
+
+                    # Read filtered data from the isolated frame
+                    df = stata.pdataframe_from_frame(_view_data_frame)
+                    filtered_obs = len(df) if df is not None else 0
+                    logging.info(f"Filter matched {filtered_obs} rows (out of {total_obs})")
+
+                    # Apply row limit in pandas (avoids another Stata round-trip)
+                    if filtered_obs > max_rows:
+                        df = df.head(max_rows)
+                        logging.info(f"Limited to first {max_rows} rows")
+
+                    # Extract original observation indices, then drop the helper column
+                    if df is not None and not df.empty:
+                        orig_obs_index = df['_orig_obs'].tolist()
+                        df = df.drop(columns=['_orig_obs'])
+                    else:
+                        orig_obs_index = []
+
+                    total_matching = filtered_obs
+                    displayed_rows = min(filtered_obs, max_rows)
+                except Exception as filter_err:
+                    error_msg = str(filter_err)
+                    # Check for common Stata error patterns
+                    if "invalid syntax" in error_msg.lower() or "unknown function" in error_msg.lower():
+                        error_msg = f"Invalid condition syntax: {if_condition}"
+                    logging.error(f"Filter error: {error_msg}")
+                    return Response(
+                        content=json.dumps({
+                            "status": "error",
+                            "message": f"Filter error: {error_msg}"
+                        }),
+                        media_type="application/json",
+                        status_code=400
+                    )
+                finally:
+                    # Always drop the filter frame. `capture` makes this safe even
+                    # if `frame copy` failed and the frame was never created.
+                    try:
+                        stata.run(f"capture frame drop {_view_data_frame}", inline=False, echo=False)
+                    except Exception as cleanup_err:
+                        logging.error(f"Failed to drop filter frame: {cleanup_err}")
+            finally:
+                _view_data_lock.release()
             # For filtered case, orig_obs_index is already set above
         else:
             # No filter - just get data with row limit
@@ -4861,7 +4989,7 @@ def main():
         logging.getLogger().setLevel(log_level)
         
         # Set Stata edition
-        global stata_edition, log_file_location, custom_log_directory, workspace_root, extension_path
+        global stata_edition, log_file_location, custom_log_directory, workspace_root, extension_path, graphs_root
         global result_display_mode, max_output_tokens
         global multi_session_enabled, multi_session_max_sessions, multi_session_timeout
         stata_edition = args.stata_edition.lower()
@@ -4896,6 +5024,10 @@ def main():
             logging.info(f"Custom log directory: {custom_log_directory}")
         if extension_path:
             logging.info(f"Extension path: {extension_path}")
+
+        graphs_root = get_effective_graphs_root()
+        cleanup_graph_batches(graphs_root)
+        logging.info(f"Graph storage root: {graphs_root}")
         
         # Log startup information
         logging.info(f"Log initialized at {os.path.abspath(log_file)}")
@@ -4975,14 +5107,6 @@ def main():
                     sys.path.insert(0, script_dir)
                 from session_manager import SessionManager
 
-                # Determine graphs directory (same as used by single-session mode)
-                if extension_path:
-                    graphs_dir = os.path.join(extension_path, 'graphs')
-                else:
-                    graphs_dir = os.path.join(tempfile.gettempdir(), 'stata_mcp_graphs')
-                os.makedirs(graphs_dir, exist_ok=True)
-                logging.info(f"Graphs directory for multi-session mode: {graphs_dir}")
-
                 global session_manager
                 session_manager = SessionManager(
                     stata_path=STATA_PATH,
@@ -4990,7 +5114,7 @@ def main():
                     max_sessions=multi_session_max_sessions,
                     session_timeout=multi_session_timeout,
                     enabled=True,
-                    graphs_dir=graphs_dir
+                    graphs_dir=graphs_root
                 )
                 if session_manager.start():
                     logging.info("Session manager started successfully")

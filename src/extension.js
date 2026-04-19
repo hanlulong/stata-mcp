@@ -6,6 +6,7 @@ const os = require('os');
 const axios = require('axios');
 const net = require('net');
 const childProcess = require('child_process');
+const { GraphStore } = require('./graph-store');
 
 // Global variables
 let stataOutputChannel;
@@ -49,6 +50,8 @@ const FILE_PATHS = {
     UV_PATH: '.uv-path',
     LOG_FILE: 'stata_mcp_server.log'
 };
+
+const GRAPH_METADATA_PREFIX = '__STATA_MCP_GRAPH_METADATA__:';
 
 // Configuration getter with caching
 function getConfig() {
@@ -676,6 +679,12 @@ async function startMcpServer() {
         const workspaceRoot = workspaceFolders && workspaceFolders.length > 0
             ? workspaceFolders[0].uri.fsPath
             : null;
+        const graphStorageRoot = getGraphStorageRoot();
+        const serverEnv = {
+            ...process.env,
+            STATA_MCP_GRAPHS_DIR: graphStorageRoot
+        };
+        Logger.debug(`Graph storage root: ${graphStorageRoot}`);
 
         // Prepare command
         let args = [];
@@ -703,7 +712,7 @@ async function startMcpServer() {
 
             Logger.info(`Starting server with command: ${cmdString}`);
 
-            const options = { cwd: scriptDir, windowsHide: true };
+            const options = { cwd: scriptDir, windowsHide: true, env: serverEnv };
             mcpServerProcess = childProcess.exec(cmdString, options);
         } else {
             args.push(mcpServerPath, '--host', host, '--port', port.toString());
@@ -726,7 +735,8 @@ async function startMcpServer() {
                 detached: true,
                 shell: false,
                 stdio: 'pipe',
-                windowsHide: true
+                windowsHide: true,
+                env: serverEnv
             };
             
             mcpServerProcess = spawn(pythonCommand, args, options);
@@ -1022,9 +1032,10 @@ async function runInteractive() {
         try {
             const cmdTimeout = config.get('runSelectionTimeout') || 600;
             const tool = codeToRun ? 'run_selection' : 'run_file';
+            const executionId = createExecutionId(codeToRun ? 'interactive-selection' : 'interactive-file');
             const params = codeToRun
-                ? { selection: codeToRun, skip_filter: true }
-                : { file_path: filePath, skip_filter: true };
+                ? { selection: codeToRun, skip_filter: true, execution_id: executionId }
+                : { file_path: filePath, skip_filter: true, execution_id: executionId };
 
             const response = await axios.post(
                 `http://${host}:${port}/v1/tools`,
@@ -1036,8 +1047,9 @@ async function runInteractive() {
                 throw new Error(response.data?.message || 'Command execution failed');
             }
             const output = response.data.result || '';
-            const graphs = parseGraphsFromOutput(output);
-            await showInteractiveWindow(filePath, output, graphs, host, port);
+            const graphs = normalizeGraphMetadata(response.data.graphs || []);
+            const resolvedGraphs = graphs.length > 0 ? graphs : parseGraphsFromOutput(output);
+            await showInteractiveWindow(filePath, output, resolvedGraphs, host, port);
         } catch (error) {
             const rawErr = error.response && error.response.data ? error.response.data : error.message;
             const errMsg = typeof rawErr === 'string' ? rawErr : (rawErr.message || JSON.stringify(rawErr));
@@ -1075,10 +1087,7 @@ async function showInteractiveWindow(filePath, output, graphs, host, port) {
             {
                 enableScripts: true,
                 retainContextWhenHidden: true,
-                localResourceRoots: [
-                    vscode.Uri.file(getGraphsDir()),
-                    vscode.Uri.file(path.join(os.tmpdir(), 'stata_mcp_graphs'))
-                ]
+                localResourceRoots: getGraphLocalResourceRoots()
             }
         );
 
@@ -1139,7 +1148,11 @@ async function showInteractiveWindow(filePath, output, graphs, host, port) {
                                 `http://${cmdHost}:${cmdPort}/v1/tools`,
                                 {
                                     tool: 'run_selection',
-                                    parameters: { selection: message.text, skip_filter: true }
+                                    parameters: {
+                                        selection: message.text,
+                                        skip_filter: true,
+                                        execution_id: createExecutionId('interactive-command')
+                                    }
                                 },
                                 { headers: { 'Content-Type': 'application/json' }, timeout: cmdTimeout * 1000 }
                             );
@@ -1148,13 +1161,14 @@ async function showInteractiveWindow(filePath, output, graphs, host, port) {
 
                             if (response.status === 200 && response.data.status === 'success') {
                                 const result = response.data.result || 'Command executed';
-                                const cmdGraphs = parseGraphsFromOutput(result);
+                                const cmdGraphs = normalizeGraphMetadata(response.data.graphs || []);
+                                const resolvedGraphs = cmdGraphs.length > 0 ? cmdGraphs : parseGraphsFromOutput(result);
 
                                 interactivePanel.webview.postMessage({
                                     command: 'commandResult',
                                     executedCommand: message.text,
                                     result: result,
-                                    graphs: cmdGraphs.map(g => ({
+                                    graphs: resolvedGraphs.map(g => ({
                                         name: g.name,
                                         url: getGraphWebviewUri(interactivePanel.webview, g)
                                     }))
@@ -1450,6 +1464,73 @@ function escapeHtml(text) {
     return text.replace(/[&<>"']/g, m => map[m]);
 }
 
+function createExecutionId(prefix = 'exec') {
+    return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function normalizeGraphMetadata(graphs) {
+    if (!Array.isArray(graphs)) {
+        return [];
+    }
+
+    return graphs
+        .filter(graph => graph && (graph.path || graph.name || graph.logicalName))
+        .map((graph, index) => ({
+            artifactId: graph.artifactId || graph.artifact_id || '',
+            batchId: graph.batchId || graph.batch_id || '',
+            executionId: graph.executionId || graph.execution_id || '',
+            name: graph.name || graph.logicalName || graph.logical_name || `graph${index + 1}`,
+            logicalName: graph.logicalName || graph.logical_name || graph.name || `graph${index + 1}`,
+            displayName: graph.displayName || graph.display_name || graph.name || graph.logicalName || `graph${index + 1}`,
+            path: (graph.path || '').replace(/\\/g, '/'),
+            browserPath: graph.browserPath || graph.browser_path || '',
+            format: graph.format || 'png',
+            orderInBatch: Number.isInteger(graph.orderInBatch)
+                ? graph.orderInBatch
+                : (Number.isInteger(graph.order_in_batch) ? graph.order_in_batch : index)
+        }));
+}
+
+function parseGraphMetadataPayload(line) {
+    if (!line || !line.startsWith(GRAPH_METADATA_PREFIX)) {
+        return null;
+    }
+
+    try {
+        const payload = JSON.parse(line.slice(GRAPH_METADATA_PREFIX.length));
+        return normalizeGraphMetadata(payload.graphs || []);
+    } catch (error) {
+        Logger.debug(`Failed to parse graph metadata payload: ${error.message}`);
+        return null;
+    }
+}
+
+function createGraphBatch(graphs, source = 'execution') {
+    const normalizedGraphs = normalizeGraphMetadata(graphs);
+    const createdAt = Date.now();
+
+    if (normalizedGraphs.length === 0) {
+        return {
+            executionId: null,
+            batchId: null,
+            source,
+            createdAt,
+            graphs: []
+        };
+    }
+
+    const executionId = normalizedGraphs.find(graph => graph.executionId)?.executionId || createExecutionId(source);
+    const batchId = normalizedGraphs.find(graph => graph.batchId)?.batchId || `${executionId}-batch`;
+
+    return {
+        executionId,
+        batchId,
+        source,
+        createdAt,
+        graphs: normalizedGraphs
+    };
+}
+
 /**
  * Detect if a command is a Stata help command and extract the topic.
  * Matches: help (and abbreviations h, he, hel), man, chelp (ch, che, chel), whelp (wh, whe, whel)
@@ -1660,21 +1741,15 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
     stataOutputChannel.show(false);  // Steal focus when running Stata commands
     Logger.debug(`Executing Stata code: ${code}`);
 
-    // Clear graph display before Run Selection to show fresh results
-    if (toolName === 'run_selection') {
-        allGraphs = {};
-        if (graphViewerPanel) {
-            updateGraphViewerPanel();
-        }
-    }
-
     try {
         // Use streaming endpoint for real-time output display (Run Selection only)
         if (toolName === 'run_selection') {
+            const executionId = createExecutionId('selection');
             // Build URL with query parameters for streaming endpoint
             const params = new URLSearchParams();
             params.append('selection', code);
             params.append('timeout', runSelectionTimeout.toString());
+            params.append('execution_id', executionId);
             if (workingDir) {
                 params.append('working_dir', workingDir);
             }
@@ -1684,6 +1759,7 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
 
             let fullOutput = '';
             let hasError = false;
+            let streamedGraphs = [];
 
             // Create AbortController for cancellation
             currentStreamAbortController = new AbortController();
@@ -1713,6 +1789,11 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
                             if (data.startsWith('Executing selection') ||
                                 data.startsWith('*** Execution')) {
                                 Logger.debug(`Stream status: ${data}`);
+                            } else if (data.startsWith(GRAPH_METADATA_PREFIX)) {
+                                const parsedGraphs = parseGraphMetadataPayload(data);
+                                if (parsedGraphs) {
+                                    streamedGraphs = parsedGraphs;
+                                }
                             } else if (data.startsWith('Error:') || data.startsWith('ERROR:')) {
                                 hasError = true;
                                 stataOutputChannel.appendLine(data);
@@ -1728,7 +1809,12 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
                 response.data.on('end', () => {
                     if (buffer.startsWith('data: ')) {
                         const data = buffer.substring(6);
-                        if (data.trim() && !data.startsWith('Executing') && !data.startsWith('***')) {
+                        if (data.startsWith(GRAPH_METADATA_PREFIX)) {
+                            const parsedGraphs = parseGraphMetadataPayload(data);
+                            if (parsedGraphs) {
+                                streamedGraphs = parsedGraphs;
+                            }
+                        } else if (data.trim() && !data.startsWith('Executing') && !data.startsWith('***')) {
                             stataOutputChannel.appendLine(data);
                             fullOutput += data + '\n';
                         }
@@ -1747,23 +1833,23 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
 
             // Parse and display graphs
             const autoDisplayGraphs = config.get('autoDisplayGraphs', true);
-            if (autoDisplayGraphs && fullOutput) {
-                const graphs = parseGraphsFromOutput(fullOutput);
-                if (graphs.length > 0) {
-                    await displayGraphs(graphs, host, port);
-                }
+            if (autoDisplayGraphs) {
+                const graphs = streamedGraphs.length > 0 ? streamedGraphs : parseGraphsFromOutput(fullOutput);
+                await updateDisplayedGraphsForExecution(graphs, host, port);
             }
 
             return fullOutput || 'Selection executed successfully';
 
         } else {
+            const executionId = createExecutionId('command');
             // Non-streaming for run_command (simple MCP calls)
             const paramName = 'command';
             const requestBody = {
                 tool: toolName,
                 parameters: {
                     [paramName]: code,
-                    working_dir: workingDir
+                    working_dir: workingDir,
+                    execution_id: executionId
                 }
             };
 
@@ -1786,10 +1872,9 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
 
                     const autoDisplayGraphs = config.get('autoDisplayGraphs', true);
                     if (autoDisplayGraphs) {
-                        const graphs = parseGraphsFromOutput(outputContent);
-                        if (graphs.length > 0) {
-                            await displayGraphs(graphs, host, port);
-                        }
+                        const graphs = normalizeGraphMetadata(result.graphs || []);
+                        const resolvedGraphs = graphs.length > 0 ? graphs : parseGraphsFromOutput(outputContent);
+                        await updateDisplayedGraphsForExecution(resolvedGraphs, host, port);
                     }
 
                     return outputContent;
@@ -1928,11 +2013,13 @@ async function executeStataFile(filePath) {
         Logger.debug(`Executing via /run_file/stream: ${filePath}`);
         stataOutputChannel.clear();
         stataOutputChannel.show(false);  // Show output panel
+        const executionId = createExecutionId('file');
 
         // Build query parameters
         const params = new URLSearchParams({
             file_path: filePath,
-            timeout: runFileTimeout.toString()
+            timeout: runFileTimeout.toString(),
+            execution_id: executionId
         });
         if (workingDir) {
             params.append('working_dir', workingDir);
@@ -1945,6 +2032,7 @@ async function executeStataFile(filePath) {
         // Use axios with responseType 'stream' for SSE
         let fullOutput = '';
         let hasError = false;
+        let streamedGraphs = [];
 
         // Create AbortController to allow cancellation when stop is pressed
         currentStreamAbortController = new AbortController();
@@ -1980,6 +2068,11 @@ async function executeStataFile(filePath) {
                             data.startsWith('*** Execution')) {
                             // Status message - could show in status bar
                             Logger.debug(`Stream status: ${data}`);
+                        } else if (data.startsWith(GRAPH_METADATA_PREFIX)) {
+                            const parsedGraphs = parseGraphMetadataPayload(data);
+                            if (parsedGraphs) {
+                                streamedGraphs = parsedGraphs;
+                            }
                         } else if (data.startsWith('Error:') || data.startsWith('ERROR:')) {
                             hasError = true;
                             stataOutputChannel.appendLine(data);
@@ -1997,7 +2090,12 @@ async function executeStataFile(filePath) {
                 // Process any remaining buffer
                 if (buffer.startsWith('data: ')) {
                     const data = buffer.substring(6);
-                    if (data.trim() && !data.startsWith('Starting') && !data.startsWith('Executing') && !data.startsWith('***')) {
+                    if (data.startsWith(GRAPH_METADATA_PREFIX)) {
+                        const parsedGraphs = parseGraphMetadataPayload(data);
+                        if (parsedGraphs) {
+                            streamedGraphs = parsedGraphs;
+                        }
+                    } else if (data.trim() && !data.startsWith('Starting') && !data.startsWith('Executing') && !data.startsWith('***')) {
                         stataOutputChannel.appendLine(data);
                         fullOutput += data + '\n';
                     }
@@ -2016,11 +2114,9 @@ async function executeStataFile(filePath) {
 
         // Parse and display any graphs
         const autoDisplayGraphs = config.get('autoDisplayGraphs', true);
-        if (autoDisplayGraphs && fullOutput) {
-            const graphs = parseGraphsFromOutput(fullOutput);
-            if (graphs.length > 0) {
-                await displayGraphs(graphs, host, port);
-            }
+        if (autoDisplayGraphs) {
+            const graphs = streamedGraphs.length > 0 ? streamedGraphs : parseGraphsFromOutput(fullOutput);
+            await updateDisplayedGraphsForExecution(graphs, host, port, 'run_file');
         }
 
         return fullOutput || 'File executed successfully';
@@ -3018,157 +3114,516 @@ function parseGraphsFromOutput(output) {
     return graphs;
 }
 
-// Global variable for graph viewer panel
+// Graph viewer state
+const graphStore = new GraphStore();
 let graphViewerPanel = null;
-let allGraphs = {}; // Store all graphs by name to accumulate them
+let graphViewerReady = false;
+let graphViewerSnapshotVersion = 0;
+let pendingGraphViewerSnapshot = null;
+let embeddedGraphViewerAssets = null;
+const GRAPH_VIEWER_FALLBACK_STYLESHEET = `
+html {
+    box-sizing: border-box;
+}
+
+*, *:before, *:after {
+    box-sizing: inherit;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    margin: 0;
+    padding: 20px;
+    background-color: var(--vscode-editor-background, #1e1e1e);
+    color: var(--vscode-editor-foreground, #cccccc);
+}
+
+.header {
+    border-bottom: 2px solid var(--vscode-panel-border, #3e3e42);
+    padding-bottom: 15px;
+    margin-bottom: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+
+.header-left h1 {
+    margin: 0;
+    font-size: 24px;
+    color: var(--vscode-foreground, #cccccc);
+}
+
+.graph-count {
+    color: var(--vscode-descriptionForeground, #858585);
+    font-size: 14px;
+    margin-top: 5px;
+}
+
+.clear-button {
+    background-color: var(--vscode-button-background, #0e639c);
+    color: var(--vscode-button-foreground, #ffffff);
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.error {
+    color: var(--vscode-errorForeground, #f48771);
+    background-color: var(--vscode-inputValidation-errorBackground, #5f1f1f);
+    padding: 12px;
+    border-radius: 4px;
+    margin-top: 10px;
+}
+
+.no-graphs {
+    color: var(--vscode-descriptionForeground, #858585);
+    font-style: italic;
+    padding: 20px;
+    text-align: center;
+}
+`;
+const GRAPH_VIEWER_FALLBACK_SCRIPT = `
+(function () {
+    let vscodeApi = null;
+
+    try {
+        if (typeof acquireVsCodeApi === 'function') {
+            vscodeApi = acquireVsCodeApi();
+        }
+    } catch (_) {
+        vscodeApi = null;
+    }
+
+    function postMessage(payload) {
+        if (vscodeApi) {
+            vscodeApi.postMessage(payload);
+        }
+    }
+
+    function renderError(message) {
+        const container = document.getElementById('graphs-container');
+        if (!container) {
+            return;
+        }
+
+        const node = document.createElement('div');
+        node.className = 'error';
+        node.textContent = message;
+        container.replaceChildren(node);
+    }
+
+    function initialize() {
+        const message = 'Graph viewer assets could not be loaded. Reinstall the extension package.';
+        renderError(message);
+        postMessage({
+            command: 'graphViewerClientError',
+            version: 0,
+            message,
+            filename: 'fallback-graph-viewer',
+            lineno: -1,
+            colno: -1
+        });
+        postMessage({
+            command: 'graphViewerReady',
+            version: 0
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initialize, { once: true });
+    } else {
+        initialize();
+    }
+})();
+`;
+
+function graphViewerDebug(message) {
+    Logger.debug(message);
+}
+
+function isDisposedWebviewError(error) {
+    const message = error && error.message ? error.message : String(error || '');
+    return /webview is disposed/i.test(message) || /disposed/i.test(message);
+}
+
+function resetGraphViewerPanelReference(reason, error = null) {
+    const errorText = error && error.message ? error.message : (error ? String(error) : '');
+    const suffix = errorText ? ` error='${errorText}'` : '';
+    graphViewerDebug(`[GraphViewer] resetting panel reason=${reason}${suffix}`);
+    graphViewerPanel = null;
+    graphViewerReady = false;
+    pendingGraphViewerSnapshot = null;
+}
 
 function getGraphsDir() {
+    return getGraphStorageRoot();
+}
+
+function getLegacyExtensionGraphsDir() {
     const extensionPath = globalContext.extensionPath || __dirname;
     return path.join(extensionPath, 'graphs');
+}
+
+function getGraphStorageRoot() {
+    const fallbackRoot = path.join(os.tmpdir(), 'stata_mcp_graphs');
+
+    try {
+        const preferredRoot = globalContext && globalContext.globalStorageUri && globalContext.globalStorageUri.fsPath
+            ? path.join(globalContext.globalStorageUri.fsPath, 'graphs-cache')
+            : fallbackRoot;
+        fs.mkdirSync(preferredRoot, { recursive: true });
+        return preferredRoot;
+    } catch (error) {
+        Logger.debug(`Falling back to temp graph storage root: ${error.message}`);
+        try {
+            fs.mkdirSync(fallbackRoot, { recursive: true });
+        } catch (_) {
+            // Best effort.
+        }
+        return fallbackRoot;
+    }
+}
+
+function getGraphLocalResourceRoots() {
+    const roots = [
+        getGraphStorageRoot(),
+        getLegacyExtensionGraphsDir(),
+        path.join(os.tmpdir(), 'stata_mcp_graphs')
+    ];
+
+    const seen = new Set();
+    const uris = [];
+    for (const root of roots) {
+        const resolved = ensureDirRealPath(root);
+        if (!resolved || seen.has(resolved)) {
+            continue;
+        }
+        seen.add(resolved);
+        uris.push(vscode.Uri.file(resolved));
+    }
+    return uris;
+}
+
+function getMediaDir() {
+    const extensionPath = globalContext.extensionPath || __dirname;
+    return path.join(extensionPath, 'media');
+}
+
+function getNonce() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let nonce = '';
+    for (let i = 0; i < 32; i++) {
+        nonce += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return nonce;
+}
+
+function escapeInlineWebviewTagContent(content, tagName) {
+    if (!content) {
+        return '';
+    }
+    const closingTagPattern = new RegExp(`</${tagName}`, 'gi');
+    return String(content).replace(closingTagPattern, `<\\/${tagName}`);
+}
+
+function getEmbeddedGraphViewerAssets() {
+    if (embeddedGraphViewerAssets) {
+        return embeddedGraphViewerAssets;
+    }
+
+    let stylesheet = GRAPH_VIEWER_FALLBACK_STYLESHEET;
+    let script = GRAPH_VIEWER_FALLBACK_SCRIPT;
+
+    try {
+        const mediaDir = getMediaDir();
+        const stylesheetPath = path.join(mediaDir, 'graph-viewer.css');
+        const scriptPath = path.join(mediaDir, 'graph-viewer.js');
+
+        stylesheet = fs.readFileSync(stylesheetPath, 'utf8');
+        script = fs.readFileSync(scriptPath, 'utf8');
+    } catch (error) {
+        Logger.error(`Failed to load graph viewer media assets: ${error.message}`);
+    }
+
+    embeddedGraphViewerAssets = {
+        stylesheet: escapeInlineWebviewTagContent(stylesheet, 'style'),
+        script: escapeInlineWebviewTagContent(script, 'script')
+    };
+
+    return embeddedGraphViewerAssets;
+}
+
+// Resolve a path through symlinks / reparse points.
+// Critical for VS Code webview localResourceRoots and asWebviewUri: the webview
+// security layer compares actual (resolved) file paths against localResourceRoots,
+// so we must supply resolved paths. Examples where this matters:
+//   macOS:  /var/folders/... actually lives at /private/var/folders/...
+//   Linux:  /tmp may be a symlink, /home may be mounted via symlink
+//   Windows: OneDrive uses reparse points; 8.3 short vs long names
+//   Any OS: extensions installed under Dropbox/iCloud/Google Drive-synced dirs
+// If the target path doesn't exist, resolve its nearest existing ancestor and
+// re-join the remainder — this lets us realpath a file-to-be-created correctly.
+function toRealPath(p) {
+    try {
+        const fs = require('fs');
+        // Fast path: the target already exists, realpath it directly.
+        if (fs.existsSync(p)) {
+            return fs.realpathSync(p);
+        }
+        // Walk up to the nearest existing ancestor, realpath that, then re-join
+        // the missing segments in original order.
+        let cursor = p;
+        const missing = [];  // innermost-first; reversed when rejoining
+        while (cursor && cursor !== path.dirname(cursor)) {
+            const parent = path.dirname(cursor);
+            missing.push(path.basename(cursor));
+            if (fs.existsSync(parent)) {
+                return path.join(fs.realpathSync(parent), ...missing.reverse());
+            }
+            cursor = parent;
+        }
+        return p;
+    } catch (_) {
+        return p;
+    }
+}
+
+// Ensure a directory exists and return its realpath. Used only for directory
+// roots (localResourceRoots), never for file paths — creating a directory at a
+// file path (e.g. graph.png) would break image loading.
+function ensureDirRealPath(dir) {
+    try {
+        const fs = require('fs');
+        try { fs.mkdirSync(dir, { recursive: true }); } catch (_) { /* best effort */ }
+        return toRealPath(dir);
+    } catch (_) {
+        return dir;
+    }
 }
 
 function getGraphWebviewUri(webview, graph) {
     // Convert a graph's disk path to a webview-compatible URI.
     // This works in all environments: local, Remote-SSH, code-server, Codespaces.
-    if (graph.path) {
-        // Normalize forward slashes back to OS path separators
-        const normalizedPath = graph.path.replace(/\//g, path.sep);
-        return webview.asWebviewUri(vscode.Uri.file(normalizedPath)).toString();
-    }
-    // Fallback: construct path from graphs directory + name
-    const graphFile = path.join(getGraphsDir(), `${graph.name}.png`);
-    return webview.asWebviewUri(vscode.Uri.file(graphFile)).toString();
+    const rawPath = graph.path || path.join(getGraphsDir(), `${graph.name}.png`);
+    // Normalize slashes and resolve symlinks so the URI the webview generates
+    // matches the actual file path the security layer checks against.
+    const normalizedPath = rawPath.replace(/\//g, path.sep);
+    const resolvedPath = toRealPath(normalizedPath);
+    return webview.asWebviewUri(vscode.Uri.file(resolvedPath)).toString();
 }
 
 async function displayGraphs(graphs, host, port) {
-    if (!graphs || graphs.length === 0) {
+    await updateDisplayedGraphsForExecution(graphs, host, port, 'legacy');
+}
+
+function buildGraphViewerSnapshot(webview) {
+    return graphStore.getSnapshot(graph => {
+        let src = '';
+        try {
+            src = getGraphWebviewUri(webview, graph);
+        } catch (error) {
+            Logger.error(`Failed to resolve graph URI for ${graph.name}: ${error.message}`);
+        }
+
+        return {
+            src,
+            alt: graph.name,
+            errorText: `Failed to load graph: ${graph.name}`
+        };
+    });
+}
+
+function queueGraphViewerSnapshot(reason = 'update') {
+    if (!graphViewerPanel) {
+        return false;
+    }
+
+    try {
+        const snapshot = buildGraphViewerSnapshot(graphViewerPanel.webview);
+        pendingGraphViewerSnapshot = {
+            ...snapshot,
+            version: ++graphViewerSnapshotVersion
+        };
+
+        flushGraphViewerSnapshot();
+        return true;
+    } catch (error) {
+        if (isDisposedWebviewError(error)) {
+            resetGraphViewerPanelReference(`queue:${reason}`, error);
+            return false;
+        }
+        throw error;
+    }
+}
+
+function flushGraphViewerSnapshot() {
+    if (!graphViewerPanel || !graphViewerReady || !pendingGraphViewerSnapshot) {
         return;
     }
 
+    const snapshot = pendingGraphViewerSnapshot;
+
+    try {
+        Promise.resolve(graphViewerPanel.webview.postMessage({
+            command: 'hydrateGraphs',
+            snapshot
+        }))
+            .then(delivered => {
+                if (!delivered) {
+                    graphViewerDebug(`[GraphViewer] snapshot dropped version=${snapshot.version}`);
+                }
+            })
+            .catch(error => {
+                if (isDisposedWebviewError(error)) {
+                    resetGraphViewerPanelReference(`post:${snapshot.version}`, error);
+                    return;
+                }
+                Logger.error(`Failed to post graph viewer snapshot: ${error.message || String(error)}`);
+            });
+    } catch (error) {
+        if (isDisposedWebviewError(error)) {
+            resetGraphViewerPanelReference(`post-sync:${snapshot.version}`, error);
+            return;
+        }
+        throw error;
+    }
+}
+
+function ensureGraphViewerPanel() {
+    if (graphViewerPanel) {
+        return graphViewerPanel;
+    }
+
+    const localResourceRoots = getGraphLocalResourceRoots();
+
+    graphViewerReady = false;
+    graphViewerPanel = vscode.window.createWebviewPanel(
+        'stataGraphViewerV2',
+        'Stata Graphs',
+        { viewColumn: vscode.ViewColumn.Beside, preserveFocus: false },
+        {
+            enableScripts: true,
+            retainContextWhenHidden: false,
+            enableCommandUris: true,
+            localResourceRoots
+        }
+    );
+    graphViewerPanel.webview.html = getGraphViewerHtml(graphViewerPanel.webview);
+
+    graphViewerPanel.onDidChangeViewState(
+        event => {
+            if (!event.webviewPanel.visible) {
+                graphViewerReady = false;
+            } else if (graphViewerReady) {
+                flushGraphViewerSnapshot();
+            }
+        },
+        null,
+        globalContext.subscriptions
+    );
+
+    graphViewerPanel.onDidDispose(
+        () => {
+            graphViewerPanel = null;
+            graphViewerReady = false;
+            pendingGraphViewerSnapshot = null;
+        },
+        null,
+        globalContext.subscriptions
+    );
+
+    graphViewerPanel.webview.onDidReceiveMessage(
+        message => {
+            if (message.command === 'clearGraphs') {
+                graphStore.clear();
+                queueGraphViewerSnapshot('manual-clear');
+            } else if (message.command === 'graphViewerReady') {
+                graphViewerReady = true;
+                if (!pendingGraphViewerSnapshot) {
+                    queueGraphViewerSnapshot('ready-sync');
+                } else {
+                    flushGraphViewerSnapshot();
+                }
+            } else if (message.command === 'graphImageError') {
+                graphViewerDebug(
+                    `[GraphViewer] image failed version=${message.version ?? 'unknown'} ` +
+                    `name='${message.name || 'unknown'}' src='${message.src || ''}'`
+                );
+            } else if (message.command === 'graphViewerClientError') {
+                graphViewerDebug(
+                    `[GraphViewer] client error version=${message.version ?? 'unknown'}: ${message.message} ` +
+                    `file='${message.filename || 'unknown'}' line=${message.lineno ?? -1} col=${message.colno ?? -1}`
+                );
+            }
+        },
+        undefined,
+        globalContext.subscriptions
+    );
+
+    return graphViewerPanel;
+}
+
+function displayGraphsInVSCode(graphs, host, port, source = 'execution') {
+    const batch = createGraphBatch(graphs, source);
+    const snapshotReason = `replace-batch:${source}`;
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+        graphStore.replaceBatch(batch);
+        const hadExistingPanel = !!graphViewerPanel;
+
+        try {
+            const panel = ensureGraphViewerPanel();
+            queueGraphViewerSnapshot(snapshotReason);
+            if (hadExistingPanel) {
+                panel.reveal(panel.viewColumn, false);
+            }
+            Logger.info(`Displayed ${batch.graphs.length} graph(s) in VS Code webview`);
+            return;
+        } catch (error) {
+            if (attempt === 0 && isDisposedWebviewError(error)) {
+                resetGraphViewerPanelReference(`display:${source}:attempt-${attempt + 1}`, error);
+                continue;
+            }
+            throw error;
+        }
+    }
+}
+
+function clearDisplayedGraphsInVSCode(reason = 'clear') {
+    graphStore.clear();
+    if (!graphViewerPanel) {
+        return;
+    }
+    queueGraphViewerSnapshot(reason);
+}
+
+async function updateDisplayedGraphsForExecution(graphs, host, port, source = 'execution') {
+    const normalizedGraphs = normalizeGraphMetadata(graphs);
     const config = getConfig();
     const displayMethod = config.get('graphDisplayMethod') || 'vscode';
 
     if (displayMethod === 'vscode') {
-        Logger.info(`Displaying ${graphs.length} graph(s) in VS Code webview`);
-        displayGraphsInVSCode(graphs, host, port);
-    } else {
-        Logger.info(`Displaying ${graphs.length} graph(s) in external browser`);
-        displayGraphsInBrowser(graphs, host, port);
-    }
-}
-
-function displayGraphsInVSCode(graphs, host, port) {
-    // Create or reuse graph viewer panel
-    if (!graphViewerPanel) {
-        graphViewerPanel = vscode.window.createWebviewPanel(
-            'stataGraphViewer',
-            'Stata Graphs',
-            { viewColumn: vscode.ViewColumn.Beside, preserveFocus: false },
-            {
-                enableScripts: true,
-                retainContextWhenHidden: true,
-                enableCommandUris: true,
-                localResourceRoots: [
-                    vscode.Uri.file(getGraphsDir()),
-                    vscode.Uri.file(path.join(os.tmpdir(), 'stata_mcp_graphs'))
-                ]
-            }
-        );
-
-        graphViewerPanel.onDidDispose(
-            () => {
-                graphViewerPanel = null;
-                allGraphs = {}; // Clear graphs when panel is closed
-            },
-            null,
-            globalContext.subscriptions
-        );
-
-        // Handle messages from webview
-        graphViewerPanel.webview.onDidReceiveMessage(
-            message => {
-                if (message.command === 'clearGraphs') {
-                    allGraphs = {};
-                    updateGraphViewerPanel();
-                }
-            },
-            undefined,
-            globalContext.subscriptions
-        );
-    }
-
-    // Add new graphs to the collection (or update existing ones)
-    const timestamp = Date.now();
-    graphs.forEach((graph, index) => {
-        allGraphs[graph.name] = {
-            ...graph,
-            timestamp: timestamp,
-            index: index  // Preserve order within batch
-        };
-    });
-
-    updateGraphViewerPanel();
-    graphViewerPanel.reveal(vscode.ViewColumn.Beside);
-
-    Logger.info(`Displayed ${graphs.length} graph(s) in VS Code webview (total: ${Object.keys(allGraphs).length})`);
-}
-
-function updateGraphViewerPanel() {
-    if (!graphViewerPanel) return;
-
-    // Cap graph history at 50 to prevent DOM bloat and scroll lockup
-    const graphKeys = Object.keys(allGraphs);
-    if (graphKeys.length > 50) {
-        const sorted = graphKeys.sort((a, b) => (allGraphs[a].timestamp || 0) - (allGraphs[b].timestamp || 0));
-        const toRemove = sorted.slice(0, sorted.length - 50);
-        toRemove.forEach(key => delete allGraphs[key]);
-    }
-
-    // Display: last graph at top (duplicated), then all graphs in order
-    // e.g., for 4 graphs: graph4, graph1, graph2, graph3, graph4 (5 figures total)
-    const allGraphsArray = Object.values(allGraphs);
-
-    // Group by batch (timestamp) and sort batches by timestamp desc
-    const batches = {};
-    allGraphsArray.forEach(g => {
-        const ts = g.timestamp;
-        if (!batches[ts]) batches[ts] = [];
-        batches[ts].push(g);
-    });
-
-    // Build final array: for each batch, last graph first, then all in order
-    const graphsArray = [];
-    const sortedTimestamps = Object.keys(batches).sort((a, b) => b - a);  // Newest batch first
-
-    for (const ts of sortedTimestamps) {
-        const batchGraphs = batches[ts].sort((a, b) => a.index - b.index);  // Sort by index
-        if (batchGraphs.length > 1) {
-            // Multiple graphs: Add last graph first at top as "Last Graph", then all graphs in order
-            const lastGraph = batchGraphs[batchGraphs.length - 1];
-            graphsArray.push({ ...lastGraph, displayName: 'Last Graph' });
-            batchGraphs.forEach(g => graphsArray.push(g));
-        } else if (batchGraphs.length === 1) {
-            // Single graph: Just show it once (no need for separate "Last Graph")
-            graphsArray.push(batchGraphs[0]);
+        if (normalizedGraphs.length === 0) {
+            clearDisplayedGraphsInVSCode(`empty-batch:${source}`);
+            return;
         }
+
+        Logger.info(`Displaying ${normalizedGraphs.length} graph(s) in VS Code webview`);
+        displayGraphsInVSCode(normalizedGraphs, host, port, source);
+        return;
     }
 
-    // Generate HTML for graphs using webview URIs (works in remote environments)
-    const graphsHtml = graphsArray.map(graph => {
-        const graphUrl = escapeHtml(getGraphWebviewUri(graphViewerPanel.webview, graph));
-        const displayName = graph.displayName || graph.name;
-        return `
-            <div class="graph-container" data-graph-name="${escapeHtml(graph.name)}">
-                <h3>${escapeHtml(displayName)}</h3>
-                <img src="${graphUrl}" alt="${escapeHtml(graph.name)}"
-                     onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
-                <div class="error" style="display:none;">Failed to load graph: ${escapeHtml(graph.name)}</div>
-            </div>
-        `;
-    }).join('');
+    graphStore.clear();
 
-    const cspSource = graphViewerPanel.webview.cspSource;
-    graphViewerPanel.webview.html = getGraphViewerHtml(graphsHtml, graphsArray.length, cspSource);
+    if (normalizedGraphs.length === 0) {
+        return;
+    }
+
+    Logger.info(`Displaying ${normalizedGraphs.length} graph(s) in external browser`);
+    await displayGraphsInBrowser(normalizedGraphs, host, port);
 }
 
 async function displayGraphsInBrowser(graphs, host, port) {
@@ -3178,8 +3633,11 @@ async function displayGraphsInBrowser(graphs, host, port) {
             // the path in code-server environments
             const baseUri = await vscode.env.asExternalUri(vscode.Uri.parse(`http://${host}:${port}`));
             const basePath = baseUri.path.replace(/\/+$/, '');
+            const browserPath = graph.browserPath
+                ? (graph.browserPath.startsWith('/') ? graph.browserPath : `/${graph.browserPath}`)
+                : `/graphs/${encodeURIComponent(graph.name)}`;
             const fullUri = baseUri.with({
-                path: basePath + '/graphs/' + encodeURIComponent(graph.name)
+                path: basePath + browserPath
             });
             Logger.info(`Opening graph in external browser: ${fullUri.toString()}`);
             await vscode.env.openExternal(fullUri);
@@ -3189,110 +3647,32 @@ async function displayGraphsInBrowser(graphs, host, port) {
     }
 }
 
-function getGraphViewerHtml(graphsHtml, graphCount, cspSource) {
+function getGraphViewerHtml(webview) {
+    const cspSource = webview.cspSource;
+    const nonce = getNonce();
+    const assets = getEmbeddedGraphViewerAssets();
+
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${cspSource} data:; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${cspSource} data:; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
     <title>Stata Graphs</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            margin: 0;
-            padding: 20px;
-            height: 100vh;
-            overflow-y: auto;
-            box-sizing: border-box;
-            background-color: var(--vscode-editor-background);
-            color: var(--vscode-editor-foreground);
-        }
-        .header {
-            border-bottom: 2px solid var(--vscode-panel-border);
-            padding-bottom: 15px;
-            margin-bottom: 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .header-left h1 {
-            margin: 0;
-            font-size: 24px;
-            color: var(--vscode-foreground);
-        }
-        .header-left .graph-count {
-            color: var(--vscode-descriptionForeground);
-            font-size: 14px;
-            margin-top: 5px;
-        }
-        .clear-button {
-            background-color: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-            border: none;
-            padding: 8px 16px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 13px;
-            transition: background-color 0.2s;
-        }
-        .clear-button:hover {
-            background-color: var(--vscode-button-hoverBackground);
-        }
-        .graph-container {
-            background-color: var(--vscode-editor-background);
-            border: 1px solid var(--vscode-panel-border);
-            border-radius: 4px;
-            padding: 20px;
-            margin-bottom: 20px;
-            text-align: center;
-        }
-        .graph-container h3 {
-            margin-top: 0;
-            margin-bottom: 15px;
-            color: var(--vscode-foreground);
-            font-size: 16px;
-        }
-        .graph-container img {
-            max-width: 100%;
-            height: auto;
-            border: 1px solid var(--vscode-panel-border);
-            border-radius: 4px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }
-        .error {
-            color: var(--vscode-errorForeground);
-            background-color: var(--vscode-inputValidation-errorBackground);
-            padding: 10px;
-            border-radius: 4px;
-            margin-top: 10px;
-        }
-        .no-graphs {
-            color: var(--vscode-descriptionForeground);
-            font-style: italic;
-            padding: 20px;
-            text-align: center;
-        }
-    </style>
+    <style>${assets.stylesheet}</style>
 </head>
 <body>
     <div class="header">
         <div class="header-left">
             <h1>Stata Graphs</h1>
-            <div class="graph-count">${graphCount} graph(s) displayed</div>
+            <div class="graph-count" id="graph-count">0 graph(s) displayed</div>
         </div>
-        <button class="clear-button" onclick="clearGraphs()">Clear All</button>
+        <button class="clear-button" type="button" id="clear-graphs-button">Clear All</button>
     </div>
     <div id="graphs-container">
-        ${graphsHtml || '<div class="no-graphs">No graphs to display</div>'}
+        <div class="no-graphs">No graphs to display</div>
     </div>
-    <script>
-        const vscode = acquireVsCodeApi();
-
-        function clearGraphs() {
-            vscode.postMessage({ command: 'clearGraphs' });
-        }
-    </script>
+    <script nonce="${nonce}">${assets.script}</script>
 </body>
 </html>`;
 }

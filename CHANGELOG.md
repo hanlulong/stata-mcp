@@ -2,6 +2,29 @@
 
 All notable changes to the Stata MCP extension will be documented in this file.
 
+## [0.5.2] - 2026-04-19
+
+### Changed
+- **Graph viewer rewritten with stable webview shell** (Issue #60): Replaced full-document HTML replacement on every update with a persistent webview shell that hydrates incrementally via `postMessage`. External CSS/JS assets (`media/graph-viewer.css`, `media/graph-viewer.js`) are loaded with a nonce-based Content Security Policy matching Microsoft's recommended webview pattern. Inline event handlers and inline styles were removed.
+- **Execution-scoped graph artifacts**: Each batch of graphs now lives under its own execution-scoped directory with a manifest, instead of overwriting shared filenames like `graph1.png`, `graph2.png`. The extension passes an explicit graph storage root to the Python server so the two agree on paths.
+- **Graph state moved to a dedicated `GraphStore`**: Centralizes batch tracking on the extension side, replacing the ad-hoc `allGraphs` object used in prior versions.
+- **Webview resource paths resolved through `fs.realpathSync`**: `localResourceRoots` and `asWebviewUri` now see canonical paths, so images load correctly on filesystems with symlinks or reparse points in the ancestor chain (macOS `/private/var`, Linux symlinked `/tmp`, Windows OneDrive reparse points, cloud-synced install locations).
+
+### Fixed
+- **"Already preserved r(621)" error after running `preserve`** (Issue #58): The Data Viewer's filter feature used Stata's `preserve`/`restore` internally; a failed restore left the session in a stuck preserved state, so the user's next `preserve` would fail. Replaced preserve/restore with an isolated `frame copy` that never touches the user's preserve stack, data, or variables.
+- **Session restart now clears stuck preserve state**: Users already stuck in the r(621) state can recover by running the "Restart Stata Session" command.
+- **Help endpoint if/else syntax error**: Fixed malformed Stata code in the HTML help lookup that put a command between `}` and `else`.
+- **View Data toolbar button hidden in overflow**: Added explicit `navigation@N` ordering to all editor-title contributions so VS Code keeps the View Data button visible instead of pushing it to the `...` overflow menu.
+- **Graph viewer black-screen / missing content** (Issue #60): Addressed by the webview rewrite and path-resolution changes above. Also added defensive `onerror` handling and server-side file-size validation so empty/corrupt PNG exports are logged as warnings instead of silently displayed.
+
+### Hardened
+- **Session manager**: Explicit `session_id` requests no longer silently reroute to a different session when the target is busy; callers now see a brief wait and then a clear busy response. Execution timeouts recover the session in place under the same `session_id`, dead default sessions are recovered instead of ignored, and recovery is surfaced to callers via response metadata. Non-execution timeouts (e.g. `GET_DATA`) no longer reset a session unnecessarily, and auto-create failures preserve their underlying error.
+
+### Tests
+- Added `tests/test_graph_artifacts.py` covering the new execution-scoped artifact layer.
+- Rewrote `tests/test_notifications.py` and `tests/test_streaming_http.py` to make real assertions when a local integration server is available and skip cleanly when it is not (previously they passed vacuously).
+- Expanded `tests/test_session_manager.py` to cover the session hardening changes.
+
 ## [0.5.1] - 2026-03-28
 
 ### Fixed

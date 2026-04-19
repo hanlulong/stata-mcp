@@ -21,6 +21,7 @@ import queue
 import unittest
 import threading
 import multiprocessing
+from unittest import mock
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -128,6 +129,220 @@ class TestSessionManagerConfiguration(unittest.TestCase):
         # Should return True without creating workers
         self.assertTrue(manager.start())
         manager.stop()
+
+
+class FakeProcess:
+    """Minimal process stub for unit tests."""
+
+    def __init__(self, alive=True):
+        self._alive = alive
+
+    def is_alive(self):
+        return self._alive
+
+
+class FakeQueue:
+    """Minimal queue stub for unit tests."""
+
+    def __init__(self):
+        self.items = []
+
+    def put(self, item):
+        self.items.append(item)
+
+
+class TestSessionRouting(unittest.TestCase):
+    """Test session routing and recovery semantics without requiring Stata."""
+
+    def test_busy_session_waits_then_uses_same_session(self):
+        """A briefly busy session should be reused instead of silently rerouted."""
+        manager = SessionManager(
+            stata_path=STATA_PATH,
+            stata_edition=STATA_EDITION,
+            enabled=False
+        )
+        session = Session(
+            session_id="default",
+            state=SessionState.BUSY,
+            busy_since=time.time()
+        )
+        manager._sessions["default"] = session
+
+        def fake_wait(target_session, timeout):
+            self.assertEqual(target_session.session_id, "default")
+            self.assertLessEqual(timeout, manager.BUSY_WAIT_TIMEOUT)
+            target_session.state = SessionState.READY
+            target_session.busy_since = None
+            return True
+
+        manager.wait_for_ready = fake_wait
+        manager._execute_command = mock.Mock(return_value={"status": "success", "session_id": "default"})
+
+        result = manager.execute('display "test"')
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["session_id"], "default")
+        manager._execute_command.assert_called_once()
+        called_session = manager._execute_command.call_args[0][0]
+        self.assertEqual(called_session.session_id, "default")
+
+    def test_busy_session_returns_busy_error_without_creating_new_session(self):
+        """A still-busy session should error clearly instead of jumping to another session."""
+        manager = SessionManager(
+            stata_path=STATA_PATH,
+            stata_edition=STATA_EDITION,
+            enabled=True
+        )
+        session = Session(
+            session_id="abc123",
+            state=SessionState.BUSY,
+            busy_since=time.time()
+        )
+        manager._sessions["abc123"] = session
+        manager.wait_for_ready = mock.Mock(return_value=False)
+        manager.create_session = mock.Mock(side_effect=AssertionError("should not create a new session"))
+
+        result = manager.execute('display "test"', session_id="abc123", timeout=2.0)
+
+        self.assertEqual(result["status"], "error")
+        self.assertIn("Session busy", result["error"])
+        self.assertEqual(result["session_id"], "abc123")
+        manager.create_session.assert_not_called()
+
+    def test_command_timeout_recovers_session_in_place(self):
+        """A timed-out command should trigger recovery instead of marking the session ready."""
+        manager = SessionManager(
+            stata_path=STATA_PATH,
+            stata_edition=STATA_EDITION,
+            enabled=False
+        )
+        session = Session(
+            session_id="default",
+            state=SessionState.READY,
+            process=FakeProcess(alive=True),
+            command_queue=FakeQueue(),
+            result_queue=FakeQueue()
+        )
+        manager._sessions["default"] = session
+        manager._wait_for_matching_result = mock.Mock(return_value=None)
+        manager._recover_session = mock.Mock(return_value=True)
+
+        result = manager._execute_command(
+            session,
+            CommandType.EXECUTE,
+            {"code": 'display "timeout test"'},
+            timeout=1.0
+        )
+
+        self.assertEqual(result["status"], "timeout")
+        self.assertTrue(result["session_recovered"])
+        manager._recover_session.assert_called_once()
+        self.assertEqual(session.state, SessionState.BUSY)
+        self.assertIsNotNone(session.current_command_timeout)
+
+    def test_get_data_timeout_does_not_reset_session(self):
+        """A non-execution timeout should clear bookkeeping without resetting Stata state."""
+        manager = SessionManager(
+            stata_path=STATA_PATH,
+            stata_edition=STATA_EDITION,
+            enabled=False
+        )
+        session = Session(
+            session_id="default",
+            state=SessionState.READY,
+            process=FakeProcess(alive=True),
+            command_queue=FakeQueue(),
+            result_queue=FakeQueue()
+        )
+        manager._sessions["default"] = session
+        manager._wait_for_matching_result = mock.Mock(return_value=None)
+        manager._recover_session = mock.Mock(return_value=True)
+
+        result = manager._execute_command(
+            session,
+            CommandType.GET_DATA,
+            {"max_rows": 100},
+            timeout=1.0
+        )
+
+        self.assertEqual(result["status"], "timeout")
+        self.assertFalse(result["session_recovered"])
+        manager._recover_session.assert_not_called()
+        self.assertEqual(session.state, SessionState.READY)
+        self.assertIsNone(session.current_command_id)
+
+    def test_create_session_failure_is_reported(self):
+        """Auto-create failures should preserve the underlying reason."""
+        manager = SessionManager(
+            stata_path=STATA_PATH,
+            stata_edition=STATA_EDITION,
+            enabled=True
+        )
+        manager.create_session = mock.Mock(return_value=(False, "", "Maximum sessions (3) reached"))
+
+        result = manager.execute('display "test"', session_id="abc123")
+
+        self.assertEqual(result["status"], "error")
+        self.assertIn("Maximum sessions (3) reached", result["error"])
+        self.assertEqual(result["session_id"], "abc123")
+
+    def test_pre_execution_recovery_is_reported(self):
+        """Successful execution after recovery should tell callers that the session was reset."""
+        manager = SessionManager(
+            stata_path=STATA_PATH,
+            stata_edition=STATA_EDITION,
+            enabled=False
+        )
+        dead_session = Session(
+            session_id="default",
+            state=SessionState.READY,
+            is_default=True,
+            process=FakeProcess(alive=False)
+        )
+        recovered_session = Session(
+            session_id="default",
+            state=SessionState.READY,
+            is_default=True,
+            process=FakeProcess(alive=True)
+        )
+        manager._sessions["default"] = dead_session
+
+        def fake_recover(target_session, reason):
+            self.assertEqual(target_session.session_id, "default")
+            self.assertEqual(reason, "Worker process died")
+            manager._sessions["default"] = recovered_session
+            return True
+
+        manager._recover_session = fake_recover
+        manager._execute_command = mock.Mock(return_value={"status": "success", "session_id": "default"})
+
+        result = manager.execute('display "test"')
+
+        self.assertEqual(result["status"], "success")
+        self.assertTrue(result["session_recovered"])
+        self.assertEqual(result["session_recovery_reason"], "Worker process died")
+
+    def test_cleanup_recovers_dead_default_session(self):
+        """Cleanup should not ignore a dead default worker."""
+        manager = SessionManager(
+            stata_path=STATA_PATH,
+            stata_edition=STATA_EDITION,
+            enabled=False
+        )
+        session = Session(
+            session_id="default",
+            state=SessionState.READY,
+            is_default=True,
+            process=FakeProcess(alive=False)
+        )
+        manager._sessions["default"] = session
+        manager._recover_session = mock.Mock(return_value=True)
+
+        manager._check_sessions()
+
+        manager._recover_session.assert_called_once()
+        recovered_session = manager._recover_session.call_args[0][0]
+        self.assertEqual(recovered_session.session_id, "default")
 
 
 class TestSessionManagerLifecycle(unittest.TestCase):

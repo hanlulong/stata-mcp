@@ -44,6 +44,7 @@ class ToolResponse(BaseModel):
     status: str
     result: Optional[str] = None
     message: Optional[str] = None
+    graphs: Optional[List[Dict[str, Any]]] = None
 
 
 # =============================================================================
