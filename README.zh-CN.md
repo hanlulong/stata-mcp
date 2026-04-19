@@ -44,138 +44,59 @@
 
 > **注意：** 初始安装需要设置依赖项，可能需要最多 2 分钟完成。请在此一次性设置过程中保持耐心。所有后续运行将立即启动。
 
-### VS Code 安装
+1. 打开 **VS Code**、**Cursor** 或 **Antigravity**
+2. 打开扩展视图（`Ctrl+Shift+X` / `Cmd+Shift+X`）
+3. 搜索 **"Stata MCP"**
+4. 点击 **安装**
 
-#### 选项 1：从 VS Code 市场安装
+完成 — 扩展会自动启动 MCP 服务，状态栏会显示 **"Stata"**。
 
-直接从 [VS Code 市场](https://marketplace.visualstudio.com/items?itemName=DeepEcon.stata-mcp) 安装此扩展。
+<details>
+<summary><strong>其它安装方式</strong> — 命令行、.vsix 文件、Open VSX</summary>
+
+#### 命令行安装
 
 ```bash
+# VS Code
 code --install-extension DeepEcon.stata-mcp
+
+# Cursor
+cursor --install-extension DeepEcon.stata-mcp
+
+# Antigravity（从 Open VSX 注册表安装）
+antigravity --install-extension DeepEcon.stata-mcp
 ```
 
-或：
-1. 打开 VS Code
-2. 转到扩展视图（Ctrl+Shift+X）
-3. 搜索 "Stata MCP"
-4. 点击"安装"
+#### 从本地 .vsix 文件安装
 
-#### 选项 2：从 .vsix 文件安装
-
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.5.2.vsix`。
-2. 使用以下方法之一安装：
+从 [发布页面](https://github.com/hanlulong/stata-mcp/releases) 下载 `stata-mcp-<version>.vsix`，然后：
 
 ```bash
-code --install-extension path/to/stata-mcp-0.5.2.vsix
-```
-
-或：
-1. 打开 VS Code
-2. 转到扩展视图（Ctrl+Shift+X）
-3. 点击右上角的"..."菜单
-4. 选择"从 VSIX 安装..."
-5. 导航并选择下载的 .vsix 文件
-
-### Cursor 安装
-
-1. 从[发布页面](https://github.com/hanlulong/stata-mcp/releases)下载扩展包 `stata-mcp-0.5.2.vsix`。
-2. 使用以下方法之一安装：
-
-```bash
-cursor --install-extension path/to/stata-mcp-0.5.2.vsix
-```
-
-或：
-1. 打开 Cursor
-2. 转到扩展视图
-3. 点击"..."菜单
-4. 选择"从 VSIX 安装"
-5. 导航并选择下载的 .vsix 文件
-
-### Antigravity 安装
-
-Google Antigravity 默认使用 [Open VSX Registry](https://open-vsx.org/extension/DeepEcon/stata-mcp)，因此可以直接安装：
-
-1. 打开 Antigravity
-2. 转到扩展视图（Cmd+Shift+X）
-3. 搜索"Stata MCP"
-4. 点击"安装"
-
-或从 .vsix 文件安装：
-
-```bash
+code        --install-extension path/to/stata-mcp-0.5.2.vsix
+cursor      --install-extension path/to/stata-mcp-0.5.2.vsix
 antigravity --install-extension path/to/stata-mcp-0.5.2.vsix
 ```
 
+……或在界面中：扩展视图 → **…** 菜单 → **从 VSIX 安装…** → 选择下载的文件。
+
+#### 注册表
+
+- VS Code 市场：<https://marketplace.visualstudio.com/items?itemName=DeepEcon.stata-mcp>
+- Open VSX（Cursor / Antigravity）：<https://open-vsx.org/extension/DeepEcon/stata-mcp>
+
+</details>
+
 从 0.1.8 版本开始，该扩展集成了名为 `uv` 的快速 Python 包安装器来设置环境。如果在您的系统上找不到 uv，扩展将尝试自动安装它。
 
-## ⚡ 连接 AI 助手（快速配置）
+## ⚡ 连接您的 AI 助手
 
-扩展安装完成且状态栏显示 **"Stata"** 后，本地 MCP 服务已监听在 `http://localhost:4000/mcp`，您只需把 AI 助手指向它即可。
+扩展运行起来（状态栏显示 **"Stata"**）之后，把下面**这一行**粘贴给您的 AI 助手 — Claude Code、OpenAI Codex、Cursor AI、Copilot Chat 或任意支持 MCP 的客户端都可以：
 
-其它客户端（Claude Desktop、Cline、Cursor 等）的完整教程见下方 [详细配置](#详细配置)。这里只列出两大主流客户端的最小化可粘贴配置。
+> 我安装了 Stata MCP 扩展（https://github.com/hanlulong/stata-mcp）。请阅读该 README 的 "Detailed Configurations" 部分，自行完成连接本地 Stata MCP 服务所需的配置，然后确认 `stata_run_selection` 工具已可用。
 
-### Claude Code — CLI 与 VS Code / Cursor / Antigravity 扩展
+AI 助手会读取下方的每客户端说明，识别自己是哪种客户端，运行对应的命令（或修改对应的配置文件），并在需要时重启自己。
 
-Claude Code 的 CLI 和各 IDE 版本共享同一份配置，**一条命令全部搞定**。在任意终端中执行：
-
-```bash
-claude mcp add --transport sse stata-mcp http://localhost:4000/mcp --scope user
-```
-
-重启 Claude Code，然后运行 `claude mcp list` 确认 `stata-mcp` 已注册。
-
-> 💬 **或者让 Claude Code 自己配置** — 把下面这段提示粘贴到 Claude Code 对话中：
->
-> > 我刚刚安装了 Stata MCP VS Code 扩展。请运行 `claude mcp add --transport sse stata-mcp http://localhost:4000/mcp --scope user` 连接它，然后运行 `claude mcp list` 确认已注册。
-
-### OpenAI Codex — CLI 与 IDE 扩展
-
-Codex CLI 和所有 Codex IDE 扩展共享同一份配置文件：macOS/Linux 上是 `~/.codex/config.toml`，Windows 上是 `%USERPROFILE%\.codex\config.toml`。在文件末尾添加下面这一段：
-
-```toml
-[mcp_servers.stata-mcp]
-command = "uvx"
-args = ["mcp-proxy", "http://localhost:4000/mcp"]
-```
-
-这里使用 [`uvx`](https://docs.astral.sh/uv/guides/tools/) 按需运行 `mcp-proxy`，只要您装了 [`uv`](https://docs.astral.sh/uv/) 就不必手动安装其它包。如果还没装 `uv`：
-
-```bash
-# macOS / Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Windows（PowerShell）
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-重启 Codex，它会自动发现 `stata_run_selection` 和 `stata_run_file` 工具。
-
-> 💬 **或者让 Codex 自己配置** — 把下面这段提示粘贴到 Codex 对话中：
->
-> > 我刚刚安装了 Stata MCP VS Code 扩展。请把下面这段追加到我的 Codex MCP 配置文件（macOS/Linux 上是 `~/.codex/config.toml`，Windows 上是 `%USERPROFILE%\.codex\config.toml`），文件不存在就创建它。如果我还没装 `uv`，请先帮我装上。
-> > ```toml
-> > [mcp_servers.stata-mcp]
-> > command = "uvx"
-> > args = ["mcp-proxy", "http://localhost:4000/mcp"]
-> > ```
-
-### GitHub Copilot — VS Code 1.102+
-
-在工作区根目录创建 `.vscode/mcp.json`（或通过命令面板 *MCP: Open User Configuration* 编辑用户级文件），写入：
-
-```json
-{
-  "servers": {
-    "stata-mcp": {
-      "type": "sse",
-      "url": "http://localhost:4000/mcp"
-    }
-  }
-}
-```
-
-重新加载 VS Code，然后在 Copilot Chat 中输入 `@mcp` 确认工具已注册。
+想手动配置？展开下方的 **详细配置**，里面有每个客户端的可粘贴说明。
 
 ## 使用方法
 

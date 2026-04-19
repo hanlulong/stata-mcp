@@ -45,138 +45,59 @@ Watch how this extension enhances your Stata workflow with Cursor (or VS Code/An
 
 > **Note:** Initial installation requires setting up dependencies which may take up to 2 minutes to complete. Please be patient during this one-time setup process. All subsequent runs will start instantly.
 
-### VS Code Installation
+1. Open **VS Code**, **Cursor**, or **Antigravity**
+2. Open the Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`)
+3. Search for **"Stata MCP"**
+4. Click **Install**
 
-#### Option 1: From VS Code Marketplace
+That's it — the extension auto-starts the MCP server and appears in the status bar as **"Stata"**.
 
-Install this extension directly from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=DeepEcon.stata-mcp).
+<details>
+<summary><strong>Other installation methods</strong> — CLI, .vsix file, Open VSX</summary>
+
+#### From the command line
 
 ```bash
+# VS Code
 code --install-extension DeepEcon.stata-mcp
+
+# Cursor
+cursor --install-extension DeepEcon.stata-mcp
+
+# Antigravity (installs from Open VSX Registry)
+antigravity --install-extension DeepEcon.stata-mcp
 ```
 
-Or:
-1. Open VS Code
-2. Go to Extensions view (Ctrl+Shift+X)
-3. Search for "Stata MCP"
-4. Click "Install"
+#### From a local .vsix file
 
-#### Option 2: From .vsix file
-
-1. Download the extension package `stata-mcp-0.5.2.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
-2. Install using one of these methods:
+Download `stata-mcp-<version>.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases), then either:
 
 ```bash
-code --install-extension path/to/stata-mcp-0.5.2.vsix
-```
-
-Or:
-1. Open VS Code
-2. Go to Extensions view (Ctrl+Shift+X)
-3. Click on "..." menu in the top-right
-4. Select "Install from VSIX..."
-5. Navigate to and select the downloaded .vsix file
-
-### Cursor Installation
-
-1. Download the extension package `stata-mcp-0.5.2.vsix` from the [releases page](https://github.com/hanlulong/stata-mcp/releases).
-2. Install using one of these methods:
-
-```bash
-cursor --install-extension path/to/stata-mcp-0.5.2.vsix
-```
-
-Or:
-1. Open Cursor
-2. Go to Extensions view
-3. Click on the "..." menu
-4. Select "Install from VSIX"
-5. Navigate to and select the downloaded .vsix file
-
-### Antigravity Installation
-
-Google Antigravity uses the [Open VSX Registry](https://open-vsx.org/extension/DeepEcon/stata-mcp) by default, so you can install directly:
-
-1. Open Antigravity
-2. Go to Extensions view (Cmd+Shift+X)
-3. Search for "Stata MCP"
-4. Click "Install"
-
-Or install from .vsix file:
-
-```bash
+code        --install-extension path/to/stata-mcp-0.5.2.vsix
+cursor      --install-extension path/to/stata-mcp-0.5.2.vsix
 antigravity --install-extension path/to/stata-mcp-0.5.2.vsix
 ```
 
+…or in the UI: Extensions view → **…** menu → **Install from VSIX…** → pick the downloaded file.
+
+#### Registries
+
+- VS Code Marketplace: <https://marketplace.visualstudio.com/items?itemName=DeepEcon.stata-mcp>
+- Open VSX (Cursor / Antigravity): <https://open-vsx.org/extension/DeepEcon/stata-mcp>
+
+</details>
+
 Starting with version 0.1.8, the extension integrates a fast Python package installer called `uv` to set up the environment. If uv is not found on your system, the extension will attempt to install it automatically.
 
-## ⚡ Connect AI Assistants (Quick Setup)
+## ⚡ Connect Your AI Assistant
 
-Once the extension is installed and its status bar shows **"Stata"**, your local MCP server is listening at `http://localhost:4000/mcp`. You just need to point your AI assistant at it.
+Once the extension is running (status bar shows **"Stata"**), copy this **one line** into your AI assistant — Claude Code, OpenAI Codex, Cursor AI, Copilot Chat, or any other MCP-aware client:
 
-Full per-client walkthroughs (including Claude Desktop, Cline, Cursor) are in [Detailed Configurations](#detailed-configurations) below — the snippets here are the minimum paste-ready setup for the two most common clients.
+> I installed the Stata MCP extension (https://github.com/hanlulong/stata-mcp). Please read the "Detailed Configurations" section of that README and set yourself up to use the local Stata MCP server. Then confirm the `stata_run_selection` tool is available.
 
-### Claude Code — CLI and VS Code / Cursor / Antigravity extensions
+The assistant will read the per-client instructions below, detect which client it is, run the right command (or edit the right config file), and restart itself if needed.
 
-The CLI and every IDE variant of Claude Code share the same config, so **one command works everywhere**. Paste into any terminal:
-
-```bash
-claude mcp add --transport sse stata-mcp http://localhost:4000/mcp --scope user
-```
-
-Then restart Claude Code. Verify with `claude mcp list` — `stata-mcp` should appear.
-
-> 💬 **Or let Claude Code set itself up** — paste this prompt into any Claude Code chat:
->
-> > I just installed the Stata MCP VS Code extension. Please run `claude mcp add --transport sse stata-mcp http://localhost:4000/mcp --scope user` to connect to it, then show me the output of `claude mcp list` so I can confirm it's registered.
-
-### OpenAI Codex — CLI and IDE extensions
-
-Codex CLI and the Codex IDE extensions read **one shared config** at `~/.codex/config.toml` (macOS/Linux) or `%USERPROFILE%\.codex\config.toml` (Windows). Append this block:
-
-```toml
-[mcp_servers.stata-mcp]
-command = "uvx"
-args = ["mcp-proxy", "http://localhost:4000/mcp"]
-```
-
-This uses [`uvx`](https://docs.astral.sh/uv/guides/tools/) to run `mcp-proxy` on demand — no pre-install needed if you already have [`uv`](https://docs.astral.sh/uv/). If you don't, install it first:
-
-```bash
-# macOS / Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Windows (PowerShell)
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-Then restart Codex. It will auto-discover the `stata_run_selection` and `stata_run_file` tools.
-
-> 💬 **Or let Codex set itself up** — paste this prompt into any Codex session:
->
-> > I just installed the Stata MCP VS Code extension. Please append the following block to my Codex MCP config (`~/.codex/config.toml` on macOS/Linux, `%USERPROFILE%\.codex\config.toml` on Windows), creating the file if it doesn't exist. If `uv` is not installed, install it first.
-> > ```toml
-> > [mcp_servers.stata-mcp]
-> > command = "uvx"
-> > args = ["mcp-proxy", "http://localhost:4000/mcp"]
-> > ```
-
-### GitHub Copilot — VS Code 1.102+
-
-Drop into `.vscode/mcp.json` in your workspace (or the user-level file via Command Palette → *MCP: Open User Configuration*):
-
-```json
-{
-  "servers": {
-    "stata-mcp": {
-      "type": "sse",
-      "url": "http://localhost:4000/mcp"
-    }
-  }
-}
-```
-
-Reload VS Code, then type `@mcp` in Copilot Chat to confirm.
+Prefer to configure manually? Expand **Detailed Configurations** below for copy-paste instructions for each client.
 
 ## Usage
 
