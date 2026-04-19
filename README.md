@@ -91,9 +91,19 @@ Once the extension is running (status bar shows **"Stata"**), the local MCP serv
 - **Streamable HTTP** (preferred for modern clients): `http://localhost:4000/mcp-streamable`
 - **SSE** (legacy): `http://localhost:4000/mcp`
 
-Copy this **one line** into your AI assistant — Claude Code, OpenAI Codex, Cursor AI, Copilot Chat, or any other MCP-aware client:
+### 📋 Paste this prompt into your AI assistant
 
-> I installed the Stata MCP extension (https://github.com/hanlulong/stata-mcp). Please read the "Detailed Configurations" section of that README and set yourself up to use the local Stata MCP server. Then confirm the `stata_run_selection` tool is available.
+Works in Claude Code, OpenAI Codex, Cursor AI, Copilot Chat, or any other MCP-aware client. Hover the block and click the copy icon (📋) on GitHub:
+
+```text
+I installed the Stata MCP VS Code extension. Please read the "Detailed
+Configurations" section of its README at
+https://github.com/hanlulong/stata-mcp#detailed-configurations
+and configure yourself to use the local Stata MCP server
+(http://localhost:4000/mcp-streamable for Streamable HTTP,
+http://localhost:4000/mcp for legacy SSE). Then confirm the
+`stata_run_selection` tool is available.
+```
 
 The assistant will read the per-client instructions below, detect which client it is, run the right command (or edit the right config file), and restart itself if needed.
 
