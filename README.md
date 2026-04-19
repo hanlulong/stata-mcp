@@ -86,28 +86,22 @@ Starting with version 0.1.8, the extension integrates a fast Python package inst
 
 ## ⚡ Connect Your AI Assistant
 
-Once the extension is running (status bar shows **"Stata"**), the local MCP server is listening on two endpoints:
+Once the extension is running (status bar shows **"Stata"**), the local MCP server is listening on:
 
-- **Streamable HTTP** (preferred for modern clients): `http://localhost:4000/mcp-streamable`
-- **SSE** (legacy): `http://localhost:4000/mcp`
+- **`http://localhost:4000/mcp-streamable`** — Streamable HTTP (preferred for modern clients)
+- `http://localhost:4000/mcp` — SSE (legacy fallback)
 
-### 📋 Paste this prompt into your AI assistant
+### 📋 One-prompt setup
 
-Works in Claude Code, OpenAI Codex, Cursor AI, Copilot Chat, or any other MCP-aware client. Hover the block and click the copy icon (📋) on GitHub:
+Paste the block below into any MCP-aware assistant — **Claude Code**, **OpenAI Codex**, **Cursor AI**, **Copilot Chat**, etc. Hover the box on GitHub and click the copy icon in the top-right corner.
 
 ```text
-I installed the Stata MCP VS Code extension. Please read the "Detailed
-Configurations" section of its README at
-https://github.com/hanlulong/stata-mcp#detailed-configurations
-and configure yourself to use the local Stata MCP server
-(http://localhost:4000/mcp-streamable for Streamable HTTP,
-http://localhost:4000/mcp for legacy SSE). Then confirm the
-`stata_run_selection` tool is available.
+Set up the Stata MCP server for me. Endpoint: http://localhost:4000/mcp-streamable — setup guide: https://github.com/hanlulong/stata-mcp#detailed-configurations — verify by confirming the stata_run_selection tool is available.
 ```
 
-The assistant will read the per-client instructions below, detect which client it is, run the right command (or edit the right config file), and restart itself if needed.
+The assistant reads the guide, detects which client it is, writes the right config (or runs the right CLI command), and restarts itself if needed.
 
-Prefer to configure manually? Expand **Detailed Configurations** below for copy-paste instructions for each client.
+Prefer manual setup? Expand **Detailed Configurations** below for per-client instructions.
 
 ## Usage
 

@@ -86,28 +86,22 @@ antigravity --install-extension path/to/stata-mcp-0.5.2.vsix
 
 ## ⚡ 连接您的 AI 助手
 
-扩展运行起来（状态栏显示 **"Stata"**）之后，本地 MCP 服务监听在两个端点上：
+扩展运行起来（状态栏显示 **"Stata"**）之后，本地 MCP 服务监听在：
 
-- **Streamable HTTP**（推荐给现代客户端）：`http://localhost:4000/mcp-streamable`
-- **SSE**（旧版）：`http://localhost:4000/mcp`
+- **`http://localhost:4000/mcp-streamable`** — Streamable HTTP（推荐给现代客户端）
+- `http://localhost:4000/mcp` — SSE（旧版兼容）
 
-### 📋 把这段提示粘贴给您的 AI 助手
+### 📋 一次粘贴完成配置
 
-适用于 Claude Code、OpenAI Codex、Cursor AI、Copilot Chat 及任意支持 MCP 的客户端。在 GitHub 上把鼠标悬停在下面的代码块上，点右上角出现的复制图标（📋）即可一键复制：
+把下面的代码块粘贴给任意支持 MCP 的助手 — **Claude Code**、**OpenAI Codex**、**Cursor AI**、**Copilot Chat** 等都可以。在 GitHub 上把鼠标悬停在代码框上，点右上角的复制图标即可一键复制。
 
 ```text
-I installed the Stata MCP VS Code extension. Please read the "Detailed
-Configurations" section of its README at
-https://github.com/hanlulong/stata-mcp#detailed-configurations
-and configure yourself to use the local Stata MCP server
-(http://localhost:4000/mcp-streamable for Streamable HTTP,
-http://localhost:4000/mcp for legacy SSE). Then confirm the
-`stata_run_selection` tool is available.
+Set up the Stata MCP server for me. Endpoint: http://localhost:4000/mcp-streamable — setup guide: https://github.com/hanlulong/stata-mcp#detailed-configurations — verify by confirming the stata_run_selection tool is available.
 ```
 
-AI 助手会读取下方的每客户端说明，识别自己是哪种客户端，运行对应的命令（或修改对应的配置文件），并在需要时重启自己。
+助手会按图索骥：读配置指南、识别自己是哪类客户端、写入对应配置（或运行对应的 CLI 命令），需要时自动重启。
 
-想手动配置？展开下方的 **详细配置**，里面有每个客户端的可粘贴说明。
+想手动配置？展开下方的 **详细配置** 查看每个客户端的说明。
 
 ## 使用方法
 
