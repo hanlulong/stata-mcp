@@ -28,6 +28,7 @@ import re
 import time
 import uuid
 import queue
+import hashlib
 import logging
 import platform
 import traceback
@@ -66,6 +67,59 @@ from dataclasses import dataclass, field
 # Unique frame name for view_data filter requests. Each worker process gets
 # its own UUID-suffixed frame, so it cannot collide with a user-named frame.
 _view_data_frame = f"_stata_mcp_flt_{uuid.uuid4().hex[:8]}"
+MCP_LOG_NAME = "__mcp_log"
+NO_WORKING_DIR_SENTINEL = "__stata_mcp_no_cd__"
+MIN_DATA_VIEWER_ROWS = 100
+MAX_DATA_VIEWER_ROWS = 500000
+
+
+def should_skip_cd(working_dir: Optional[str]) -> bool:
+    return working_dir == NO_WORKING_DIR_SENTINEL
+
+
+def is_log_close_all_command(line: str) -> bool:
+    return re.match(
+        r'^\s*(?:(?:cap(?:ture)?|qui(?:etly)?|noi(?:sily)?)\s+)*log\s+close\s+_all\b',
+        line or "",
+        re.IGNORECASE,
+    ) is not None
+
+
+def mcp_log_using_command(log_file_stata: str, mode: str = "replace") -> str:
+    return f'log using "{log_file_stata}", {mode} text name({MCP_LOG_NAME})'
+
+
+def protect_mcp_log_from_close_all(code: str, log_file_stata: str) -> str:
+    if not code:
+        return code
+
+    protected: list[str] = []
+    for line in code.splitlines(keepends=True):
+        line_body = line.rstrip("\r\n")
+        protected.append(line)
+        if is_log_close_all_command(line_body):
+            if not line.endswith(("\n", "\r")):
+                protected.append("\n")
+            protected.append(f"capture log close {MCP_LOG_NAME}\n")
+            protected.append(f"{mcp_log_using_command(log_file_stata, 'append')}\n")
+    return "".join(protected)
+
+
+def safe_file_token(value: Optional[str]) -> str:
+    raw_value = str(value or "session")
+    safe_value = re.sub(r"[^A-Za-z0-9_-]+", "_", raw_value).strip("_")
+    if not safe_value:
+        safe_value = "session"
+    digest = hashlib.sha1(raw_value.encode("utf-8", errors="replace")).hexdigest()[:10]
+    return f"{safe_value[:64]}_{digest}"
+
+
+def normalize_data_viewer_max_rows(max_rows: int) -> int:
+    try:
+        parsed = int(max_rows)
+    except (TypeError, ValueError):
+        parsed = 10000
+    return min(MAX_DATA_VIEWER_ROWS, max(MIN_DATA_VIEWER_ROWS, parsed))
 
 
 class WorkerState(Enum):
@@ -323,10 +377,11 @@ def worker_process(
     # Set up worker-specific logging to a file (since stdout is redirected)
     # This helps debug issues in the worker process
     # NOTE: Must create a new logger since parent process may have already configured root logger
-    worker_log_file = os.path.join(tempfile.gettempdir(), f'stata_worker_{worker_id}.log')
+    safe_worker_id = safe_file_token(worker_id)
+    worker_log_file = os.path.join(tempfile.gettempdir(), f'stata_worker_{safe_worker_id}.log')
 
     # Create a dedicated logger for this worker (not root logger)
-    worker_logger = logging.getLogger(f'stata_worker_{worker_id}')
+    worker_logger = logging.getLogger(f'stata_worker_{safe_worker_id}')
     worker_logger.setLevel(logging.DEBUG)
     # Remove any existing handlers
     worker_logger.handlers = []
@@ -383,7 +438,7 @@ def worker_process(
             # === CRITICAL FOR PARALLELISM ===
             # Create a unique temp directory for this worker to isolate Stata's temp files
             # This prevents file locking conflicts between parallel workers
-            worker_temp_dir = tempfile.mkdtemp(prefix=f"stata_worker_{worker_id}_")
+            worker_temp_dir = tempfile.mkdtemp(prefix=f"stata_worker_{safe_worker_id}_")
 
             # Set environment variables for isolation BEFORE importing pystata
             os.environ['SYSDIR_STATA'] = stata_path
@@ -484,15 +539,16 @@ def worker_process(
             seed_prefix = f"quietly set seed {seed_hash}\n"
 
         # Create temp log file for output capture (Windows PyStata doesn't write to stdout)
-        temp_log_file = os.path.join(tempfile.gettempdir(), f'stata_run_{worker_id}_{int(time.time()*1000)}.log')
+        temp_log_file = os.path.join(tempfile.gettempdir(), f'stata_run_{safe_worker_id}_{int(time.time()*1000)}.log')
         temp_log_stata = temp_log_file.replace('\\', '/')
 
         try:
+            protected_code = protect_mcp_log_from_close_all(f"{seed_prefix}{code}", temp_log_stata)
             # Wrap code with log commands for reliable output capture
-            wrapped_code = f"""capture log close _all
-log using "{temp_log_stata}", replace text
-{seed_prefix}{code}
-capture log close _all
+            wrapped_code = f"""capture log close {MCP_LOG_NAME}
+{mcp_log_using_command(temp_log_stata, 'replace')}
+{protected_code}
+capture log close {MCP_LOG_NAME}
 """
             logging.debug(f"execute_stata_code: Running wrapped code with log file: {temp_log_file}")
 
@@ -588,7 +644,7 @@ capture log close _all
             base_name = os.path.splitext(os.path.basename(file_path))[0]
             log_dir = os.path.dirname(os.path.abspath(file_path))
             # Include worker_id in log filename to prevent conflicts between parallel sessions
-            log_file = os.path.join(log_dir, f"{base_name}_{worker_id}_mcp.log")
+            log_file = os.path.join(log_dir, f"{base_name}_{safe_worker_id}_mcp.log")
 
         worker_state = WorkerState.BUSY
         # IMPORTANT: Clear stop_event FIRST to prevent race condition with monitor thread
@@ -615,11 +671,14 @@ capture log close _all
             # Convert log file path to use forward slashes (works on all platforms in Stata)
             # This prevents Windows backslash escape issues in Stata commands
             log_file_stata = log_file.replace('\\', '/')
+            original_code = protect_mcp_log_from_close_all(original_code, log_file_stata)
 
             # Get the working directory for cd command (like native Stata behavior)
             # This ensures outputs (graph export, save, etc.) go to the expected location
             # Use provided working_dir, or default to the .do file's directory
-            if working_dir:
+            if should_skip_cd(working_dir):
+                do_file_dir = None
+            elif working_dir:
                 do_file_dir = os.path.abspath(working_dir).replace('\\', '/')
             else:
                 do_file_dir = os.path.dirname(os.path.abspath(file_path)).replace('\\', '/')
@@ -628,12 +687,13 @@ capture log close _all
             # CRITICAL: Embed seed directly in wrapped code to ensure it's set reliably
             # This avoids race conditions from separate stata.run() calls that might fail silently
             # NOTE: cd to .do file's directory so outputs go there (log file location is separate)
-            wrapped_code = f"""capture log close _all
+            cd_line = f'cd "{do_file_dir}"\n' if do_file_dir else ""
+
+            wrapped_code = f"""capture log close {MCP_LOG_NAME}
 set seed {seed_hash}
-cd "{do_file_dir}"
-log using "{log_file_stata}", replace text
+{cd_line}{mcp_log_using_command(log_file_stata, 'replace')}
 {original_code}
-capture log close _all
+capture log close {MCP_LOG_NAME}
 """
 
             # Execute with output capture
@@ -872,8 +932,7 @@ capture log close _all
                     # Get current dataset as DataFrame with efficient filtering and row limits
                     if_condition = payload.get('if_condition', None)
                     max_rows = payload.get('max_rows', 10000)
-                    # Ensure minimum value (no hard upper limit - controlled by extension settings)
-                    max_rows = max(100, max_rows)
+                    max_rows = normalize_data_viewer_max_rows(max_rows)
 
                     try:
                         if stata is None:
@@ -921,13 +980,21 @@ capture log close _all
                                     # Apply filter in isolated frame
                                     stata.run(f"frame {_view_data_frame}: quietly keep if {if_condition}", inline=False, echo=False)
 
-                                    # Read filtered data from isolated frame
-                                    df = stata.pdataframe_from_frame(_view_data_frame)
-                                    filtered_obs = len(df) if df is not None else 0
+                                    # Count before limiting so total matches are preserved
+                                    # without materializing every filtered row into pandas.
+                                    try:
+                                        stata.run(f"frame {_view_data_frame}: quietly count", inline=False, echo=False)
+                                        filtered_obs = int(sfi.Scalar.getValue("r(N)"))
+                                    except Exception:
+                                        filtered_obs = None
 
-                                    # Apply row limit in pandas (cheaper than another Stata call)
-                                    if filtered_obs > max_rows:
-                                        df = df.head(max_rows)
+                                    if filtered_obs is not None and filtered_obs > max_rows:
+                                        stata.run(f"frame {_view_data_frame}: quietly keep in 1/{max_rows}", inline=False, echo=False)
+
+                                    # Read filtered data from isolated, already-limited frame
+                                    df = stata.pdataframe_from_frame(_view_data_frame)
+                                    if filtered_obs is None:
+                                        filtered_obs = len(df) if df is not None else 0
 
                                     if df is not None and not df.empty:
                                         orig_obs_index = df['_orig_obs'].tolist()

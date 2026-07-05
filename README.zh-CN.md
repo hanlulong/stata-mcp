@@ -68,9 +68,9 @@ antigravity --install-extension DeepEcon.stata-mcp
 从 [发布页面](https://github.com/hanlulong/stata-mcp/releases) 下载 `stata-mcp-<version>.vsix`，然后：
 
 ```bash
-code        --install-extension path/to/stata-mcp-0.5.2.vsix
-cursor      --install-extension path/to/stata-mcp-0.5.2.vsix
-antigravity --install-extension path/to/stata-mcp-0.5.2.vsix
+code        --install-extension path/to/stata-mcp-0.5.3.vsix
+cursor      --install-extension path/to/stata-mcp-0.5.3.vsix
+antigravity --install-extension path/to/stata-mcp-0.5.3.vsix
 ```
 
 ……或在界面中：扩展视图 → **…** 菜单 → **从 VSIX 安装…** → 选择下载的文件。

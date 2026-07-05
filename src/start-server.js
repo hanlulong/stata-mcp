@@ -5,7 +5,7 @@
  * This is a cross-platform alternative to using bash scripts.
  */
 
-const { spawn, exec, execSync } = require('child_process');
+const { spawn, exec, execSync, execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -23,6 +23,44 @@ const options = {
     logFileLocation: 'extension', // Default log file location
     customLogDirectory: null, // Custom log directory
 };
+
+function normalizePort(port) {
+    const numericPort = Number(port);
+    if (!Number.isInteger(numericPort) || numericPort < 1 || numericPort > 65535) {
+        throw new Error(`Invalid port: ${port}`);
+    }
+    return numericPort;
+}
+
+function stripTrailingBackslash(value) {
+    if (!value) {
+        return value;
+    }
+    return value.replace(/(?<!^[A-Za-z]:)\\+$/, '');
+}
+
+function getWindowsListeningPortPids(port) {
+    const numericPort = normalizePort(port);
+    const psCommand = [
+        '$ErrorActionPreference = "SilentlyContinue"',
+        `Get-NetTCPConnection -LocalPort ${numericPort} -State Listen`,
+        'Select-Object -ExpandProperty OwningProcess',
+        'Sort-Object -Unique'
+    ].join(' | ');
+
+    const stdout = execFileSync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', psCommand],
+        { encoding: 'utf8', windowsHide: true }
+    );
+
+    return [...new Set(
+        stdout
+            .split(/\r?\n/)
+            .map(line => line.trim())
+            .filter(line => /^\d+$/.test(line))
+    )];
+}
 
 // Parse command line arguments
 process.argv.slice(2).forEach((arg, i, argv) => {
@@ -119,8 +157,15 @@ async function startServer() {
             // Try platform-specific kill commands
             if (process.platform === 'win32') {
                 try {
-                    execSync(`FOR /F "tokens=5" %P IN ('netstat -ano ^| findstr :${port} ^| findstr LISTENING') DO taskkill /F /PID %P`);
-                    console.log(`Killed process on port ${port} (Windows)`);
+                    const pids = getWindowsListeningPortPids(port);
+                    if (pids.length === 0) {
+                        console.log(`No listening process found on port ${port}`);
+                    } else {
+                        for (const pid of pids) {
+                            execFileSync('taskkill.exe', ['/F', '/PID', pid], { stdio: 'ignore', windowsHide: true });
+                            console.log(`Killed process ${pid} on port ${port} (Windows)`);
+                        }
+                    }
                 } catch (error) {
                     console.log(`Could not kill process using Windows method: ${error.message}`);
                 }
@@ -196,12 +241,18 @@ async function startServer() {
                 
                 // Add Stata path if provided
                 if (options.stataPath) {
-                    cmdString += ` --stata-path "${options.stataPath}"`;
+                    cmdString += ` --stata-path "${stripTrailingBackslash(options.stataPath)}"`;
                 }
                 
                 // Add log file if specified
                 if (options.logFile) {
-                    cmdString += ` --log-file "${options.logFile}"`;
+                    cmdString += ` --log-file "${stripTrailingBackslash(options.logFile)}"`;
+                }
+
+                // Add do-file log location settings
+                cmdString += ` --log-file-location ${options.logFileLocation}`;
+                if (options.customLogDirectory) {
+                    cmdString += ` --custom-log-directory "${stripTrailingBackslash(options.customLogDirectory)}"`;
                 }
                 
                 // Always add Stata edition parameter
@@ -234,6 +285,14 @@ async function startServer() {
                 if (options.logFile) {
                     args.push('--log-file');
                     args.push(options.logFile);
+                }
+
+                // Add do-file log location settings
+                args.push('--log-file-location');
+                args.push(options.logFileLocation);
+                if (options.customLogDirectory) {
+                    args.push('--custom-log-directory');
+                    args.push(options.customLogDirectory);
                 }
                 
                 // Always add Stata edition parameter
@@ -308,4 +367,4 @@ async function startServer() {
 startServer().catch(err => {
     console.error(`Unhandled error: ${err.message}`);
     process.exit(1);
-}); 
+});

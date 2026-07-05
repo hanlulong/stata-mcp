@@ -26,6 +26,8 @@ import sys
 import time
 import uuid
 import queue
+import re
+import hashlib
 import logging
 import threading
 import multiprocessing
@@ -81,6 +83,19 @@ def join_stata_line_continuations(code: str) -> str:
         joined_lines.append(current_line)
 
     return "\n".join(joined_lines)
+
+
+def safe_log_session_suffix(session_id: Optional[str]) -> str:
+    """Return a filesystem-safe log filename suffix for a caller-provided session id."""
+    if not session_id:
+        return ""
+
+    raw_session_id = str(session_id)
+    safe_session_id = re.sub(r"[^A-Za-z0-9_-]+", "_", raw_session_id).strip("_")
+    if not safe_session_id:
+        safe_session_id = "session"
+    digest = hashlib.sha1(raw_session_id.encode("utf-8", errors="replace")).hexdigest()[:10]
+    return f"_{safe_session_id[:64]}_{digest}"
 
 
 class SessionState(Enum):
@@ -312,10 +327,11 @@ class SessionManager:
 
         # Start worker process
         try:
+            worker_process_id = safe_log_session_suffix(session_id).lstrip("_")
             process = multiprocessing.Process(
                 target=worker_process,
                 args=(
-                    session_id,
+                    worker_process_id,
                     command_queue,
                     result_queue,
                     self.stata_path,
@@ -324,7 +340,7 @@ class SessionManager:
                     stop_event,  # Pass stop_event to worker
                     self.graphs_dir  # Pass graphs_dir for graph exports
                 ),
-                name=f"stata-worker-{session_id}"
+                name=f"stata-worker-{worker_process_id}"
             )
             process.start()
             session.process = process
@@ -827,7 +843,7 @@ class SessionManager:
         if log_file is None:
             base_name = os.path.splitext(os.path.basename(file_path))[0]
             log_dir = os.path.dirname(os.path.abspath(file_path))
-            log_file = os.path.join(log_dir, f"{base_name}_{session.session_id}_mcp.log")
+            log_file = os.path.join(log_dir, f"{base_name}{safe_log_session_suffix(session.session_id)}_mcp.log")
 
         result = self._execute_command(
             session,

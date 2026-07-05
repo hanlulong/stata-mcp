@@ -6,16 +6,18 @@ SRC_DIR="$(dirname "$0")/.."
 PORT=4000
 
 # Detect extension directory - check VS Code first (baseline), then Cursor, then Antigravity
-if [ -d "$HOME/.vscode/extensions/deepecon.stata-mcp-0.5.0" ]; then
-    EXTENSION_DIR="$HOME/.vscode/extensions/deepecon.stata-mcp-0.5.0"
-    echo "Using VS Code extension directory"
-elif [ -d "$HOME/.cursor/extensions/deepecon.stata-mcp-0.5.0" ]; then
-    EXTENSION_DIR="$HOME/.cursor/extensions/deepecon.stata-mcp-0.5.0"
-    echo "Using Cursor extension directory"
-elif [ -d "$HOME/.antigravity/extensions/deepecon.stata-mcp-0.5.0" ]; then
-    EXTENSION_DIR="$HOME/.antigravity/extensions/deepecon.stata-mcp-0.5.0"
-    echo "Using Antigravity extension directory"
-else
+# Picks the newest installed version in each IDE (version-sorted).
+EXTENSION_DIR=""
+for IDE_BASE in "$HOME/.vscode/extensions" "$HOME/.cursor/extensions" "$HOME/.antigravity/extensions"; do
+    CANDIDATE=$(ls -d "$IDE_BASE"/deepecon.stata-mcp-* 2>/dev/null | sort -V | tail -1)
+    if [ -n "$CANDIDATE" ] && [ -d "$CANDIDATE" ]; then
+        EXTENSION_DIR="$CANDIDATE"
+        echo "Using extension directory: $EXTENSION_DIR"
+        break
+    fi
+done
+
+if [ -z "$EXTENSION_DIR" ]; then
     echo "ERROR: Extension not found in VS Code, Cursor, or Antigravity"
     echo "Please install the extension first."
     exit 1

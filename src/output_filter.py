@@ -58,11 +58,12 @@ def apply_compact_mode_filter(output: str, filter_command_echo: bool = False) ->
     - SMCL formatting tags
     - Compresses multiple spaces and blank lines
     - Truncates long variable lists (>100 items)
+    - Log header/footer lines (name, log type, opened on, Log file saved, etc.)
+    - Echoes of MCP's own "capture log close" wrapper commands
 
     Filters out (only when filter_command_echo=True, i.e., for run_file):
     - Command echo lines (lines starting with ". " that echo Stata commands)
     - Line continuation markers ("> " for multi-line commands)
-    - Log header/footer lines (log type, opened on, Log file saved, etc.)
     - MCP execution header lines (">>> [timestamp] do 'filepath'")
 
     Args:
@@ -242,6 +243,19 @@ def apply_compact_mode_filter(output: str, filter_command_echo: bool = False) ->
             i += 1
             continue
 
+        # Log header/footer lines carry no analytical content - strip them in
+        # compact mode for both run_file and run_selection outputs.
+        if log_info_pattern.match(line):
+            i += 1
+            # Also consume wrapped continuation fragments of the header line
+            # (e.g. a long log path split across "> " continuation lines)
+            while i < len(lines) and continuation_pattern.match(lines[i]):
+                i += 1
+            continue
+        if capture_log_pattern.match(line):
+            i += 1
+            continue
+
         # Command echo filtering (only when filter_command_echo=True)
         if filter_command_echo:
             if mcp_header_pattern.match(line):
@@ -251,12 +265,6 @@ def apply_compact_mode_filter(output: str, filter_command_echo: bool = False) ->
                 i += 1
                 continue
             if final_output_pattern.match(line):
-                i += 1
-                continue
-            if log_info_pattern.match(line):
-                i += 1
-                continue
-            if capture_log_pattern.match(line):
                 i += 1
                 continue
             if command_echo_pattern.match(line):

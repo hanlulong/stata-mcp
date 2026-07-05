@@ -19,6 +19,7 @@ import subprocess
 import traceback
 import socket
 import asyncio
+import hashlib
 from typing import Dict, Any, Optional
 from urllib.parse import unquote
 import warnings
@@ -138,7 +139,11 @@ logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
 
 # Server info
 SERVER_NAME = "Stata MCP Server"
-SERVER_VERSION = "0.4.1"
+SERVER_VERSION = "0.5.3"
+MCP_LOG_NAME = "__mcp_log"
+NO_WORKING_DIR_SENTINEL = "__stata_mcp_no_cd__"
+MIN_DATA_VIEWER_ROWS = 100
+MAX_DATA_VIEWER_ROWS = 500000
 
 # Flag for Stata availability
 stata_available = False
@@ -176,6 +181,167 @@ execution_registry = {}  # Map: execution_id -> {'thread': thread, 'start_time':
 execution_lock = threading.Lock()  # Protect concurrent access to execution_registry
 current_execution_id = None  # Track the current execution ID
 GRAPH_METADATA_PREFIX = "__STATA_MCP_GRAPH_METADATA__:"
+
+
+def should_skip_cd(working_dir: Optional[str]) -> bool:
+    """Return True when the caller explicitly requested no working-directory change."""
+    return working_dir == NO_WORKING_DIR_SENTINEL
+
+
+def resolve_execution_working_dir(working_dir: Optional[str], default_dir: Optional[str] = None) -> Optional[str]:
+    """Normalize working-directory semantics across execution routes.
+
+    None means use the route default. NO_WORKING_DIR_SENTINEL means do not issue
+    a cd command. Any other non-empty string is the requested directory.
+    """
+    if should_skip_cd(working_dir):
+        return None
+    if working_dir:
+        return working_dir
+    return default_dir
+
+
+def resolve_worker_file_working_dir(working_dir: Optional[str], default_dir: Optional[str] = None) -> Optional[str]:
+    """Resolve file working dir for worker routes where None has worker-local semantics."""
+    if should_skip_cd(working_dir):
+        return NO_WORKING_DIR_SENTINEL
+    return resolve_execution_working_dir(working_dir, default_dir)
+
+
+def is_log_close_all_command(line: str) -> bool:
+    """Return True for Stata commands that close every open log."""
+    return re.match(
+        r'^\s*(?:(?:cap(?:ture)?|qui(?:etly)?|noi(?:sily)?)\s+)*log\s+close\s+_all\b',
+        line or "",
+        re.IGNORECASE,
+    ) is not None
+
+
+def mcp_log_using_command(log_file_stata: str, mode: str = "replace") -> str:
+    """Build the reserved MCP log command."""
+    return f'log using "{log_file_stata}", {mode} text name({MCP_LOG_NAME})'
+
+
+def protect_mcp_log_from_close_all(code: str, log_file_stata: str) -> str:
+    """Reopen the MCP log after user code intentionally closes all logs."""
+    if not code:
+        return code
+
+    protected: list[str] = []
+    for line in code.splitlines(keepends=True):
+        line_body = line.rstrip("\r\n")
+        protected.append(line)
+        if is_log_close_all_command(line_body):
+            if not line.endswith(("\n", "\r")):
+                protected.append("\n")
+            protected.append(f"capture log close {MCP_LOG_NAME}\n")
+            protected.append(f"{mcp_log_using_command(log_file_stata, 'append')}\n")
+    return "".join(protected)
+
+
+def log_session_suffix(session_id: Optional[str]) -> str:
+    """Return a filesystem-safe log filename suffix for a caller-provided session id."""
+    if not session_id:
+        return ""
+
+    raw_session_id = str(session_id)
+    safe_session_id = re.sub(r"[^A-Za-z0-9_-]+", "_", raw_session_id).strip("_")
+    if not safe_session_id:
+        safe_session_id = "session"
+    digest = hashlib.sha1(raw_session_id.encode("utf-8", errors="replace")).hexdigest()[:10]
+    return f"_{safe_session_id[:64]}_{digest}"
+
+
+def normalize_data_viewer_max_rows(max_rows: int) -> int:
+    """Clamp Data Viewer row count to the supported server range."""
+    try:
+        parsed = int(max_rows)
+    except (TypeError, ValueError):
+        parsed = 10000
+    return min(MAX_DATA_VIEWER_ROWS, max(MIN_DATA_VIEWER_ROWS, parsed))
+
+
+def windows_listening_port_pids_from_netstat(output: str, port: int) -> list[str]:
+    """Parse Windows netstat output for exact local-port listening rows.
+
+    This avoids localized state-word matching while still requiring a TCP row,
+    an exact local endpoint match, and a numeric PID.
+    """
+    pids: list[str] = []
+    seen: set[str] = set()
+    target_suffix = f":{int(port)}"
+
+    for raw_line in (output or "").splitlines():
+        parts = raw_line.split()
+        if len(parts) < 5 or parts[0].upper() != "TCP":
+            continue
+
+        local_address = parts[1]
+        remote_address = parts[2]
+        pid = parts[-1]
+        zero_remote_endpoint = remote_address in {"0.0.0.0:0", "[::]:0", "*:0", "*:*"}
+
+        if local_address.endswith(target_suffix) and zero_remote_endpoint and pid.isdigit():
+            if pid not in seen:
+                seen.add(pid)
+                pids.append(pid)
+
+    return pids
+
+
+def strip_log_file_footer(output: str) -> str:
+    """Remove run_stata_file's log-location footer before stream fallback emission."""
+    if not output:
+        return ""
+    return re.sub(r"\n*Log file saved to: .*$", "", output, flags=re.MULTILINE).rstrip()
+
+
+def strip_graph_metadata_from_stream_fallback(output: str) -> str:
+    """Keep textual output fallback from duplicating graph metadata blocks."""
+    if not output:
+        return ""
+    output = re.sub(r"\n?__STATA_MCP_GRAPH_METADATA__:.*", "", output)
+    output = re.sub(r"\n=+\nGRAPHS DETECTED:.*", "", output, flags=re.DOTALL)
+    return output.rstrip()
+
+
+def stream_fallback_lines(output: str, selection_markers: bool = False) -> list[str]:
+    """Return safe final-result lines for stream fallback when log tailing was empty."""
+    cleaned = strip_graph_metadata_from_stream_fallback(strip_log_file_footer(output))
+    if not cleaned:
+        return []
+
+    lines = cleaned.splitlines()
+    if selection_markers:
+        filtered: list[str] = []
+        in_user_output = False
+        saw_marker = False
+        for line in lines:
+            stripped = line.strip()
+            if "__STATA_MCP_OUTPUT_START__" in stripped:
+                in_user_output = True
+                saw_marker = True
+                continue
+            if "__STATA_MCP_OUTPUT_END__" in stripped:
+                in_user_output = False
+                saw_marker = True
+                continue
+            if in_user_output and stripped:
+                filtered.append(line)
+        if saw_marker:
+            return filtered
+
+    return [line for line in lines if line.strip()]
+
+
+def prepend_working_dir_to_selection(selection: str, working_dir: Optional[str]) -> str:
+    """Prepend a Stata cd command to selection code when requested."""
+    if should_skip_cd(working_dir) or not working_dir:
+        return selection
+    if not os.path.isdir(working_dir):
+        return selection
+    working_dir_stata = os.path.normpath(working_dir).replace('\\', '/')
+    return f'cd "{working_dir_stata}"\n{selection}'
 
 
 def get_effective_graphs_root() -> str:
@@ -424,7 +590,7 @@ def get_log_file_path(do_file_path, do_file_base, session_id=None):
     do_file_dir = os.path.dirname(do_file_path)
 
     # Include session_id in filename to prevent file locking conflicts in parallel execution
-    session_suffix = f"_{session_id}" if session_id else ""
+    session_suffix = log_session_suffix(session_id)
 
     if log_file_location == 'extension':
         # Use logs folder in extension directory
@@ -454,8 +620,9 @@ def get_log_file_path(do_file_path, do_file_base, session_id=None):
             return os.path.abspath(log_path)
     elif log_file_location == 'custom':
         # Use custom directory
-        if custom_log_directory and os.path.exists(custom_log_directory):
-            log_path = os.path.join(custom_log_directory, f"{do_file_base}{session_suffix}_mcp.log")
+        custom_dir = os.path.abspath(custom_log_directory) if custom_log_directory else ''
+        if custom_dir and os.path.isdir(custom_dir):
+            log_path = os.path.join(custom_dir, f"{do_file_base}{session_suffix}_mcp.log")
             return os.path.abspath(log_path)
         else:
             # Fallback to dofile if custom directory is invalid
@@ -892,9 +1059,10 @@ def run_stata_command(
                 suffix='.do', delete=False, mode='w', encoding='utf-8'
 
             ) as f:
-                # Write the command to the file
-                f.write(f"capture log close _all\n")
-                f.write(f"log using \"{f.name}.log\", replace text\n")
+                # Write the command to the file and capture only MCP-owned output.
+                temp_log_stata = f"{f.name}.log".replace('\\', '/')
+                f.write(f"capture log close {MCP_LOG_NAME}\n")
+                f.write(f"{mcp_log_using_command(temp_log_stata, 'replace')}\n")
 
                 # Process command line by line to comment out cls commands
                 cls_commands_found = 0
@@ -914,6 +1082,8 @@ def run_stata_command(
                     logging.info(f"Found and commented out {cls_commands_found} cls commands in the selection")
 
                 # Special handling for 'do' commands to ensure proper quoting
+                processed_command = protect_mcp_log_from_close_all(processed_command, temp_log_stata)
+
                 if command.lower().startswith('do '):
                     # For do commands, we need to make sure the file path is properly handled
                     # The command already has the file in quotes from the code above
@@ -922,7 +1092,7 @@ def run_stata_command(
                     # Normal commands don't need special treatment
                     f.write(f"{processed_command}")
 
-                f.write(f"capture log close\n")
+                f.write(f"capture log close {MCP_LOG_NAME}\n")
                 do_file = f.name
 
             # Execute the do file with echo=False to completely silence Stata output to console
@@ -1353,18 +1523,10 @@ def run_stata_selection(
     processed_selection = join_stata_line_continuations(selection)
 
     # If a working directory is provided, prepend a cd command
-    if working_dir and os.path.isdir(working_dir):
+    if working_dir and not should_skip_cd(working_dir) and os.path.isdir(working_dir):
         logging.info(f"Changing working directory to: {working_dir}")
-        # Normalize path for the OS
-        working_dir = os.path.normpath(working_dir)
-        # Use forward slashes for Stata commands to avoid escape sequence issues on Windows
-        working_dir_stata = working_dir.replace('\\', '/')
-        # Use double quotes for the cd command to handle spaces
-        cd_command = f'cd "{working_dir_stata}"'
-        # Combine cd command with the processed selection
-        full_command = f"{cd_command}\n{processed_selection}"
         return run_stata_command(
-            full_command,
+            prepend_working_dir_to_selection(processed_selection, working_dir),
             auto_detect_graphs=auto_detect_graphs,
             execution_id=execution_id,
             return_graphs=return_graphs
@@ -1377,13 +1539,52 @@ def run_stata_selection(
             return_graphs=return_graphs
         )
 
+
+async def run_stata_selection_with_timeout(
+    selection: str,
+    timeout: int = 600,
+    working_dir: Optional[str] = None,
+    auto_detect_graphs: bool = False,
+    execution_id: Optional[str] = None,
+    return_graphs: bool = False
+):
+    """Run single-session selection with endpoint-level timeout enforcement."""
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(
+                run_stata_selection,
+                selection,
+                working_dir=working_dir,
+                auto_detect_graphs=auto_detect_graphs,
+                execution_id=execution_id,
+                return_graphs=return_graphs,
+            ),
+            timeout=float(timeout),
+        )
+    except asyncio.TimeoutError:
+        logging.warning(f"Single-session selection timed out after {timeout} seconds")
+        try:
+            from pystata.config import stlib
+            if stlib is not None:
+                stlib.StataSO_SetBreak()
+                logging.warning("Called StataSO_SetBreak() after selection timeout")
+        except Exception as break_error:
+            logging.warning(f"Could not interrupt Stata after selection timeout: {break_error}")
+
+        error = f"Error: Operation timed out after {timeout} seconds"
+        if return_graphs:
+            return error, []
+        return error
+
+
 def run_stata_file(
     file_path: str,
     timeout: int = 600,
     auto_name_graphs: bool = False,
     working_dir: Optional[str] = None,
     execution_id: Optional[str] = None,
-    return_graphs: bool = False
+    return_graphs: bool = False,
+    log_file: Optional[str] = None
 ):
     """Run a Stata .do file with improved handling for long-running processes.
 
@@ -1394,6 +1595,8 @@ def run_stata_file(
         working_dir: Working directory to cd to before running (None = defaults to .do file's directory).
                      This affects where outputs like graph export, save, etc. are written.
                      Log files are saved to the location configured in logFileLocation setting (separate from working dir).
+        log_file: Optional explicit log file path. Stream callers use this so
+                  log tailing and execution read/write the same file.
     """
     # Set timeout from parameter instead of hardcoding
     MAX_TIMEOUT = timeout
@@ -1450,7 +1653,7 @@ def run_stata_file(
         # Create a custom log file path based on user settings
         # The log file path will be absolute, allowing it to be saved anywhere
         # regardless of Stata's current working directory
-        custom_log_file = get_log_file_path(file_path, do_file_base)
+        custom_log_file = os.path.abspath(log_file) if log_file else get_log_file_path(file_path, do_file_base)
         logging.info(f"Will save log to: {custom_log_file}")
         
         # Read the do file content
@@ -1461,7 +1664,6 @@ def run_stata_file(
 
             # Create a modified version with log commands commented out and auto-name graphs
             modified_content = ""
-            log_commands_found = 0
             graph_counter = 0
 
             # First, join lines with Stata line continuation (///) into single logical lines
@@ -1484,17 +1686,13 @@ def run_stata_file(
             if current_line:
                 joined_lines.append(current_line)
 
-            # Process line by line to comment out log commands and add graph names where needed
+            # Process line by line to keep user code intact, comment out cls commands,
+            # and add graph names where needed. User log commands must coexist with
+            # MCP's named log instead of being commented out.
             cls_commands_found = 0
             for line in joined_lines:
                 # Ensure line is a string (defensive programming)
                 line = str(line) if line is not None else ""
-
-                # Check if this line has a log command
-                if re.match(r'^\s*(log\s+using|log\s+close|capture\s+log\s+close)', line, re.IGNORECASE):
-                    modified_content += f"* COMMENTED OUT BY MCP: {line}\n"
-                    log_commands_found += 1
-                    continue
 
                 # Check if this is a cls command
                 if re.match(r'^\s*cls\s*$', line, re.IGNORECASE):
@@ -1547,7 +1745,6 @@ def run_stata_file(
                 # Keep line as-is (including graph export commands)
                 modified_content += f"{line}\n"
 
-            logging.info(f"Found and commented out {log_commands_found} log commands in the do file")
             if cls_commands_found > 0:
                 logging.info(f"Found and commented out {cls_commands_found} cls commands in the do file")
             if graph_counter > 0:
@@ -1559,25 +1756,29 @@ def run_stata_file(
                 suffix='.do', delete=False, mode='w', encoding='utf-8'
 
             ) as temp_do:
-                # First close any existing log files
-                temp_do.write(f"capture log close _all\n")
+                # Close only MCP's own named log from a previous interrupted run.
+                temp_do.write(f"capture log close {MCP_LOG_NAME}\n")
                 # Change working directory based on working_dir parameter
                 # If working_dir is None, default to .do file's directory (like native Stata)
                 # Otherwise, cd to the specified directory
                 # The log file uses an absolute path, so it's saved to the configured location
-                effective_working_dir = working_dir if working_dir is not None else do_file_dir
-                # Use forward slashes for Stata commands to avoid escape sequence issues on Windows
-                wd = os.path.normpath(effective_working_dir).replace('\\', '/')
-                temp_do.write(f"cd \"{wd}\"\n")
-                logging.info(f"Setting working directory to: {wd}")
+                effective_working_dir = resolve_execution_working_dir(working_dir, do_file_dir)
+                if effective_working_dir:
+                    # Use forward slashes for Stata commands to avoid escape sequence issues on Windows
+                    wd = os.path.normpath(effective_working_dir).replace('\\', '/')
+                    temp_do.write(f"cd \"{wd}\"\n")
+                    logging.info(f"Setting working directory to: {wd}")
+                else:
+                    logging.info("Leaving Stata working directory unchanged")
                 # Note: _gr_list on is enabled externally before .do file execution
                 # Note: Graph names are auto-injected above into modified_content
                 # Then add our own log command with absolute path
                 # Use forward slashes for Stata commands to avoid escape sequence issues on Windows
                 log_file_stata = custom_log_file.replace('\\', '/')
-                temp_do.write(f"log using \"{log_file_stata}\", replace text\n")
+                modified_content = protect_mcp_log_from_close_all(modified_content, log_file_stata)
+                temp_do.write(f"{mcp_log_using_command(log_file_stata, 'replace')}\n")
                 temp_do.write(modified_content)
-                temp_do.write(f"\ncapture log close _all\n")  # Ensure all logs are closed at the end
+                temp_do.write(f"\ncapture log close {MCP_LOG_NAME}\n")
                 # Note: We intentionally do NOT disable _gr_list so graphs persist for detection
                 modified_do_file = temp_do.name
                 
@@ -1989,26 +2190,23 @@ def kill_process_on_port(port):
     try:
         if platform.system() == "Windows":
             # Windows command to find and kill process on port
-            find_cmd = f"netstat -ano | findstr :{port}"
+            # No "-p tcp" filter: on Windows that flag is IPv4-only and would
+            # miss IPv6 listeners. The parser below keeps only TCP rows.
+            find_cmd = "netstat -ano"
             try:
-                result = subprocess.check_output(find_cmd, shell=True).decode()
-                
-                if result:
-                    # Extract PID from the result
-                    for line in result.strip().split('\n'):
-                        if f":{port}" in line and "LISTENING" in line:
-                            pid = line.strip().split()[-1]
-                            logging.info(f"Found process with PID {pid} using port {port}")
-                            
-                            # Kill the process
-                            kill_cmd = f"taskkill /F /PID {pid}"
-                            subprocess.check_output(kill_cmd, shell=True)
-                            logging.info(f"Killed process with PID {pid}")
-                            break
+                result = subprocess.check_output(find_cmd, shell=True).decode(errors='replace')
+                pids = windows_listening_port_pids_from_netstat(result, port)
+
+                if pids:
+                    for pid in pids:
+                        logging.info(f"Found process with PID {pid} using local port {port}")
+                        kill_cmd = f"taskkill /F /PID {pid}"
+                        subprocess.check_output(kill_cmd, shell=True)
+                        logging.info(f"Killed process with PID {pid}")
                 else:
                     logging.info(f"No process found using port {port}")
             except subprocess.CalledProcessError:
-                # No process found using the port (findstr returns 1 when no matches found)
+                # netstat/taskkill failed or no process could be killed.
                 logging.info(f"No process found using port {port}")
         else:
             # macOS/Linux command to find and kill process on port
@@ -2170,11 +2368,17 @@ No built-in rate limiting. Stata execution is inherently sequential per session.
     summary="Run Stata code selection",
     description="Execute Stata code and return the output. Supports multi-session mode for parallel execution.",
 )
-async def stata_run_selection_endpoint(selection: str, session_id: str = None, working_dir: str = None) -> Response:
+async def stata_run_selection_endpoint(
+    selection: str,
+    timeout: int = 600,
+    session_id: str = None,
+    working_dir: str = None
+) -> Response:
     """Run selected Stata code and return the output (MCP endpoint - applies compact mode filtering)
 
     Args:
         selection: Stata code to execute
+        timeout: Timeout in seconds for multi-session execution
         session_id: Optional session ID for multi-session mode (uses default session if not specified)
         working_dir: Optional working directory to change to before execution
     """
@@ -2185,22 +2389,32 @@ async def stata_run_selection_endpoint(selection: str, session_id: str = None, w
         logging.info(f"Using session: {session_id}")
     if working_dir:
         logging.info(f"Working directory: {working_dir}")
+    try:
+        timeout = int(timeout)
+        if timeout <= 0:
+            timeout = 600
+    except (ValueError, TypeError):
+        timeout = 600
 
     # Route through session manager if multi-session is enabled
     if multi_session_enabled and session_manager is not None:
         # Run blocking session_manager.execute in thread pool to allow concurrent requests
-        # Note: Multi-session mode doesn't support working_dir yet - each session manages its own directory
         result_dict = await asyncio.to_thread(
             session_manager.execute,
-            selection,
-            session_id=session_id
+            prepend_working_dir_to_selection(selection, working_dir),
+            session_id=session_id,
+            timeout=float(timeout)
         )
         if result_dict.get('status') == 'success':
             result = result_dict.get('output', '')
         else:
             result = f"Error: {result_dict.get('error', 'Unknown error')}"
     else:
-        result = run_stata_selection(selection, working_dir=working_dir)
+        result = await run_stata_selection_with_timeout(
+            selection,
+            timeout=timeout,
+            working_dir=working_dir,
+        )
 
     # Format output for better display - replace escaped newlines with actual newlines
     formatted_result = result.replace("\\n", "\n")
@@ -2259,26 +2473,26 @@ async def stata_run_file_stream(
     except Exception as e:
         logging.warning(f"[STREAM] Could not clear log file: {e}")
 
-    # Pre-process the file to auto-name graphs and handle line continuations
-    processed_file = preprocess_do_file_for_graphs(file_path)
-    logging.debug(f"[STREAM] Pre-processed file: {processed_file}")
-
     # Get the original file's directory for working_dir (not the temp file's directory)
     original_file_dir = os.path.dirname(os.path.abspath(file_path))
+    execution_working_dir = resolve_worker_file_working_dir(working_dir, original_file_dir)
 
     def run_with_progress():
         """Run Stata file in thread"""
+        processed_file = None
         try:
             graphs = []  # To store detected graphs
             # Route through session manager if multi-session is enabled
             if multi_session_enabled and session_manager is not None:
                 logging.info(f"[STREAM] Using multi-session mode, session_id={session_id or 'default'}")
+                processed_file = preprocess_do_file_for_graphs(file_path)
+                logging.debug(f"[STREAM] Pre-processed file: {processed_file}")
                 result_dict = session_manager.execute_file(
                     processed_file,
                     session_id=session_id,
                     timeout=float(timeout),
                     log_file=log_file,  # Pass log file path to worker
-                    working_dir=original_file_dir,  # Use original file's directory
+                    working_dir=execution_working_dir,
                     execution_id=execution_id
                 )
                 if result_dict.get('status') == 'success':
@@ -2291,17 +2505,25 @@ async def stata_run_file_stream(
             else:
                 logging.info("[STREAM] Using single-session mode")
                 result, graphs = run_stata_file(
-                    processed_file,
+                    file_path,
                     timeout=timeout,
-                    working_dir=working_dir,
+                    working_dir=execution_working_dir if execution_working_dir else NO_WORKING_DIR_SENTINEL,
                     auto_name_graphs=True,
                     execution_id=execution_id,
-                    return_graphs=True
+                    return_graphs=True,
+                    log_file=log_file
                 )
             result_queue.put(('success', result, graphs))
         except Exception as e:
             logging.error(f"[STREAM] Execution error: {str(e)}")
             result_queue.put(('error', str(e), []))
+        finally:
+            if processed_file and processed_file != file_path and os.path.exists(processed_file):
+                try:
+                    os.unlink(processed_file)
+                    logging.debug(f"[STREAM] Cleaned up processed file: {processed_file}")
+                except Exception as cleanup_err:
+                    logging.warning(f"[STREAM] Could not delete processed file: {cleanup_err}")
 
     # Start execution thread
     thread = threading.Thread(target=run_with_progress, daemon=True)
@@ -2310,6 +2532,7 @@ async def stata_run_file_stream(
     start_time = time.time()
     last_read_pos = 0  # Track byte position in file for incremental reading
     check_interval = 0.5  # Check every 500ms for responsive streaming
+    sent_substantive_output = False
 
     # Monitor progress by reading log file incrementally using byte offset
     # Wrap in try-except to handle client disconnection gracefully
@@ -2338,6 +2561,7 @@ async def stata_run_file_stream(
                                 if line.strip():
                                     escaped = line.replace('\\', '\\\\')
                                     yield f"data: {escaped}\n\n"
+                                    sent_substantive_output = True
                 except Exception as e:
                     logging.debug(f"Error reading log file: {e}")
 
@@ -2365,12 +2589,18 @@ async def stata_run_file_stream(
                                 if line.strip():
                                     escaped = line.replace('\\', '\\\\')
                                     yield f"data: {escaped}\n\n"
+                                    sent_substantive_output = True
                 except Exception as e:
                     logging.debug(f"Error reading final log content: {e}")
 
             if status == 'error':
                 yield f"data: ERROR: {result}\n\n"
             else:
+                if not sent_substantive_output:
+                    for fallback_line in stream_fallback_lines(result):
+                        escaped = fallback_line.replace('\\', '\\\\')
+                        yield f"data: {escaped}\n\n"
+                        sent_substantive_output = True
                 yield "data: *** Execution completed ***\n\n"
 
                 # Output graph info in the expected format for VS Code extension's parseGraphsFromOutput
@@ -2435,36 +2665,43 @@ async def stata_run_file_endpoint(
     if working_dir:
         logging.info(f"Working directory: {working_dir}")
 
-    # Pre-process the file to auto-name graphs and handle line continuations
-    processed_file = preprocess_do_file_for_graphs(file_path)
-    logging.debug(f"Pre-processed file: {processed_file}")
-
     # Route through session manager if multi-session is enabled
     if multi_session_enabled and session_manager is not None:
+        # Pre-process the file to auto-name graphs and handle line continuations
+        processed_file = preprocess_do_file_for_graphs(file_path)
+        logging.debug(f"Pre-processed file: {processed_file}")
+
         # Determine log file path based on user settings
         # Include session_id in log filename to prevent file locking conflicts in parallel execution
         abs_file_path = os.path.abspath(file_path)
         base_name = os.path.splitext(os.path.basename(abs_file_path))[0]
         log_file = get_log_file_path(file_path, base_name, session_id)
 
-        # Get the original file's directory for working_dir (not the temp file's directory)
         original_file_dir = os.path.dirname(abs_file_path)
+        execution_working_dir = resolve_worker_file_working_dir(working_dir, original_file_dir)
 
         # Run blocking session_manager.execute_file in thread pool to allow concurrent requests
-        result_dict = await asyncio.to_thread(
-            session_manager.execute_file,
-            processed_file,
-            session_id=session_id,
-            timeout=float(timeout),
-            log_file=log_file,  # Pass log file path to respect logFileLocation setting
-            working_dir=original_file_dir  # Use original file's directory for outputs
-        )
+        try:
+            result_dict = await asyncio.to_thread(
+                session_manager.execute_file,
+                processed_file,
+                session_id=session_id,
+                timeout=float(timeout),
+                log_file=log_file,  # Pass log file path to respect logFileLocation setting
+                working_dir=execution_working_dir
+            )
+        finally:
+            if processed_file != file_path and os.path.exists(processed_file):
+                try:
+                    os.unlink(processed_file)
+                except Exception as cleanup_err:
+                    logging.warning(f"Could not delete processed file: {cleanup_err}")
         if result_dict.get('status') == 'success':
             result = result_dict.get('output', '')
         else:
             result = f"Error: {result_dict.get('error', 'Unknown error')}"
     else:
-        result = await asyncio.to_thread(run_stata_file, processed_file, timeout=timeout, working_dir=working_dir)
+        result = await asyncio.to_thread(run_stata_file, file_path, timeout=timeout, working_dir=working_dir)
 
     # Format output for better display - replace escaped newlines with actual newlines
     formatted_result = result.replace("\\n", "\n")
@@ -2606,6 +2843,7 @@ async def stata_run_selection_stream(
     # Pre-process the temp file to auto-name graphs
     processed_file = preprocess_do_file_for_graphs(temp_file)
     logging.debug(f"[STREAM-SEL] Pre-processed file: {processed_file}")
+    selection_execution_working_dir = working_dir if working_dir and os.path.isdir(working_dir) else NO_WORKING_DIR_SENTINEL
 
     def run_with_progress():
         """Run Stata selection in thread and cleanup temp file when done"""
@@ -2618,7 +2856,7 @@ async def stata_run_selection_stream(
                     session_id=session_id,
                     timeout=float(timeout),
                     log_file=log_file,
-                    working_dir=working_dir,
+                    working_dir=selection_execution_working_dir,
                     execution_id=execution_id
                 )
                 if result_dict.get('status') == 'success':
@@ -2632,10 +2870,11 @@ async def stata_run_selection_stream(
                 result, graphs = run_stata_file(
                     processed_file,
                     timeout=timeout,
-                    working_dir=working_dir,
+                    working_dir=selection_execution_working_dir,
                     auto_name_graphs=True,
                     execution_id=execution_id,
-                    return_graphs=True
+                    return_graphs=True,
+                    log_file=log_file
                 )
             result_queue.put(('success', result, graphs))
         except Exception as e:
@@ -2695,6 +2934,7 @@ async def stata_run_selection_stream(
     start_time = time.time()
     last_read_pos = 0
     check_interval = 0.5
+    sent_substantive_output = False
 
     # Monitor progress by reading log file incrementally
     # Same structure as run_file_stream - wrap in try-except for client disconnect
@@ -2722,6 +2962,7 @@ async def stata_run_selection_stream(
                                 if output_line:
                                     escaped = output_line.replace('\\', '\\\\')
                                     yield f"data: {escaped}\n\n"
+                                    sent_substantive_output = True
                 except Exception as e:
                     logging.debug(f"Error reading log file: {e}")
 
@@ -2749,12 +2990,18 @@ async def stata_run_selection_stream(
                                 if output_line:
                                     escaped = output_line.replace('\\', '\\\\')
                                     yield f"data: {escaped}\n\n"
+                                    sent_substantive_output = True
                 except Exception as e:
                     logging.debug(f"Error reading final log content: {e}")
 
             if status == 'error':
                 yield f"data: ERROR: {result}\n\n"
             else:
+                if not sent_substantive_output:
+                    for fallback_line in stream_fallback_lines(result, selection_markers=True):
+                        escaped = fallback_line.replace('\\', '\\\\')
+                        yield f"data: {escaped}\n\n"
+                        sent_substantive_output = True
                 yield "data: *** Execution completed ***\n\n"
 
                 # Output graph info for VS Code extension's parseGraphsFromOutput
@@ -2871,6 +3118,12 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
             working_dir = request.parameters.get("working_dir", None)
             session_id = request.parameters.get("session_id", None)
             execution_id = request.parameters.get("execution_id", None) or generate_execution_id("selection")
+            try:
+                timeout = int(request.parameters.get("timeout", 600))
+                if timeout <= 0:
+                    timeout = 600
+            except (TypeError, ValueError):
+                timeout = 600
             graphs = []
 
             # Route through session manager if multi-session is enabled
@@ -2879,8 +3132,9 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
                     logging.info(f"MCP run_selection using session: {session_id}")
                 result_dict = await asyncio.to_thread(
                     session_manager.execute,
-                    request.parameters["selection"],
+                    prepend_working_dir_to_selection(request.parameters["selection"], working_dir),
                     session_id=session_id,
+                    timeout=float(timeout),
                     execution_id=execution_id
                 )
                 if result_dict.get('status') == 'success':
@@ -2897,13 +3151,13 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
             else:
                 # Single-session mode: use direct execution
                 # Enable auto_detect_graphs for VS Code extension calls
-                result, graphs = await asyncio.to_thread(
-                    run_stata_selection,
+                result, graphs = await run_stata_selection_with_timeout(
                     request.parameters["selection"],
-                    working_dir,
-                    True,
-                    execution_id,
-                    True
+                    timeout=timeout,
+                    working_dir=working_dir,
+                    auto_detect_graphs=True,
+                    execution_id=execution_id,
+                    return_graphs=True,
                 )
             # Format output for better display
             result = result.replace("\\n", "\n")
@@ -2954,25 +3208,32 @@ async def call_tool(request: ToolRequest) -> ToolResponse:
                 processed_file = preprocess_do_file_for_graphs(file_path)
                 logging.debug(f"Pre-processed file: {processed_file}")
 
-                # Get the original file's directory for working_dir (not the temp file's directory)
                 # This ensures outputs go to the expected location like native Stata
                 abs_file_path = os.path.abspath(file_path)
                 original_file_dir = os.path.dirname(abs_file_path)
+                execution_working_dir = resolve_worker_file_working_dir(working_dir, original_file_dir)
 
                 # Determine log file path based on user settings
                 # Include session_id in log filename to prevent file locking conflicts in parallel execution
                 base_name = os.path.splitext(os.path.basename(abs_file_path))[0]
                 log_file = get_log_file_path(file_path, base_name, session_id)
 
-                result_dict = await asyncio.to_thread(
-                    session_manager.execute_file,
-                    processed_file,
-                    session_id=session_id,
-                    timeout=float(timeout),
-                    log_file=log_file,  # Pass log file path to respect logFileLocation setting
-                    working_dir=original_file_dir,
-                    execution_id=execution_id
-                )
+                try:
+                    result_dict = await asyncio.to_thread(
+                        session_manager.execute_file,
+                        processed_file,
+                        session_id=session_id,
+                        timeout=float(timeout),
+                        log_file=log_file,  # Pass log file path to respect logFileLocation setting
+                        working_dir=execution_working_dir,
+                        execution_id=execution_id
+                    )
+                finally:
+                    if processed_file != file_path and os.path.exists(processed_file):
+                        try:
+                            os.unlink(processed_file)
+                        except Exception as cleanup_err:
+                            logging.warning(f"Could not delete processed file: {cleanup_err}")
                 if result_dict.get('status') == 'success':
                     result = result_dict.get('output', '')
                     # Append graph info if any graphs were created (format must match extension's parseGraphsFromOutput)
@@ -4211,8 +4472,7 @@ async def view_data_endpoint(if_condition: str = None, session_id: str = None, m
     """
     global stata_available, stata, multi_session_enabled, session_manager
 
-    # Ensure max_rows has minimum value (no hard upper limit - controlled by extension settings)
-    max_rows = max(100, max_rows)
+    max_rows = normalize_data_viewer_max_rows(max_rows)
 
     try:
         # Route through session manager if multi-session mode is enabled
@@ -4315,15 +4575,24 @@ async def view_data_endpoint(if_condition: str = None, session_id: str = None, m
                     logging.debug(f"Running: {keep_cmd}")
                     stata.run(keep_cmd, inline=False, echo=False)
 
-                    # Read filtered data from the isolated frame
-                    df = stata.pdataframe_from_frame(_view_data_frame)
-                    filtered_obs = len(df) if df is not None else 0
-                    logging.info(f"Filter matched {filtered_obs} rows (out of {total_obs})")
+                    # Count before limiting so the response can still report
+                    # total matches while avoiding a full pandas materialization.
+                    try:
+                        stata.run(f"frame {_view_data_frame}: quietly count", inline=False, echo=False)
+                        filtered_obs = int(sfi.Scalar.getValue("r(N)"))
+                    except Exception as count_err:
+                        logging.warning(f"Could not read filtered row count before limiting: {count_err}")
+                        filtered_obs = None
 
-                    # Apply row limit in pandas (avoids another Stata round-trip)
-                    if filtered_obs > max_rows:
-                        df = df.head(max_rows)
-                        logging.info(f"Limited to first {max_rows} rows")
+                    if filtered_obs is not None and filtered_obs > max_rows:
+                        stata.run(f"frame {_view_data_frame}: quietly keep in 1/{max_rows}", inline=False, echo=False)
+                        logging.info(f"Limited filtered frame to first {max_rows} rows before pandas transfer")
+
+                    # Read filtered data from the isolated, already-limited frame
+                    df = stata.pdataframe_from_frame(_view_data_frame)
+                    if filtered_obs is None:
+                        filtered_obs = len(df) if df is not None else 0
+                    logging.info(f"Filter matched {filtered_obs} rows (out of {total_obs})")
 
                     # Extract original observation indices, then drop the helper column
                     if df is not None and not df.empty:
@@ -4626,7 +4895,7 @@ async def interactive_window(file: str = None, code: str = None):
                 graphsContainer.innerHTML = '<div class="no-graphs">No graphs yet. Run commands to generate graphs.</div>';
                 // Clear server-side command history so it doesn't come back
                 try {
-                    const response = await fetch('/clear_history', {
+                    const response = await fetch('clear_history', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' }
                     });
@@ -4646,14 +4915,14 @@ async def interactive_window(file: str = None, code: str = None):
             runButton.textContent = 'Running...';
 
             try {
-                const response = await fetch('/v1/tools', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        tool: 'run_selection',
-                        parameters: { selection: command, skip_filter: true }
-                    })
-                });
+	                const response = await fetch('v1/tools', {
+	                    method: 'POST',
+	                    headers: { 'Content-Type': 'application/json' },
+	                    body: JSON.stringify({
+	                        tool: 'run_selection',
+	                        parameters: withWorkingDir({ selection: command, skip_filter: true })
+	                    })
+	                });
 
                 const data = await response.json();
 
@@ -4715,10 +4984,10 @@ async def interactive_window(file: str = None, code: str = None):
                     const existingGraph = graphsContainer.querySelector(`[data-graph-name="${name}"]`);
                     if (existingGraph) {
                         // Update existing graph - force reload by adding timestamp
-                        updateGraph(existingGraph, name, `/graphs/${encodeURIComponent(name)}`, command);
+                        updateGraph(existingGraph, name, `graphs/${encodeURIComponent(name)}`, command);
                     } else {
                         // Add new graph
-                        addGraph(name, `/graphs/${encodeURIComponent(name)}`, command);
+                        addGraph(name, `graphs/${encodeURIComponent(name)}`, command);
                     }
                 });
             }
@@ -4759,20 +5028,28 @@ async def interactive_window(file: str = None, code: str = None):
         }
 
         // Auto-execute file or code if provided in URL parameter
-        const urlParams = new URLSearchParams(window.location.search);
-        const autoRunFile = urlParams.get('file');
-        const autoRunCode = urlParams.get('code');
+	        const urlParams = new URLSearchParams(window.location.search);
+	        const autoRunFile = urlParams.get('file');
+	        const autoRunCode = urlParams.get('code');
+	        const workingDir = urlParams.get('working_dir');
+
+	        function withWorkingDir(parameters) {
+	            if (workingDir) {
+	                parameters.working_dir = workingDir;
+	            }
+	            return parameters;
+	        }
 
         if (autoRunFile) {
             console.log('Auto-running file from URL parameter:', autoRunFile);
             // Run the file on page load
-            fetch('/v1/tools', {
+            fetch('v1/tools', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    tool: 'run_file',
-                    parameters: { file_path: autoRunFile, skip_filter: true }
-                })
+	                body: JSON.stringify({
+	                    tool: 'run_file',
+	                    parameters: withWorkingDir({ file_path: autoRunFile, skip_filter: true })
+	                })
             })
             .then(response => response.json())
             .then(data => {
@@ -4789,13 +5066,13 @@ async def interactive_window(file: str = None, code: str = None):
         } else if (autoRunCode) {
             console.log('Auto-running code from URL parameter');
             // Run the selected code on page load
-            fetch('/v1/tools', {
+            fetch('v1/tools', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    tool: 'run_selection',
-                    parameters: { selection: autoRunCode, skip_filter: true }
-                })
+	                body: JSON.stringify({
+	                    tool: 'run_selection',
+	                    parameters: withWorkingDir({ selection: autoRunCode, skip_filter: true })
+	                })
             })
             .then(response => response.json())
             .then(data => {
@@ -4994,8 +5271,8 @@ def main():
         global multi_session_enabled, multi_session_max_sessions, multi_session_timeout
         stata_edition = args.stata_edition.lower()
         log_file_location = args.log_file_location
-        custom_log_directory = args.custom_log_directory
-        workspace_root = args.workspace_root
+        custom_log_directory = os.path.abspath(args.custom_log_directory) if args.custom_log_directory else ''
+        workspace_root = os.path.abspath(args.workspace_root) if args.workspace_root else ''
         result_display_mode = args.result_display_mode
         max_output_tokens = args.max_output_tokens
         # Multi-session is enabled by default, but can be disabled with --no-multi-session
@@ -5192,10 +5469,13 @@ def main():
                 name="stata_run_selection",
                 description="Stata Run Selection Endpoint\n\nRun selected Stata code and return the output\n\n### Responses:\n\n**200**: Successful Response (Success Response)",
                 inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "selection": {"type": "string", "title": "selection"}
-                    },
+	                    "type": "object",
+	                    "properties": {
+	                        "selection": {"type": "string", "title": "selection"},
+	                        "timeout": {"type": "integer", "default": 600, "title": "timeout"},
+	                        "working_dir": {"type": "string", "title": "working_dir"},
+	                        "session_id": {"type": "string", "title": "session_id"}
+	                    },
                     "title": "stata_run_selectionArguments",
                     "required": ["selection"]
                 }
@@ -5205,11 +5485,13 @@ def main():
                 name="stata_run_file",
                 description="Stata Run File Endpoint\n\nRun a Stata .do file and return the output (MCP-compatible endpoint)\n\nArgs:\n    file_path: Path to the .do file\n    timeout: Timeout in seconds (default: 600 seconds / 10 minutes)\n\nReturns:\n    Response with plain text output\n\n### Responses:\n\n**200**: Successful Response (Success Response)",
                 inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "file_path": {"type": "string", "title": "file_path"},
-                        "timeout": {"type": "integer", "default": 600, "title": "timeout"}
-                    },
+	                    "type": "object",
+	                    "properties": {
+	                        "file_path": {"type": "string", "title": "file_path"},
+	                        "timeout": {"type": "integer", "default": 600, "title": "timeout"},
+	                        "working_dir": {"type": "string", "title": "working_dir"},
+	                        "session_id": {"type": "string", "title": "session_id"}
+	                    },
                     "title": "stata_run_fileArguments",
                     "required": ["file_path"]
                 }
@@ -5499,7 +5781,7 @@ def main():
             resolved_path, resolution_candidates = resolve_do_file_path(file_path)
             effective_path = resolved_path or os.path.abspath(file_path)
             base_name = os.path.splitext(os.path.basename(effective_path))[0]
-            log_file_path = get_log_file_path(effective_path, base_name)
+            log_file_path = get_log_file_path(effective_path, base_name, arguments_dict.get("session_id"))
 
             logging.info(f"📡 MCP streaming enabled for {os.path.basename(file_path)}")
             logging.debug(f"MCP log streaming monitoring: {log_file_path}")

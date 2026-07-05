@@ -1,5 +1,5 @@
 const vscode = require('vscode');
-const { exec, spawn } = require('child_process');
+const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -52,6 +52,120 @@ const FILE_PATHS = {
 };
 
 const GRAPH_METADATA_PREFIX = '__STATA_MCP_GRAPH_METADATA__:';
+const NO_WORKING_DIR_SENTINEL = '__stata_mcp_no_cd__';
+const MIN_DATA_VIEWER_ROWS = 100;
+const MAX_DATA_VIEWER_ROWS = 500000;
+
+function execCommand(command, options = {}) {
+    return new Promise((resolve, reject) => {
+        childProcess.exec(command, options, (error, stdout, stderr) => {
+            if (error) {
+                error.stdout = stdout;
+                error.stderr = stderr;
+                reject(error);
+                return;
+            }
+            resolve({ stdout, stderr });
+        });
+    });
+}
+
+function execFileCommand(file, args, options = {}) {
+    return new Promise((resolve, reject) => {
+        childProcess.execFile(file, args, options, (error, stdout, stderr) => {
+            if (error) {
+                error.stdout = stdout;
+                error.stderr = stderr;
+                reject(error);
+                return;
+            }
+            resolve({ stdout, stderr });
+        });
+    });
+}
+
+function normalizePort(port) {
+    const numericPort = Number(port);
+    if (!Number.isInteger(numericPort) || numericPort < 1 || numericPort > 65535) {
+        throw new Error(`Invalid port: ${port}`);
+    }
+    return numericPort;
+}
+
+async function getWindowsListeningPortPids(port) {
+    const numericPort = normalizePort(port);
+    const psCommand = [
+        '$ErrorActionPreference = "SilentlyContinue"',
+        `Get-NetTCPConnection -LocalPort ${numericPort} -State Listen`,
+        'Select-Object -ExpandProperty OwningProcess',
+        'Sort-Object -Unique'
+    ].join(' | ');
+
+    const { stdout } = await execFileCommand(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', psCommand],
+        { windowsHide: true }
+    );
+
+    return [...new Set(
+        stdout
+            .split(/\r?\n/)
+            .map(line => line.trim())
+            .filter(line => /^\d+$/.test(line))
+    )];
+}
+
+function normalizeDataViewerMaxRows(maxRows) {
+    const parsed = Number.parseInt(maxRows, 10);
+    const safeValue = Number.isFinite(parsed) ? parsed : 10000;
+    return Math.min(MAX_DATA_VIEWER_ROWS, Math.max(MIN_DATA_VIEWER_ROWS, safeValue));
+}
+
+function appendWorkingDirParam(params, workingDir) {
+    if (workingDir !== undefined && workingDir !== null) {
+        params.append('working_dir', workingDir);
+    }
+}
+
+function resolveConfiguredWorkingDirectory(filePath = null) {
+    const config = getConfig();
+    const workingDirOption = config.get('workingDirectory') || 'dofile';
+    const customWorkingDir = config.get('customWorkingDirectory') || '';
+    const fileDir = filePath ? path.dirname(filePath) : null;
+
+    switch (workingDirOption) {
+        case 'dofile':
+            return fileDir || NO_WORKING_DIR_SENTINEL;
+        case 'parent':
+            return fileDir ? path.dirname(fileDir) : NO_WORKING_DIR_SENTINEL;
+        case 'workspace': {
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (workspaceFolders && workspaceFolders.length > 0) {
+                return workspaceFolders[0].uri.fsPath;
+            }
+            return fileDir || NO_WORKING_DIR_SENTINEL;
+        }
+        case 'extension': {
+            const extensionPath = globalContext?.extensionPath || __dirname;
+            return path.join(extensionPath, 'logs');
+        }
+        case 'custom':
+            return customWorkingDir && customWorkingDir.trim()
+                ? customWorkingDir.trim()
+                : (fileDir || NO_WORKING_DIR_SENTINEL);
+        case 'none':
+            return NO_WORKING_DIR_SENTINEL;
+        default:
+            return fileDir || NO_WORKING_DIR_SENTINEL;
+    }
+}
+
+function mergeQueryStrings(existingQuery, extraQuery) {
+    if (existingQuery && extraQuery) {
+        return `${existingQuery}&${extraQuery}`;
+    }
+    return existingQuery || extraQuery || '';
+}
 
 // Configuration getter with caching
 function getConfig() {
@@ -221,18 +335,22 @@ const ServerUtils = {
         try {
             if (IS_WINDOWS) {
                 try {
-                    await exec(`FOR /F "tokens=5" %P IN ('netstat -ano ^| findstr :${port} ^| findstr LISTENING') DO taskkill /F /PID %P`);
-                    Logger.info(`Killed existing server process. Waiting for port to be released...`);
-                } catch (error) {
-                    if (error.code === 1 && error.cmd && error.cmd.includes('findstr')) {
+                    const pids = await getWindowsListeningPortPids(port);
+                    if (pids.length === 0) {
                         Logger.info(`No existing process found on port ${port}`);
                     } else {
-                        Logger.error(`Error killing existing server: ${error.message}`);
+                        for (const pid of pids) {
+                            await execFileCommand('taskkill.exe', ['/F', '/PID', pid], { windowsHide: true });
+                            Logger.info(`Killed process ${pid} using local port ${port}`);
+                        }
+                        Logger.info(`Killed existing server process. Waiting for port to be released...`);
                     }
+                } catch (error) {
+                    Logger.error(`Error killing existing server: ${error.message}`);
                 }
             } else {
                 try {
-                    await exec(`lsof -t -i:${port} | xargs -r kill -9`);
+                    await execCommand(`lsof -t -i:${port} | xargs -r kill -9`);
                     Logger.info(`Killed existing server process. Waiting for port to be released...`);
                 } catch (error) {
                     Logger.info(`No existing process found on port ${port}`);
@@ -441,7 +559,7 @@ function installDependencies() {
     try {
         const installProcess = childProcess.fork(checkPythonScriptPath, [], {
             stdio: 'pipe',
-            shell: true
+            execArgv: []
         });
         
         installProcess.stdout?.on('data', (data) => {
@@ -695,7 +813,7 @@ async function startMcpServer() {
             // On Windows with exec(), trailing backslash in paths escapes the closing quote
             // e.g., --stata-path "C:\Program Files\StataNow19\" breaks argument parsing
             // Strip trailing backslashes from all paths to prevent this (Issue #52)
-            const stripTrailingBackslash = (p) => p ? p.replace(/\\+$/, '') : p;
+            const stripTrailingBackslash = (p) => p ? p.replace(/(?<!^[A-Za-z]:)\\+$/, '') : p;
 
             cmdString = `"${pythonCommand}" -m stata_mcp_server --host ${host} --port ${port}`;
 
@@ -843,11 +961,10 @@ async function runSelection() {
         return;
     }
 
-    // Get the current file's directory to set as working directory
     const filePath = editor.document.uri.fsPath;
-    const fileDir = filePath ? path.dirname(filePath) : null;
+    const workingDir = resolveConfiguredWorkingDirectory(filePath);
 
-    await executeStataCode(text, 'run_selection', fileDir);
+    await executeStataCode(text, 'run_selection', workingDir);
 }
 
 async function runFile() {
@@ -1023,6 +1140,7 @@ async function runInteractive() {
         urlParams = `file=${encodedFilePath}`;
         console.log('[runInteractive] Using full file:', filePath);
     }
+    urlParams += `&working_dir=${encodeURIComponent(resolveConfiguredWorkingDirectory(filePath))}`;
 
     // Check display mode setting
     const displayMode = config.get('interactiveDisplayMode') || 'panel';
@@ -1033,9 +1151,10 @@ async function runInteractive() {
             const cmdTimeout = config.get('runSelectionTimeout') || 600;
             const tool = codeToRun ? 'run_selection' : 'run_file';
             const executionId = createExecutionId(codeToRun ? 'interactive-selection' : 'interactive-file');
+            const interactiveWorkingDir = resolveConfiguredWorkingDirectory(filePath);
             const params = codeToRun
-                ? { selection: codeToRun, skip_filter: true, execution_id: executionId }
-                : { file_path: filePath, skip_filter: true, execution_id: executionId };
+                ? { selection: codeToRun, skip_filter: true, execution_id: executionId, working_dir: interactiveWorkingDir }
+                : { file_path: filePath, skip_filter: true, execution_id: executionId, working_dir: interactiveWorkingDir };
 
             const response = await axios.post(
                 `http://${host}:${port}/v1/tools`,
@@ -1063,9 +1182,10 @@ async function runInteractive() {
         try {
             const baseUri = await vscode.env.asExternalUri(vscode.Uri.parse(`http://${host}:${port}`));
             const basePath = baseUri.path.replace(/\/+$/, '');
+            const mergedQuery = mergeQueryStrings(baseUri.query, urlParams);
             const fullUri = baseUri.with({
                 path: basePath + '/interactive',
-                query: urlParams
+                query: mergedQuery
             });
             console.log('[runInteractive] Opening URL:', fullUri.toString());
             await vscode.env.openExternal(fullUri);
@@ -1151,7 +1271,8 @@ async function showInteractiveWindow(filePath, output, graphs, host, port) {
                                     parameters: {
                                         selection: message.text,
                                         skip_filter: true,
-                                        execution_id: createExecutionId('interactive-command')
+                                        execution_id: createExecutionId('interactive-command'),
+                                        working_dir: resolveConfiguredWorkingDirectory(filePath)
                                     }
                                 },
                                 { headers: { 'Content-Type': 'application/json' }, timeout: cmdTimeout * 1000 }
@@ -1750,9 +1871,7 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
             params.append('selection', code);
             params.append('timeout', runSelectionTimeout.toString());
             params.append('execution_id', executionId);
-            if (workingDir) {
-                params.append('working_dir', workingDir);
-            }
+            appendWorkingDirParam(params, workingDir);
 
             const streamUrl = `http://${host}:${port}/run_selection/stream?${params.toString()}`;
             Logger.debug(`Stream URL: ${streamUrl}`);
@@ -1936,7 +2055,6 @@ async function executeStataFile(filePath) {
     const port = config.get('mcpServerPort') || 4000;
     const runFileTimeout = config.get('runFileTimeout') || 600;
     const workingDirOption = config.get('workingDirectory') || 'dofile';
-    const customWorkingDir = config.get('customWorkingDirectory') || '';
 
     // Set execution state
     isExecuting = true;
@@ -1948,50 +2066,9 @@ async function executeStataFile(filePath) {
     Logger.debug(`Using timeout: ${runFileTimeout} seconds`);
     Logger.debug(`Working directory option: ${workingDirOption}`);
 
-    // Determine actual working directory based on setting
-    let workingDir = null;
-    const fileDir = path.dirname(filePath);
+    const workingDir = resolveConfiguredWorkingDirectory(filePath);
 
-    switch (workingDirOption) {
-        case 'dofile':
-            workingDir = fileDir;
-            break;
-        case 'parent':
-            workingDir = path.dirname(fileDir);
-            break;
-        case 'workspace':
-            // Get VS Code workspace root
-            const workspaceFolders = vscode.workspace.workspaceFolders;
-            if (workspaceFolders && workspaceFolders.length > 0) {
-                workingDir = workspaceFolders[0].uri.fsPath;
-            } else {
-                // Fall back to dofile directory if no workspace
-                workingDir = fileDir;
-                Logger.debug('No workspace folder found, falling back to dofile directory');
-            }
-            break;
-        case 'extension':
-            // Use logs folder in extension directory
-            const extensionPath = globalContext.extensionPath || __dirname;
-            workingDir = path.join(extensionPath, 'logs');
-            break;
-        case 'custom':
-            if (customWorkingDir && customWorkingDir.trim()) {
-                workingDir = customWorkingDir.trim();
-            } else {
-                // Fall back to dofile directory if custom not specified
-                workingDir = fileDir;
-                Logger.debug('Custom working directory not specified, falling back to dofile directory');
-            }
-            break;
-        case 'none':
-            workingDir = null;  // Don't change directory
-            break;
-        default:
-            workingDir = fileDir;
-    }
-
-    Logger.debug(`Resolved working directory: ${workingDir || '(none - keep current)'}`);
+    Logger.debug(`Resolved working directory: ${workingDir === NO_WORKING_DIR_SENTINEL ? '(none - keep current)' : workingDir}`);
 
     if (!await isServerRunning(host, port)) {
         await startMcpServer();
@@ -2021,9 +2098,7 @@ async function executeStataFile(filePath) {
             timeout: runFileTimeout.toString(),
             execution_id: executionId
         });
-        if (workingDir) {
-            params.append('working_dir', workingDir);
-        }
+        appendWorkingDirParam(params, workingDir);
 
         // Use streaming endpoint for real-time output display
         const streamUrl = `http://${host}:${port}/run_file/stream?${params.toString()}`;
@@ -2209,7 +2284,7 @@ async function viewStataData() {
     const config = getConfig();
     const host = config.get('mcpServerHost') || 'localhost';
     const port = config.get('mcpServerPort') || 4000;
-    const maxRows = config.get('dataViewerMaxRows') || 10000;
+    const maxRows = normalizeDataViewerMaxRows(config.get('dataViewerMaxRows'));
 
     try {
         // Call the server endpoint to get data with row limit
@@ -2780,7 +2855,8 @@ async function askAgent() {
                     const response = await getAgentResponse(message.text);
                     agentWebviewPanel.webview.postMessage({ command: 'agentResponse', text: response });
                 } else if (message.command === 'runCode') {
-                    await executeStataCode(message.code, 'run_selection');
+                    const activeFilePath = vscode.window.activeTextEditor?.document?.uri?.fsPath || null;
+                    await executeStataCode(message.code, 'run_selection', resolveConfiguredWorkingDirectory(activeFilePath));
                     agentWebviewPanel.webview.postMessage({ command: 'codeRun' });
                 }
             },

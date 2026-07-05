@@ -2,6 +2,24 @@
 
 All notable changes to the Stata MCP extension will be documented in this file.
 
+## [0.5.3] - 2026-07-05
+
+### Fixed
+- **Python environment setup crash with "Exit code: 9 - bad option: --js-flags"** (Issue #61): The dependency installer used `child_process.fork()`, which made the child Node process inherit VS Code's Electron-specific command-line flags (such as `--js-flags`) and crash on launch. The child now starts with a clean `execArgv`, so installation works regardless of how the host IDE was launched.
+- **Empty output panel although the do-file ran successfully** (Issue #62): In single-session mode the streaming endpoint executed a preprocessed temporary copy of the do-file, so Stata wrote its log to a temp-named file while the stream monitored the original file's log path — the panel stayed empty. Execution now writes to the exact log file the stream monitors, and as a safety net the final result is emitted directly if log tailing produced nothing (with internal temp paths stripped).
+- **User `log using` commands were broken by MCP output capture** (Issue #63): Output capture previously ran `capture log close _all` (closing any log the user had opened) and commented out `log using`/`log close` commands inside do-files. The server now captures output through its own named log (`__mcp_log`) and only ever closes that log, so user log commands run untouched and coexist with MCP capture. If user code runs `log close _all`, the MCP log is automatically reopened in append mode so output capture continues.
+- **Port reclaim failed on non-English Windows** (Issue #64): All three port-cleanup paths matched the localized netstat state word (e.g. `ABHÖREN` on German Windows), which never matched `LISTENING` and could also crash UTF-8 decoding. The Python server now parses `netstat -ano` locale-independently (exact local-port match, zero remote endpoint, numeric PID, IPv4+IPv6, deduplicated), and the extension and standalone launcher use PowerShell `Get-NetTCPConnection -State Listen` via `execFile`, eliminating shell quoting and locale issues entirely.
+- **Working directory setting now honored in multi-session mode** (Issue #36): Selections and do-files routed through session workers previously ignored the `workingDirectory` setting. All execution routes now respect it, including a proper "none" (don't change directory) option end-to-end.
+- **Interactive window behind proxies** (Issue #54): `/interactive` used root-relative URLs (`/v1/tools`, `/graphs/...`), which broke behind path-prefixing proxies and tunnels; it now uses relative URLs and forwards the configured working directory.
+- **Data Viewer no longer materializes the full filtered dataset** (related to Issue #59): filtered results are counted and row-limited inside Stata before the pandas transfer, avoiding large-memory freezes; the row limit is clamped to 100–500,000.
+
+### Changed
+- Session log filenames now use a sanitized session id plus a short hash (e.g. `mydofile_mysession_ab12cd34ef_mcp.log`), preventing invalid-filename and path-traversal issues from caller-provided session ids.
+- MCP `stata_run_selection` now accepts `timeout`, `working_dir`, and `session_id` parameters; single-session selections enforce the timeout server-side.
+- Compact output mode now strips Stata log header/footer noise from `run_selection` results as well as `run_file`.
+- The standalone launcher (`start-server.js`) now forwards `--log-file-location` and `--custom-log-directory` to the Python server.
+- Preprocessed temporary do-files are now cleaned up after execution on all run-file paths.
+
 ## [0.5.2] - 2026-04-19
 
 ### Changed
