@@ -1,5 +1,7 @@
 # Stata MCP Extension for VS Code, Cursor, and Antigravity
 
+[![MCP Toplist](https://mcptoplist.com/badge/glama%2Fhanlulong%2Fstata-mcp.svg)](https://mcptoplist.com/server/glama%2Fhanlulong%2Fstata-mcp)
+
 [![en](https://img.shields.io/badge/lang-English-red.svg)](./README.md)
 [![cn](https://img.shields.io/badge/语言-中文-yellow.svg)](./README.zh-CN.md)
 [![VS Code Marketplace](https://vsmarketplacebadges.dev/version-short/DeepEcon.stata-mcp.svg?label=VS%20Code)](https://marketplace.visualstudio.com/items?itemName=DeepEcon.stata-mcp)
