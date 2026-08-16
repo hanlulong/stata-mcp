@@ -589,7 +589,7 @@ Running into trouble? The full troubleshooting guide — clean reinstall steps f
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=hanlulong/stata-mcp&type=Date)](https://star-history.com/#hanlulong/stata-mcp&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=hanlulong/stata-mcp&type=Date)](https://star-history.dera.page/#hanlulong/stata-mcp&type=Date)
 
 ## License
 
