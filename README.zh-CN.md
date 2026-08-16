@@ -589,7 +589,7 @@ Cursor 的用户级 MCP 配置位置：
 
 ## Star 历史
 
-[![Star 历史图表](https://api.star-history.com/svg?repos=hanlulong/stata-mcp&type=Date)](https://star-history.com/#hanlulong/stata-mcp&Date)
+[![Star 历史图表](https://star-history.dera.page/svg?repos=hanlulong/stata-mcp&type=Date)](https://star-history.dera.page/#hanlulong/stata-mcp&type=Date)
 
 ## 许可证
 
