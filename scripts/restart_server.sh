@@ -27,12 +27,8 @@ echo "=== Stata MCP Server Graceful Restart ==="
 
 # 1. Copy updated source files
 echo "1. Copying updated source files..."
-cp "$SRC_DIR/src/stata_mcp_server.py" "$EXTENSION_DIR/src/"
-cp "$SRC_DIR/src/session_manager.py" "$EXTENSION_DIR/src/"
-cp "$SRC_DIR/src/stata_worker.py" "$EXTENSION_DIR/src/"
-cp "$SRC_DIR/src/api_models.py" "$EXTENSION_DIR/src/"
-cp "$SRC_DIR/src/output_filter.py" "$EXTENSION_DIR/src/"
-cp "$SRC_DIR/src/utils.py" "$EXTENSION_DIR/src/"
+# Copy every server module (the server and worker also import graph_artifacts.py and smcl_parser.py)
+cp "$SRC_DIR"/src/*.py "$EXTENSION_DIR/src/"
 echo "   Files copied."
 
 # 2. Send SIGTERM for graceful shutdown (not SIGKILL)
@@ -53,11 +49,22 @@ cd "$EXTENSION_DIR"
 # Create logs directory if it doesn't exist
 mkdir -p "$EXTENSION_DIR/logs"
 
+# Use the extension's own Python environment, falling back to python3
+PY="$(cat "$EXTENSION_DIR/.python-path" 2>/dev/null)"
+if [ -z "$PY" ] || [ ! -x "$PY" ]; then
+    PY=python3
+fi
+echo "   Using Python: $PY"
+
+# Override with STATA_PATH=... STATA_EDITION=... if your Stata lives elsewhere
+STATA_PATH="${STATA_PATH:-/Applications/StataNow}"
+STATA_EDITION="${STATA_EDITION:-mp}"
+
 # Start server with all relevant settings
-nohup python3 src/stata_mcp_server.py \
+nohup "$PY" src/stata_mcp_server.py \
     --port $PORT \
-    --stata-path /Applications/StataNow \
-    --stata-edition mp \
+    --stata-path "$STATA_PATH" \
+    --stata-edition "$STATA_EDITION" \
     --log-file "$EXTENSION_DIR/logs/stata_mcp_server.log" \
     --log-file-location extension \
     --result-display-mode compact \
