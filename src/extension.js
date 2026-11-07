@@ -56,20 +56,6 @@ const NO_WORKING_DIR_SENTINEL = '__stata_mcp_no_cd__';
 const MIN_DATA_VIEWER_ROWS = 100;
 const MAX_DATA_VIEWER_ROWS = 500000;
 
-function execCommand(command, options = {}) {
-    return new Promise((resolve, reject) => {
-        childProcess.exec(command, options, (error, stdout, stderr) => {
-            if (error) {
-                error.stdout = stdout;
-                error.stderr = stderr;
-                reject(error);
-                return;
-            }
-            resolve({ stdout, stderr });
-        });
-    });
-}
-
 function execFileCommand(file, args, options = {}) {
     return new Promise((resolve, reject) => {
         childProcess.execFile(file, args, options, (error, stdout, stderr) => {
@@ -113,6 +99,56 @@ async function getWindowsListeningPortPids(port) {
             .map(line => line.trim())
             .filter(line => /^\d+$/.test(line))
     )];
+}
+
+async function getPosixListeningPortPids(port) {
+    const numericPort = normalizePort(port);
+    const args = ['-nP', `-iTCP:${numericPort}`, '-sTCP:LISTEN', '-t'];
+    let stdout = '';
+    for (const lsof of ['lsof', '/usr/sbin/lsof']) {
+        try {
+            ({ stdout } = await execFileCommand(lsof, args));
+            break;
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                continue;
+            }
+            // lsof exits 1 when nothing is listening
+            stdout = error.stdout || '';
+            break;
+        }
+    }
+    return [...new Set(
+        String(stdout)
+            .split(/\r?\n/)
+            .map(line => line.trim())
+            .filter(line => /^\d+$/.test(line) && Number(line) !== process.pid)
+    )];
+}
+
+async function killPosixStataServersOnPort(port) {
+    let killed = 0;
+    for (const pid of await getPosixListeningPortPids(port)) {
+        let command = '';
+        try {
+            ({ stdout: command } = await execFileCommand('ps', ['-ww', '-o', 'command=', '-p', pid]));
+        } catch (error) {
+            command = error.stdout || '';
+        }
+        command = String(command).trim();
+        if (!command.includes('stata_mcp_server')) {
+            Logger.info(`Port ${port} is held by another program (PID ${pid}: ${command}); not stopping it`);
+            continue;
+        }
+        try {
+            process.kill(Number(pid), 'SIGKILL');
+            killed += 1;
+            Logger.info(`Killed stata-mcp server process ${pid} listening on port ${port}`);
+        } catch (error) {
+            Logger.error(`Error killing process ${pid}: ${error.message}`);
+        }
+    }
+    return killed;
 }
 
 function normalizeDataViewerMaxRows(maxRows) {
@@ -333,6 +369,7 @@ const ServerUtils = {
     
     async killProcessOnPort(port) {
         try {
+            let waitForRelease = true;
             if (IS_WINDOWS) {
                 try {
                     const pids = await getWindowsListeningPortPids(port);
@@ -349,15 +386,21 @@ const ServerUtils = {
                     Logger.error(`Error killing existing server: ${error.message}`);
                 }
             } else {
-                try {
-                    await execCommand(`lsof -t -i:${port} | xargs -r kill -9`);
+                // Only the process LISTENING on the port, and only if it is a
+                // stata-mcp server. A plain `lsof -i:port` also lists clients
+                // connected to the port (other editor windows, MCP clients).
+                const killed = await killPosixStataServersOnPort(port);
+                waitForRelease = killed > 0;
+                if (killed > 0) {
                     Logger.info(`Killed existing server process. Waiting for port to be released...`);
-                } catch (error) {
-                    Logger.info(`No existing process found on port ${port}`);
+                } else {
+                    Logger.info(`No existing server found on port ${port}`);
                 }
             }
             // Wait for port to be released
-            await new Promise(resolve => setTimeout(resolve, 5000));
+            if (waitForRelease) {
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            }
         } catch (error) {
             Logger.error(`Error in port cleanup: ${error.message}`);
         }

@@ -5,7 +5,7 @@
  * This is a cross-platform alternative to using bash scripts.
  */
 
-const { spawn, exec, execSync, execFileSync } = require('child_process');
+const { spawn, exec, execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -60,6 +60,52 @@ function getWindowsListeningPortPids(port) {
             .map(line => line.trim())
             .filter(line => /^\d+$/.test(line))
     )];
+}
+
+function getPosixListeningPortPids(port) {
+    const numericPort = normalizePort(port);
+    const args = ['-nP', `-iTCP:${numericPort}`, '-sTCP:LISTEN', '-t'];
+    let stdout = '';
+    for (const lsof of ['lsof', '/usr/sbin/lsof']) {
+        try {
+            stdout = execFileSync(lsof, args, { encoding: 'utf8' });
+            break;
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                continue;
+            }
+            // lsof exits 1 when nothing is listening
+            stdout = error.stdout ? String(error.stdout) : '';
+            break;
+        }
+    }
+    return [...new Set(
+        stdout
+            .split(/\r?\n/)
+            .map(line => line.trim())
+            .filter(line => /^\d+$/.test(line) && Number(line) !== process.pid)
+    )];
+}
+
+// Kill only stata-mcp servers listening on the port; leave other programs alone.
+function killPosixStataServersOnPort(port) {
+    let killed = 0;
+    for (const pid of getPosixListeningPortPids(port)) {
+        let command = '';
+        try {
+            command = execFileSync('ps', ['-ww', '-o', 'command=', '-p', pid], { encoding: 'utf8' }).trim();
+        } catch (error) {
+            command = error.stdout ? String(error.stdout).trim() : '';
+        }
+        if (!command.includes('stata_mcp_server')) {
+            console.log(`Port ${port} is held by another program (PID ${pid}: ${command}); not stopping it`);
+            continue;
+        }
+        process.kill(Number(pid), 'SIGKILL');
+        killed += 1;
+        console.log(`Killed stata-mcp server process ${pid} on port ${port} (Unix)`);
+    }
+    return killed;
 }
 
 // Parse command line arguments
@@ -171,8 +217,9 @@ async function startServer() {
                 }
             } else {
                 try {
-                    execSync(`lsof -ti:${port} | xargs kill -9`);
-                    console.log(`Killed process on port ${port} (Unix)`);
+                    if (killPosixStataServersOnPort(port) === 0) {
+                        console.log(`No stata-mcp server found listening on port ${port}`);
+                    }
                 } catch (error) {
                     console.log(`Could not kill process using Unix method: ${error.message}`);
                 }

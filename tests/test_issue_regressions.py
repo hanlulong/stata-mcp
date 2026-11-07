@@ -92,6 +92,43 @@ def test_windows_netstat_parser_matches_exact_local_port_without_localized_state
     assert server.windows_listening_port_pids_from_netstat(output, 4000) == ["1234"]
 
 
+def test_posix_port_reclaim_kills_only_stata_mcp_servers():
+    lsof_output = "\n4242\n\n8795\n8795\n9100\n  \nabc\n"
+    cmdlines = {
+        "4242": "/usr/bin/python3 -m stata_mcp_server --port 4000",  # this process
+        "8795": "/ext/.venv/bin/python -m stata_mcp_server --host localhost --port 4000",
+        "9100": "python3 -m http.server 4000",
+    }
+
+    kill, skipped = server.posix_server_pids_to_kill(lsof_output, cmdlines, self_pid=4242)
+
+    assert kill == ["8795"]
+    assert skipped == [("9100", "python3 -m http.server 4000")]
+
+
+def test_posix_port_reclaim_skips_pid_with_unknown_command():
+    kill, skipped = server.posix_server_pids_to_kill("1234\n", {}, self_pid=1)
+    assert kill == []
+    assert skipped == [("1234", "")]
+    assert server.posix_server_pids_to_kill("", {}, self_pid=1) == ([], [])
+
+
+def test_posix_port_reclaim_uses_listener_only_lsof_without_shell():
+    with open(server.__file__, "r", encoding="utf-8") as f:
+        source = f.read()
+    assert "lsof -i :" not in source
+    assert '"-sTCP:LISTEN"' in source
+
+    src_dir = os.path.join(os.path.dirname(__file__), "..", "src")
+    for name in ("extension.js", "start-server.js"):
+        with open(os.path.join(src_dir, name), "r", encoding="utf-8") as f:
+            js_source = f.read()
+        assert "lsof -t -i:" not in js_source, name
+        assert "lsof -ti:" not in js_source, name
+        assert "'-sTCP:LISTEN'" in js_source, name
+        assert "includes('stata_mcp_server')" in js_source, name
+
+
 def test_stream_fallback_strips_log_footer_and_filters_selection_markers():
     output = """
 header ignored
