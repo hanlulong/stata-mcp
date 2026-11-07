@@ -986,8 +986,34 @@ async function isServerRunning(host, port) {
     });
 }
 
-async function runSelection() {
-    const editor = vscode.window.activeTextEditor;
+function isStataDocument(document) {
+    if (!document) {
+        return false;
+    }
+    const fileName = (document.fileName || '').toLowerCase();
+    return document.languageId === 'stata' ||
+        fileName.endsWith('.do') || fileName.endsWith('.ado') || fileName.endsWith('.mata');
+}
+
+// Find the editor a run command applies to. Editor title buttons pass the
+// document's Uri; keybindings and the palette pass nothing. After the first
+// run the Output channel can be the active editor, so it is skipped.
+function resolveStataEditor(uri) {
+    if (uri instanceof vscode.Uri) {
+        const target = uri.toString();
+        return vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === target);
+    }
+    const active = vscode.window.activeTextEditor;
+    if (active && active.document.uri.scheme !== 'output') {
+        return active;
+    }
+    return vscode.window.visibleTextEditors.find(e =>
+        (e.document.uri.scheme === 'file' || e.document.uri.scheme === 'untitled') &&
+        isStataDocument(e.document));
+}
+
+async function runSelection(uri) {
+    const editor = resolveStataEditor(uri);
     if (!editor) {
         vscode.window.showErrorMessage('No active editor');
         return;
@@ -1014,14 +1040,18 @@ async function runSelection() {
     await executeStataCode(text, 'run_selection', workingDir);
 }
 
-async function runFile() {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) {
+async function runFile(uri) {
+    const editor = resolveStataEditor(uri);
+    let filePath;
+    if (editor) {
+        filePath = editor.document.uri.fsPath;
+    } else if (uri instanceof vscode.Uri && uri.fsPath.toLowerCase().endsWith('.do')) {
+        // Title button for a .do file that is not in a visible editor
+        filePath = uri.fsPath;
+    } else {
         vscode.window.showErrorMessage('No active editor');
         return;
     }
-
-    const filePath = editor.document.uri.fsPath;
 
     if (!filePath.toLowerCase().endsWith('.do')) {
         vscode.window.showErrorMessage('Not a Stata .do file');
@@ -3065,6 +3095,75 @@ function getAgentWebviewContent() {
 </html>`;
 }
 
+/**
+ * Merge the stata-mcp entry into the text of ~/.cursor/mcp.json.
+ * Pure function: returns { changed, text } and never drops other servers.
+ * - missing file (existingText null): create a /mcp-streamable entry
+ * - unparsable JSON: { changed: false, parseError } so the caller never writes
+ * - no stata-mcp entry: add the /mcp-streamable entry
+ * - entry with `command` or without `url`: leave it alone
+ * - entry whose url host and port already match: leave it alone, whatever
+ *   its path or transport
+ * - otherwise: replace only protocol://host:port, keeping path and other keys
+ */
+function mergeCursorMcpConfig(existingText, host, port) {
+    let urlHost = (host || '').trim();
+    if (!urlHost || urlHost === '0.0.0.0' || urlHost === '::') {
+        urlHost = 'localhost';
+    }
+    if (urlHost.includes(':') && !urlHost.startsWith('[')) {
+        urlHost = `[${urlHost}]`;
+    }
+    const origin = `http://${urlHost}:${port}`;
+    const newEntry = { url: `${origin}/mcp-streamable` };
+
+    if (existingText === null || existingText === undefined) {
+        return {
+            changed: true,
+            text: JSON.stringify({ mcpServers: { 'stata-mcp': newEntry } }, null, 2)
+        };
+    }
+
+    let mcpConfig;
+    try {
+        mcpConfig = JSON.parse(existingText);
+    } catch (error) {
+        return { changed: false, text: existingText, parseError: error.message };
+    }
+    const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+    if (!isObject(mcpConfig) || (mcpConfig.mcpServers !== undefined && !isObject(mcpConfig.mcpServers))) {
+        return { changed: false, text: existingText, parseError: 'expected an object with an "mcpServers" object' };
+    }
+
+    mcpConfig.mcpServers = mcpConfig.mcpServers || {};
+    const entry = mcpConfig.mcpServers['stata-mcp'];
+
+    if (entry === undefined) {
+        mcpConfig.mcpServers['stata-mcp'] = newEntry;
+        return { changed: true, text: JSON.stringify(mcpConfig, null, 2) };
+    }
+
+    if (!isObject(entry) || entry.command !== undefined || typeof entry.url !== 'string') {
+        return { changed: false, text: existingText };
+    }
+
+    let parsedUrl;
+    try {
+        parsedUrl = new URL(entry.url);
+    } catch (error) {
+        return { changed: false, text: existingText };
+    }
+    const defaultPort = parsedUrl.protocol === 'https:' ? '443' : '80';
+    const entryPort = parsedUrl.port || defaultPort;
+    if (parsedUrl.hostname.toLowerCase() === urlHost.toLowerCase() && entryPort === String(port)) {
+        return { changed: false, text: existingText };
+    }
+
+    const match = entry.url.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/?#]*(.*)$/);
+    entry.url = `${origin}${match ? match[1] : ''}`;
+    return { changed: true, text: JSON.stringify(mcpConfig, null, 2) };
+}
+
 function autoUpdateGlobalMcpConfig() {
     // Only auto-update MCP config for Cursor IDE
     // VS Code users should configure MCP via workspace settings or GitHub Copilot
@@ -3087,58 +3186,34 @@ function autoUpdateGlobalMcpConfig() {
 
         Logger.info(`Checking MCP configuration at ${mcpConfigPath}`);
 
-        // Only create .cursor directory if it already exists (user has Cursor installed)
-        // or if we're definitely running in Cursor
+        let existingText = null;
+        if (FileUtils.checkFileExists(mcpConfigPath)) {
+            existingText = FileUtils.readFileContent(mcpConfigPath);
+            if (existingText === null) {
+                Logger.info(`Warning: could not read ${mcpConfigPath}; leaving it unchanged`);
+                return false;
+            }
+        }
+
+        const result = mergeCursorMcpConfig(existingText, host, port);
+        if (result.parseError) {
+            Logger.info(`Warning: ${mcpConfigPath} is not valid JSON (${result.parseError}). ` +
+                'Leaving it unchanged; fix the file to let Stata MCP add its entry.');
+            return false;
+        }
+        if (!result.changed) {
+            Logger.info(`stata-mcp configuration is already correct`);
+            return true;
+        }
+
+        // Only create .cursor directory when we are about to write into it
         if (!FileUtils.checkFileExists(mcpConfigDir)) {
             fs.mkdirSync(mcpConfigDir, { recursive: true });
             Logger.info(`Created directory: ${mcpConfigDir}`);
         }
-        
-        let mcpConfig = { mcpServers: {} };
-        let configChanged = false;
-        
-        if (FileUtils.checkFileExists(mcpConfigPath)) {
-            try {
-                const configContent = FileUtils.readFileContent(mcpConfigPath);
-                mcpConfig = JSON.parse(configContent);
-                mcpConfig.mcpServers = mcpConfig.mcpServers || {};
-                
-                const currentConfig = mcpConfig.mcpServers["stata-mcp"];
-                const correctUrl = `http://${host}:${port}/mcp`;
-                
-                if (!currentConfig || currentConfig.url !== correctUrl || currentConfig.transport !== "sse") {
-                    Logger.info(`Updating stata-mcp configuration to ${correctUrl}`);
-                    mcpConfig.mcpServers["stata-mcp"] = {
-                        url: correctUrl,
-                        transport: "sse"
-                    };
-                    configChanged = true;
-                } else {
-                    Logger.info(`stata-mcp configuration is already correct`);
-                }
-            } catch (error) {
-                Logger.info(`Error reading MCP config: ${error.message}`);
-                mcpConfig = { mcpServers: {} };
-                mcpConfig.mcpServers["stata-mcp"] = {
-                    url: `http://${host}:${port}/mcp`,
-                    transport: "sse"
-                };
-                configChanged = true;
-            }
-        } else {
-            Logger.info(`Creating new MCP configuration`);
-            mcpConfig.mcpServers["stata-mcp"] = {
-                url: `http://${host}:${port}/mcp`,
-                transport: "sse"
-            };
-            configChanged = true;
-        }
-        
-        if (configChanged) {
-            FileUtils.writeFileContent(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
-            Logger.info(`Updated MCP configuration at ${mcpConfigPath}`);
-        }
-        
+        FileUtils.writeFileContent(mcpConfigPath, result.text);
+        Logger.info(`Updated MCP configuration at ${mcpConfigPath}`);
+
         return true;
     } catch (error) {
         Logger.info(`Error updating MCP config: ${error.message}`);

@@ -365,3 +365,34 @@ async def test_file_stream_preserves_no_cd_sentinel_for_multi_session_worker(mon
     joined = "".join(chunks)
     assert "data: Worker final" in joined
     assert "processed_mcp.log" not in joined
+
+
+def test_folding_start_marker_consumes_brace_lines_for_minimap_headers():
+    # VS Code shows a minimap region header with the text after the
+    # folding start match; a match that covers the whole brace line leaves
+    # no header text, while // #region keeps its name (#56).
+    import json
+    import re
+
+    config_path = os.path.join(os.path.dirname(__file__), "..", "src", "language-configuration.json")
+    with open(config_path, "r", encoding="utf-8") as f:
+        start = re.compile(json.load(f)["folding"]["markers"]["start"])
+
+    for line in ("foreach v of varlist price mpg {", "    if _rc != 0 {  ", "}", "else {"):
+        match = start.search(line)
+        if line == "}":
+            assert match is None
+        else:
+            assert match is not None and match.group(0) == line, line
+    region = start.search("// #region Clean data")
+    assert region is not None
+    assert "// #region Clean data"[len(region.group(0)):].strip() == "Clean data"
+
+
+def test_cursor_mcp_config_update_no_longer_forces_legacy_sse_entry():
+    extension_path = os.path.join(os.path.dirname(__file__), "..", "src", "extension.js")
+    with open(extension_path, "r", encoding="utf-8") as f:
+        source = f.read()
+    assert "function mergeCursorMcpConfig(" in source
+    assert 'currentConfig.transport !== "sse"' not in source
+    assert "/mcp-streamable" in source
