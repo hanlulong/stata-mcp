@@ -2,6 +2,18 @@
 
 All notable changes to the Stata MCP extension will be documented in this file.
 
+## [Unreleased]
+
+### Security
+- **Local-request guard**: the server now rejects requests whose Host is not `localhost`, `127.0.0.1`, `::1`, the configured server host or an entry in the new `stata-vscode.allowedHosts` setting, requests with a foreign `Origin`, and cross-site browser requests (`Sec-Fetch-Site: cross-site`), so a web page can no longer run Stata code through `http://localhost:4000` or by DNS rebinding. Blocked requests get HTTP 403 and one warning in the Stata output channel. `/interactive` can no longer be framed.
+- **Graph files stay inside the graphs folder**: `/graphs/batch/...` no longer decodes the path twice, and batch and execution ids must be plain ids that resolve inside the graphs root, so the route cannot serve files from elsewhere and the server never creates graph folders outside it.
+- **Workspace Trust is enforced**: in Restricted Mode the extension no longer sets up Python or starts the server, workspace values for settings such as `stataPath` are ignored, and run commands offer the trust dialog. Trusting the folder starts the server as before.
+- **Data Viewer**: cell values are escaped before they are embedded in the viewer, and the viewer has a Content Security Policy, so a string such as `</script><script>...` is shown as text instead of running. Filter conditions containing a line break are rejected.
+
+### Fixed
+- **Graph auto-naming no longer breaks valid commands**: `name(graphN, replace)` is inserted at the first top-level comma, outside function calls, strings and comments (previously `scatter price mpg if inrange(mpg, 20, 30)` became `inrange(mpg, name(graph1, replace) 20, 30)`, an r(198) error). Lines inside `#delimit ;` blocks and `/* */` comments, and lines with unbalanced quotes, are left unchanged.
+- **`cls` no longer stops multi-session runs**: `cls` lines are now commented out in the session workers too, so Run Selection, Run File, and agent `stata_run_selection` calls behave like single-session mode.
+
 ## [0.5.3] - 2026-07-05
 
 ### Fixed
