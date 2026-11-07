@@ -388,7 +388,22 @@
 			"supported": "limited",
 			"description": "MCP services require a trusted workspace.",
 			"restrictedConfigurations": [
-				"stata-vscode.allowedHosts"
+				"stata-vscode.stataPath",
+				"stata-vscode.mcpServerHost",
+				"stata-vscode.mcpServerPort",
+				"stata-vscode.allowedHosts",
+				"stata-vscode.forcePort",
+				"stata-vscode.debugMode",
+				"stata-vscode.stataEdition",
+				"stata-vscode.logFileLocation",
+				"stata-vscode.customLogDirectory",
+				"stata-vscode.resultDisplayMode",
+				"stata-vscode.maxOutputTokens",
+				"stata-vscode.multiSession",
+				"stata-vscode.maxSessions",
+				"stata-vscode.sessionTimeout",
+				"stata-vscode.workingDirectory",
+				"stata-vscode.customWorkingDirectory"
 			]
 		}
 	}

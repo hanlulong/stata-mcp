@@ -427,7 +427,29 @@ function activate(context) {
     );
 
     checkActiveEditorIsStata(vscode.window.activeTextEditor);
-    
+
+    // Workspace settings (such as stataPath) decide which code the server
+    // runs, so nothing is set up or started until the folder is trusted.
+    context.subscriptions.push(
+        vscode.workspace.onDidGrantWorkspaceTrust(() => {
+            Logger.info('Workspace trusted. Starting Stata setup.');
+            configCache = null; // workspace values now apply
+            updateStatusBar();
+            setUpAndAutoStartServer();
+        })
+    );
+
+    if (vscode.workspace.isTrusted) {
+        setUpAndAutoStartServer();
+    } else {
+        Logger.info('Restricted Mode: the Stata MCP server will not start until you trust this folder.');
+        updateStatusBar();
+    }
+}
+
+// Set up the Python environment on first run, otherwise auto-start the server
+function setUpAndAutoStartServer() {
+    const config = getConfig();
     // Check Python dependencies
     const pythonPathFile = FileUtils.getExtensionFilePath(FILE_PATHS.PYTHON_PATH);
     if (!FileUtils.checkFileExists(pythonPathFile)) {
@@ -445,6 +467,20 @@ function activate(context) {
             updateStatusBar();
         }
     }
+}
+
+// Run commands need a trusted workspace; offer the trust dialog otherwise
+function requireTrust() {
+    if (vscode.workspace.isTrusted) {
+        return true;
+    }
+    vscode.window.showWarningMessage('Running Stata needs a trusted workspace.', 'Manage Workspace Trust')
+        .then(choice => {
+            if (choice === 'Manage Workspace Trust') {
+                vscode.commands.executeCommand('workbench.trust.manage');
+            }
+        });
+    return false;
 }
 
 function deactivate() {
@@ -503,6 +539,13 @@ function handleConfigurationChange(event) {
 // Update status bar
 function updateStatusBar(state = null) {
     // State can be: null (auto-detect), 'running', 'stopping', 'restarting'
+    if (!vscode.workspace.isTrusted) {
+        statusBarItem.text = "$(shield) Stata: Restricted";
+        statusBarItem.tooltip = "Trust this folder to start the Stata MCP server";
+        statusBarItem.command = 'workbench.trust.manage';
+        statusBarItem.backgroundColor = undefined;
+        return;
+    }
     if (state === 'running' || (state === null && isExecuting)) {
         statusBarItem.text = "$(sync~spin) Stata: Running...";
         statusBarItem.tooltip = `Executing: ${currentExecutionFile || 'command'}\nClick to stop`;
@@ -607,7 +650,28 @@ function installDependencies() {
 // (These would contain the remaining logic from the original file, 
 // but using the new utilities and avoiding redundancy)
 
-async function startMcpServer() {
+// Concurrent callers (activation, a run command, a settings change) share one start
+let mcpServerStartPromise = null;
+
+function startMcpServer() {
+    if (!vscode.workspace.isTrusted) {
+        Logger.info('Not starting the Stata MCP server: this workspace is not trusted.');
+        updateStatusBar();
+        return Promise.resolve();
+    }
+    if (!mcpServerStartPromise) {
+        mcpServerStartPromise = (async () => {
+            try {
+                await startMcpServerOnce();
+            } finally {
+                mcpServerStartPromise = null;
+            }
+        })();
+    }
+    return mcpServerStartPromise;
+}
+
+async function startMcpServerOnce() {
     const config = getConfig();
     const host = config.get('mcpServerHost') || 'localhost';
     const port = config.get('mcpServerPort') || 4000;
@@ -956,6 +1020,7 @@ async function isServerRunning(host, port) {
 }
 
 async function runSelection() {
+    if (!requireTrust()) return;
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
         vscode.window.showErrorMessage('No active editor');
@@ -984,6 +1049,7 @@ async function runSelection() {
 }
 
 async function runFile() {
+    if (!requireTrust()) return;
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
         vscode.window.showErrorMessage('No active editor');
@@ -1046,6 +1112,7 @@ async function stopExecution() {
 }
 
 async function restartStataSession() {
+    if (!requireTrust()) return;
     if (isRestarting) {
         return;
     }
@@ -1112,6 +1179,7 @@ async function restartStataSession() {
 let interactivePanel = null; // Global reference to interactive window
 
 async function runInteractive() {
+    if (!requireTrust()) return;
     console.log('[runInteractive] Command triggered - opening browser');
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
@@ -2290,6 +2358,7 @@ function showStataOutputWebview(content = null) {
 let dataViewerPanel = null;
 
 async function viewStataData() {
+    if (!requireTrust()) return;
     if (isRestarting) {
         vscode.window.showWarningMessage('Stata session is restarting. Please wait for it to finish.');
         return;
@@ -2812,6 +2881,7 @@ function getStataDataViewerHtml(data, columns, index, dtypes, totalRows, ifCondi
 }
 
 async function testMcpServer() {
+    if (!requireTrust()) return;
     if (isRestarting) {
         vscode.window.showWarningMessage('Stata session is restarting. Please wait for it to finish.');
         return;
@@ -2867,6 +2937,7 @@ async function testMcpServer() {
 }
 
 async function askAgent() {
+    if (!requireTrust()) return;
     if (!agentWebviewPanel) {
         agentWebviewPanel = vscode.window.createWebviewPanel(
             'stataAgent',
