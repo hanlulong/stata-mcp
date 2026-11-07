@@ -31,7 +31,12 @@ if _script_dir not in sys.path:
     sys.path.insert(0, _script_dir)
 
 # Import utility functions
-from utils import get_windows_path_help_message, normalize_path_for_platform
+from utils import (
+    auto_name_graph_lines,
+    comment_out_cls_lines,
+    get_windows_path_help_message,
+    normalize_path_for_platform,
+)
 from smcl_parser import smcl_to_html
 from graph_artifacts import (
     create_batch_context,
@@ -915,35 +920,10 @@ def preprocess_do_file_for_graphs(file_path: str) -> str:
         # Start counter from the next available number after existing ones
         graph_counter = max(existing_graph_nums) if existing_graph_nums else 0
 
-        # Process each line to auto-name graphs
-        modified_content = ""
-
-        for line in joined_lines:
-            line = str(line) if line is not None else ""
-
-            # Check if this is a graph creation command that might need a name
-            graph_match = re.match(r'^(\s*)(scatter|histogram|twoway|kdensity|graph\s+(bar|box|dot|pie|matrix|hbar|hbox|combine))\s+(.*)$', line, re.IGNORECASE)
-
-            if graph_match:
-                indent = str(graph_match.group(1) or "")
-                graph_cmd = str(graph_match.group(2) or "")
-                rest_raw = graph_match.group(4) if graph_match.lastindex >= 4 else ""
-                rest = str(rest_raw) if rest_raw else ""
-
-                # Check if it already has name() option
-                if not re.search(r'\bname\s*\(', rest, re.IGNORECASE):
-                    graph_counter += 1
-                    graph_name = f"graph{graph_counter}"
-
-                    if ',' in rest:
-                        rest = re.sub(r',', f', name({graph_name}, replace)', rest, 1)
-                    else:
-                        rest = rest.rstrip() + f', name({graph_name}, replace)'
-
-                    modified_content += f"{indent}{graph_cmd} {rest}\n"
-                    continue
-
-            modified_content += f"{line}\n"
+        # Auto-name graph commands (skips #delimit ; blocks, /* */ comments,
+        # and lines whose quotes or parentheses are unbalanced)
+        named_lines, graph_counter = auto_name_graph_lines(joined_lines, graph_counter)
+        modified_content = "".join(f"{line}\n" for line in named_lines)
 
         auto_named_count = graph_counter - (max(existing_graph_nums) if existing_graph_nums else 0)
         if auto_named_count > 0:
@@ -1064,19 +1044,10 @@ def run_stata_command(
                 f.write(f"capture log close {MCP_LOG_NAME}\n")
                 f.write(f"{mcp_log_using_command(temp_log_stata, 'replace')}\n")
 
-                # Process command line by line to comment out cls commands
-                cls_commands_found = 0
-                processed_command = ""
-                for line in command.splitlines():
-                    # Ensure line is a string (defensive programming)
-                    line = str(line) if line is not None else ""
-
-                    # Check if this is a cls command
-                    if re.match(r'^\s*cls\s*$', line, re.IGNORECASE):
-                        processed_command += f"* COMMENTED OUT BY MCP: {line}\n"
-                        cls_commands_found += 1
-                    else:
-                        processed_command += f"{line}\n"
+                # Comment out cls commands (one line per command, newline-terminated)
+                processed_command, cls_commands_found = comment_out_cls_lines(
+                    "".join(f"{line}\n" for line in command.splitlines())
+                )
 
                 if cls_commands_found > 0:
                     logging.info(f"Found and commented out {cls_commands_found} cls commands in the selection")
@@ -1686,64 +1657,17 @@ def run_stata_file(
             if current_line:
                 joined_lines.append(current_line)
 
-            # Process line by line to keep user code intact, comment out cls commands,
-            # and add graph names where needed. User log commands must coexist with
-            # MCP's named log instead of being commented out.
-            cls_commands_found = 0
-            for line in joined_lines:
-                # Ensure line is a string (defensive programming)
-                line = str(line) if line is not None else ""
+            # Keep user code intact, comment out cls commands, and add graph names
+            # where needed. User log commands must coexist with MCP's named log
+            # instead of being commented out.
+            cls_text, cls_commands_found = comment_out_cls_lines("\n".join(joined_lines))
+            processed_lines = cls_text.split("\n") if joined_lines else []
 
-                # Check if this is a cls command
-                if re.match(r'^\s*cls\s*$', line, re.IGNORECASE):
-                    modified_content += f"* COMMENTED OUT BY MCP: {line}\n"
-                    cls_commands_found += 1
-                    continue
+            # Only auto-name graphs if called from VS Code extension (not from LLM/MCP)
+            if auto_name_graphs:
+                processed_lines, graph_counter = auto_name_graph_lines(processed_lines, graph_counter)
 
-                # Only auto-name graphs if called from VS Code extension (not from LLM/MCP)
-                if auto_name_graphs:
-                    # Check if this is a graph creation command that might need a name
-                    # Match: scatter, histogram, twoway, kdensity, graph bar/box/dot/etc (but not graph export)
-                    graph_match = re.match(r'^(\s*)(scatter|histogram|twoway|kdensity|graph\s+(bar|box|dot|pie|matrix|hbar|hbox|combine))\s+(.*)$', line, re.IGNORECASE)
-
-                    if graph_match:
-                        indent = str(graph_match.group(1) or "")
-                        graph_cmd = str(graph_match.group(2) or "")
-
-                        # Extract and ensure rest is a string
-                        rest_raw = graph_match.group(4) if graph_match.lastindex >= 4 else ""
-                        if rest_raw is None:
-                            rest_raw = ""
-                        # Force conversion to string to handle any edge cases
-                        rest = str(rest_raw)
-
-                        # Double-check rest is a string before any operations
-                        if not isinstance(rest, str):
-                            logging.warning(f"rest is not a string, type: {type(rest)}, value: {rest}, converting to string")
-                            rest = str(rest)
-
-                        # Check if it already has name() option
-                        if not re.search(r'\bname\s*\(', rest, re.IGNORECASE):
-                            # Add automatic unique name
-                            graph_counter += 1
-                            graph_name = f"graph{graph_counter}"
-
-                            # Add name option - if there's a comma, add after it; otherwise add with comma
-                            if ',' in rest:
-                                # Insert name option right after the first comma
-                                # Ensure rest is definitely a string before re.sub
-                                rest = str(rest)
-                                rest = re.sub(r',', f', name({graph_name}, replace)', rest, 1)
-                            else:
-                                # No comma yet, add it
-                                rest = rest.rstrip() + f', name({graph_name}, replace)'
-
-                            modified_content += f"{indent}{graph_cmd} {rest}\n"
-                            logging.debug(f"Auto-named graph: {graph_name}")
-                            continue
-
-                # Keep line as-is (including graph export commands)
-                modified_content += f"{line}\n"
+            modified_content += "".join(f"{line}\n" for line in processed_lines)
 
             if cls_commands_found > 0:
                 logging.info(f"Found and commented out {cls_commands_found} cls commands in the do file")

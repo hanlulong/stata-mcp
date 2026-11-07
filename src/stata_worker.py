@@ -43,6 +43,7 @@ _script_dir = os.path.dirname(os.path.abspath(__file__))
 if _script_dir not in sys.path:
     sys.path.insert(0, _script_dir)
 
+from utils import comment_out_cls_lines
 from graph_artifacts import (
     build_graph_record,
     cleanup_graph_batches,
@@ -543,6 +544,9 @@ def worker_process(
         temp_log_stata = temp_log_file.replace('\\', '/')
 
         try:
+            code, cls_commands_found = comment_out_cls_lines(code)
+            if cls_commands_found > 0:
+                logging.info(f"Found and commented out {cls_commands_found} cls commands in the selection")
             protected_code = protect_mcp_log_from_close_all(f"{seed_prefix}{code}", temp_log_stata)
             # Wrap code with log commands for reliable output capture
             wrapped_code = f"""capture log close {MCP_LOG_NAME}
@@ -667,6 +671,10 @@ capture log close {MCP_LOG_NAME}
             # Read the original do file
             with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
                 original_code = f.read()
+
+            original_code, cls_commands_found = comment_out_cls_lines(original_code)
+            if cls_commands_found > 0:
+                logging.info(f"Found and commented out {cls_commands_found} cls commands in the do file")
 
             # Convert log file path to use forward slashes (works on all platforms in Stata)
             # This prevents Windows backslash escape issues in Stata commands
