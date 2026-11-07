@@ -75,21 +75,14 @@
 
 - 如果扩展仍然无法初始化：
   1. 打开输出面板（查看 -> 输出）
-  2. 从下拉菜单中选择"Stata-MCP"
+  2. 从下拉菜单中选择"Stata"
   3. 检查日志中的具体错误消息
-  4. 如果您看到与 Python 相关的错误，请尝试手动创建 Python 3.11 虚拟环境：
-     ```bash
-     # Windows
-     py -3.11 -m venv .venv
-
-     # macOS/Linux
-     python3.11 -m venv .venv
-     ```
+  4. 如果您看到与 Python 相关的错误，可以让扩展重建它的 Python 环境：删除扩展文件夹（`~/.vscode/extensions/deepecon.stata-mcp-<version>/`，或 `~/.cursor/extensions/`、`~/.antigravity/extensions/` 下的同名文件夹）中的 `.venv` 文件夹和 `.python-path` 文件，然后重新加载窗口（命令面板 > "Developer: Reload Window"）。当 `.python-path` 不存在时，扩展会在激活时重新运行安装流程，并用 uv 重建环境。
 
 - 对于持续存在的问题：
   1. 检查您的系统 Python 安装：`python --version` 或 `python3 --version`
   2. 验证 UV 安装：`uv --version`
-  3. 确保您已安装 Python 3.11 或更高版本
+  3. 安装流程会通过 uv 获取 Python 3.11；如果系统中没有，uv 会自动下载。如果 uv 无法下载（例如离线或处于代理之后），请自行安装 Python 3.11，uv 会直接使用它
   4. 检查您的防病毒软件是否阻止 Python 或 UV 可执行文件
 
 - 如果您遇到特定 Stata 版本的问题：
@@ -100,7 +93,7 @@
 ## 提交问题
 
 在 GitHub 上打开问题时，请提供：
-- 来自输出面板的完整错误消息（查看 -> 输出 -> Stata-MCP）
+- 来自输出面板的完整错误消息（查看 -> 输出 -> Stata）
 - 您的操作系统和版本
 - VS Code/Cursor/Antigravity 版本
 - Python 版本（`python --version`）

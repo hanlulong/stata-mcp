@@ -75,21 +75,14 @@ If you encounter issues with the Stata MCP extension, follow these steps to perf
 
 - If the extension still fails to initialize:
   1. Open the Output panel (View -> Output)
-  2. Select "Stata-MCP" from the dropdown
+  2. Select "Stata" from the dropdown
   3. Check the logs for specific error messages
-  4. If you see Python-related errors, try manually creating a Python 3.11 virtual environment:
-     ```bash
-     # Windows
-     py -3.11 -m venv .venv
-
-     # macOS/Linux
-     python3.11 -m venv .venv
-     ```
+  4. If you see Python-related errors, let the extension rebuild its Python environment: delete the `.venv` folder and the `.python-path` file in the extension folder (`~/.vscode/extensions/deepecon.stata-mcp-<version>/`, or the same folder under `~/.cursor/extensions/` or `~/.antigravity/extensions/`), then reload the window (Command Palette > "Developer: Reload Window"). When `.python-path` is missing, the extension runs its setup again on activation and recreates the environment with uv.
 
 - For persistent issues:
   1. Check your system's Python installation: `python --version` or `python3 --version`
   2. Verify UV installation: `uv --version`
-  3. Make sure you have Python 3.11 or later installed
+  3. Setup asks uv for Python 3.11 and uv downloads it if it isn't installed. If uv can't download it (offline or behind a proxy), install Python 3.11 yourself, and uv will use it
   4. Check if your antivirus software is blocking Python or UV executables
 
 - If you're having issues with a specific Stata edition:
@@ -100,7 +93,7 @@ If you encounter issues with the Stata MCP extension, follow these steps to perf
 ## Reporting an Issue
 
 When opening an issue on GitHub, please provide:
-- The complete error message from the Output panel (View -> Output -> Stata-MCP)
+- The complete error message from the Output panel (View -> Output -> Stata)
 - Your operating system and version
 - VS Code/Cursor/Antigravity version
 - Python version (`python --version`)

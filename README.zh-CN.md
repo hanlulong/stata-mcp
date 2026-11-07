@@ -91,7 +91,7 @@ antigravity --install-extension path/to/stata-mcp-0.5.3.vsix
 - **`http://localhost:4000/mcp-streamable`** — Streamable HTTP（推荐给现代客户端）
 - `http://localhost:4000/mcp` — SSE（旧版兼容）
 
-快速自检：`curl -s http://localhost:4000/health` 应返回 `{"status":"ok",...}`。
+快速自检：`curl -s http://localhost:4000/health` 的返回内容应包含 `"status": "ok"` 和 `"stata_available": true`。如果 `stata_available` 为 `false`，说明服务已启动但 Stata 加载失败，请查看 **Stata** 输出频道（查看 > 输出 > Stata）。
 
 ### 📋 一次粘贴完成配置
 
@@ -115,7 +115,7 @@ Set up the Stata MCP server for me. Endpoint: http://localhost:4000/mcp-streamab
    - **运行文件**：按 `Ctrl+Shift+D`（Mac 上为 `Cmd+Shift+D`）运行整个 .do 文件，或点击工具栏中的运行全部按钮
    - **停止执行**：按 `Ctrl+Shift+C`（Mac 上为 `Cmd+Shift+C`）停止正在运行的命令
    - **重启会话**：点击编辑器工具栏中的重启按钮或使用命令面板（"Stata: Restart Session"）重置 Stata 会话。这将清除所有内存中的数据、全局宏和程序——等同于关闭并重新打开 Stata
-   - **交互模式**：点击编辑器工具栏中的图表按钮在交互浏览器窗口中运行代码
+   - **交互模式**：点击编辑器工具栏中的图表按钮在交互窗口中运行代码，窗口显示在面板中（或按 `stata-vscode.interactiveDisplayMode` 设置在浏览器中打开）
 3. 在 Stata 输出面板中查看输出
 
 > **Cursor/Antigravity 用户注意**：工具栏按钮可能默认隐藏。要显示它们：
@@ -161,6 +161,7 @@ Set up the Stata MCP server for me. Endpoint: http://localhost:4000/mcp-streamab
 | `stata-vscode.stataPath` | Stata 安装目录的路径 | 自动检测 |
 | `stata-vscode.stataEdition` | 要使用的 Stata 版本（MP、SE、BE） | `mp` |
 | `stata-vscode.autoStartServer` | 扩展激活时自动启动 MCP 服务器 | `true` |
+| `stata-vscode.alwaysShowStatusBar` | 始终显示 Stata 状态栏项，即使当前没有编辑 Stata 文件 | `true` |
 
 ### 服务器设置
 
@@ -170,12 +171,15 @@ Set up the Stata MCP server for me. Endpoint: http://localhost:4000/mcp-streamab
 | `stata-vscode.mcpServerPort` | MCP 服务器的端口 | `4000` |
 | `stata-vscode.forcePort` | 即使端口已被使用也强制使用指定端口 | `false` |
 
+**请保持 `mcpServerHost` 为 `localhost`。** 设为 `0.0.0.0` 会把一个无需认证、可以运行 Stata 代码（包括 shell 命令）的服务暴露给您所在的网络。在多人共用的机器上（例如通过 Remote-SSH 登录的 HPC 登录节点），同一台机器上的其他用户也能访问 `localhost:4000`，因此在这类机器上请关闭 `stata-vscode.autoStartServer`。
+
 ### 图形设置
 
 | 设置 | 描述 | 默认值 |
 |------|------|--------|
 | `stata-vscode.autoDisplayGraphs` | Stata 命令生成图形时自动显示 | `true` |
 | `stata-vscode.graphDisplayMethod` | 选择图形显示方式：`vscode`（webview 面板）或 `browser`（外部浏览器） | `vscode` |
+| `stata-vscode.interactiveDisplayMode` | 交互窗口的打开位置：`panel`（webview 面板）或 `browser`（外部浏览器） | `panel` |
 
 ### 日志文件设置
 
@@ -191,6 +195,7 @@ Set up the Stata MCP server for me. Endpoint: http://localhost:4000/mcp-streamab
 | `stata-vscode.runFileTimeout` | "运行文件"操作的超时时间（秒） | `600`（10 分钟） |
 | `stata-vscode.runSelectionTimeout` | "运行选择"和交互式窗口命令的超时时间（秒） | `600`（10 分钟） |
 | `stata-vscode.debugMode` | 在输出面板中显示详细的调试信息 | `false` |
+| `stata-vscode.dataViewerMaxRows` | 数据查看器最多加载的行数（100-500000） | `100000` |
 
 ### 工作目录设置
 
@@ -295,8 +300,8 @@ Set up the Stata MCP server for me. Endpoint: http://localhost:4000/mcp-streamab
 ### 验证连接
 
 1. 打开 GitHub Copilot Chat（Ctrl+Shift+I / Cmd+Shift+I）
-2. 输入 `@mcp` 查看可用的 MCP 工具
-3. Stata 工具（`stata_run_selection`、`stata_run_file`）应该会显示
+2. 在聊天输入框中打开 **Configure Tools**（配置工具）
+3. 确认列表中有 stata-mcp 的工具（`stata_run_selection`、`stata_run_file`，以及仅通过 Streamable HTTP 提供的 `stata_session`）
 
 ### 故障排除
 
@@ -305,7 +310,7 @@ Set up the Stata MCP server for me. Endpoint: http://localhost:4000/mcp-streamab
 2. 验证 MCP 服务器正在运行（状态栏应显示"Stata"）
 3. 检查 `.vscode/mcp.json` 是否存在且内容正确
 4. 尝试重启 VS Code
-5. 检查扩展输出面板（查看 > 输出 > Stata MCP）是否有任何错误
+5. 检查扩展输出面板（查看 > 输出 > Stata）是否有任何错误
 6. 确保您组织的 Copilot 策略已启用 MCP（如适用）
 
 <br>
@@ -333,7 +338,7 @@ Set up the Stata MCP server for me. Endpoint: http://localhost:4000/mcp-streamab
    claude mcp add --transport http stata-mcp http://localhost:4000/mcp-streamable --scope user
    ```
 
-   > 较旧版本（2026 年之前）的 Claude Code 可能不识别 `--transport http`。在那些版本上请改用 `--transport sse` + `http://localhost:4000/mcp`。Claude Code 现在把 SSE 视为旧版传输 — 有 `http` 就优先用 `http`。
+   > 低于 1.0.27（2025 年 6 月）的 Claude Code 版本可能不识别 `--transport http`。在那些版本上请改用 `--transport sse` + `http://localhost:4000/mcp`。Claude Code 现在把 SSE 视为旧版传输 — 有 `http` 就优先用 `http`。
 
 3. 重启您的 IDE
 
@@ -358,7 +363,7 @@ Set up the Stata MCP server for me. Endpoint: http://localhost:4000/mcp-streamab
 1. 验证 MCP 服务器正在运行（状态栏应显示"Stata"）
 2. 检查您是否使用正确的 URL 运行了 `claude mcp add` 命令
 3. 尝试重启您的 IDE
-4. 检查扩展输出面板（查看 > 输出 > Stata MCP）是否有任何错误
+4. 检查扩展输出面板（查看 > 输出 > Stata）是否有任何错误
 5. 确保没有端口冲突（默认端口为 4000）
 
 <br>
@@ -391,7 +396,7 @@ Claude Desktop 的 JSON 配置不直接接受远程 URL，需要本地 stdio 包
 
 > **注意：** 不要通过 **Settings** → **Connectors** → **Add custom connector**（自定义连接器）添加本服务。自定义连接器只接受互联网上可访问的 `https://` 地址，无法连接本机的 `http://localhost:4000` 服务。
 
-如果工具没有出现，请先确认 `curl -s http://localhost:4000/health` 有响应，再查看 Claude Desktop 的 MCP 日志（macOS：`~/Library/Logs/Claude/mcp-server-stata-mcp.log`；Windows：`%APPDATA%\Claude\logs\mcp-server-stata-mcp.log`）。
+如果工具没有出现，请先确认 `curl -s http://localhost:4000/health` 的返回包含 `"status": "ok"` 和 `"stata_available": true`（`false` 表示服务已启动但 Stata 加载失败，请查看 **Stata** 输出频道），再查看 Claude Desktop 的 MCP 日志（macOS：`~/Library/Logs/Claude/mcp-server-stata-mcp.log`；Windows：`%APPDATA%\Claude\logs\mcp-server-stata-mcp.log`）。
 
 <br>
 
@@ -399,30 +404,36 @@ Claude Desktop 的 JSON 配置不直接接受远程 URL，需要本地 stdio 包
 <details>
 <summary><strong>OpenAI Codex</strong></summary>
 
-您可以将此扩展与 [OpenAI Codex](https://github.com/openai/codex) 一起使用 — CLI 和所有 IDE 扩展共用同一份 `~/.codex/config.toml`。Codex CLI **0.46.0+**（2025 年 10 月）原生支持 HTTP 传输的 MCP 服务器，不再需要任何包装器。直接在终端执行：
+您可以将此扩展与 [OpenAI Codex](https://github.com/openai/codex) 一起使用 — CLI 和所有 IDE 扩展共用同一份 `~/.codex/config.toml`。Codex CLI **0.46.0+**（2025 年 10 月）可以直接连接 HTTP 传输的 MCP 服务器，不需要任何包装器（0.46.x 还需要额外加一个开关，见下方故障排除）。直接在终端执行：
 
 ```bash
 codex mcp add stata-mcp --url http://localhost:4000/mcp-streamable
 ```
+
+然后在这条命令写入 `~/.codex/config.toml` 的 `[mcp_servers.stata-mcp]` 段落中加上 `tool_timeout_sec = 900`（见下文）。
 
 或手动把这段追加到 `~/.codex/config.toml`（Windows 上是 `%USERPROFILE%\.codex\config.toml`）：
 
 ```toml
 [mcp_servers.stata-mcp]
 url = "http://localhost:4000/mcp-streamable"
+tool_timeout_sec = 900
 ```
+
+Codex 默认的单次工具调用超时（早期版本为 60 秒，当前版本为 300 秒）短于服务器默认 600 秒的运行上限，请调大它，以免较长的 Stata 运行被中途截断。
 
 > **从老配置升级？** 如果文件中已有 `[mcp_servers.stata-mcp]` 块使用 `command = "mcp-proxy"`（或 `command = "uvx"` + args 里带 `mcp-proxy`），**先删掉那一段** 再加上面的新块 — TOML 不允许重复键，两段并存 Codex 会静默跳过这个服务器。
 
-然后重启 Codex，`stata_run_selection` 和 `stata_run_file` 就会出现在工具列表中。可以用 `codex mcp list` 确认服务器已注册。
+然后重启 Codex，`stata_run_selection`、`stata_run_file` 和 `stata_session` 就会出现在工具列表中。可以用 `codex mcp list` 确认服务器已注册。
 
 > **传输格式说明。** Codex 只支持 MCP 的 *Streamable HTTP* 传输（单端点 `/mcp-streamable`）。扩展的老版 SSE 端点（`/mcp`）是为 GitHub Copilot 等老客户端准备的 — 不要把 Codex 指向它。
 
 ### Codex 配置故障排除
 
 如果 Codex 看不到 Stata 工具：
-1. 确认 MCP 服务器正在运行（状态栏显示 "Stata"） — 可以 `curl -s http://localhost:4000/health` 验证
+1. 确认 MCP 服务器正在运行（状态栏显示 "Stata"） — 可以 `curl -s http://localhost:4000/health` 验证；返回内容应包含 `"status": "ok"` 和 `"stata_available": true`（`false` 表示 Stata 加载失败，请查看 *Stata* 输出频道）
 2. 确认 `codex --version` 是 **0.46.0** 或更新。老版本仍需 `mcp-proxy` 包装器（见下方备选方案）。
+   在最早支持 HTTP 的版本（0.46.x）上，Codex 还需要在 `config.toml` 顶层加上 `experimental_use_rmcp_client = true`；如果在这类版本上服务器没有加载，请加上这一行或升级 Codex。
 3. 确认 `~/.codex/config.toml` 存在并包含上面的 `[mcp_servers.stata-mcp]` 段落
 4. 执行 `codex mcp list` — 应该能看到 `stata-mcp` 已注册
 5. 改完配置后重启 Codex（CLI 或 IDE）
@@ -432,7 +443,7 @@ url = "http://localhost:4000/mcp-streamable"
 <details>
 <summary>被困在 Codex &lt; 0.46.0？</summary>
 
-无法升级时，可以用 [`mcp-proxy`](https://github.com/modelcontextprotocol/mcp-proxy) 作为 stdio 包装器：
+无法升级时，可以用 [`mcp-proxy`](https://github.com/sparfenyuk/mcp-proxy) 作为 stdio 包装器：
 
 ```bash
 # 如果没装 uv：
@@ -454,36 +465,32 @@ args = ["mcp-proxy", "http://localhost:4000/mcp"]
 <details>
 <summary><strong>Cline</strong></summary>
 
-1. 打开您的 [Cline](https://github.com/cline/cline) MCP 设置文件：
-   - **macOS**：`~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
-   - **Windows**：`%APPDATA%/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
-   - **Linux**：`~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
+1. 打开您的 [Cline](https://github.com/cline/cline) MCP 设置文件。最简单的方法：在 Cline 面板中点击 **MCP Servers** 图标，打开 **Configure** 选项卡，再点击 **Configure MCP Servers**。这会打开您当前 Cline 版本实际使用的文件：
+   - **较新的 Cline 版本**（Cline 的 Settings > About 中版本号旁显示 "Next"）以及 Cline CLI：`~/.cline/data/settings/cline_mcp_settings.json`（Windows 上为 `%USERPROFILE%\.cline\data\settings\cline_mcp_settings.json`）
+   - **较旧的 Cline 版本**（或 Settings > About 中显示 "Legacy"）：
+     - **macOS**：`~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
+     - **Windows**：`%APPDATA%/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
+     - **Linux**：`~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
 
 2. 添加 Stata MCP 服务器配置：
    ```json
    {
      "mcpServers": {
        "stata-mcp": {
+         "type": "streamableHttp",
          "url": "http://localhost:4000/mcp-streamable"
        }
      }
    }
    ```
 
-   Cline 会根据 URL 自动识别传输类型 — 不需要 `transport` 字段。如果确实需要 SSE，把 URL 改成 `http://localhost:4000/mcp` 即可。
+   请保留 `"type": "streamableHttp"` 这一行：没有 `type` 时，Cline 会使用旧版 SSE 传输。如果要改用 SSE，请设置 `"type": "sse"`，并把 URL 改为 `http://localhost:4000/mcp`。
 
 3. 如果文件已包含其他 MCP 服务器，只需将 `"stata-mcp"` 条目添加到现有的 `"mcpServers"` 对象中。
 
 4. 保存文件并重启 VS Code。
 
-您还可以通过 VS Code 设置配置 Cline：
-```json
-"cline.mcpSettings": {
-  "stata-mcp": {
-    "url": "http://localhost:4000/mcp-streamable"
-  }
-}
-```
+> **之前在 Cline 中配置 stata-mcp 时没有写 `type` 字段？** Cline 会把这个条目当作 SSE，而 SSE 连不上 `/mcp-streamable`。请按第 1 步打开设置文件，在 `stata-mcp` 条目上设置 `"type": "streamableHttp"`。较新的（"Next"）Cline 版本会把旧条目一次性复制到 `~/.cline/data/settings/cline_mcp_settings.json`，之后不再读取旧的 globalStorage 文件，所以请编辑新文件；复制过去的条目可能是 `"transport": { "type": "sse", ... }` 的形式，这时把其中的 `type` 改为 `"streamableHttp"` 即可。
 
 ### Cline 配置故障排除
 
@@ -491,7 +498,7 @@ args = ["mcp-proxy", "http://localhost:4000/mcp"]
 1. 验证 MCP 服务器正在运行（状态栏应显示"Stata"）
 2. 检查配置文件是否存在且内容正确
 3. 尝试重启 VS Code
-4. 检查扩展输出面板（查看 > 输出 > Stata MCP）是否有任何错误
+4. 检查扩展输出面板（查看 > 输出 > Stata）是否有任何错误
 
 <br>
 
