@@ -4,9 +4,9 @@ This guide explains how to run and use the Stata Model Context Protocol (MCP) se
 
 ## Prerequisites
 
-1. Ensure you have the required packages installed:
+1. Ensure you have the required packages installed (from the extension or repository folder):
    ```
-   pip install fastapi uvicorn fastapi-mcp pydantic
+   pip install -r src/requirements.txt
    ```
 
 2. Make sure Stata is installed and accessible on your system
@@ -30,14 +30,15 @@ You can also run the Python server script directly:
 
 ```bash
 cd /path/to/extension
-python stata_mcp_server.py --port 4000 --stata-path "/path/to/stata"
+python src/stata_mcp_server.py --port 4000 --stata-path "/path/to/stata" --stata-edition mp
 ```
 
 Command line arguments:
 - `--port`: Port to run the server on (default: 4000)
 - `--stata-path`: Path to your Stata installation
+- `--stata-edition`: Stata edition to use: `mp`, `se` or `be` (default: `mp`)
 - `--log-file`: Path to save logs (optional)
-- `--debug`: Enable debug mode (optional)
+- `--log-level DEBUG`: Enable debug logging (optional; default `INFO`)
 
 ## Testing the Server Connection
 
@@ -78,7 +79,8 @@ The server provides the following HTTP endpoints:
 
 - `GET /health`: Server health check and status
 - `POST /v1/tools`: Execute Stata tools/commands
-- `GET /mcp`: MCP event stream for real-time communication
+- `/mcp-streamable`: MCP over Streamable HTTP (preferred)
+- `GET /mcp`: MCP over SSE (legacy)
 - `GET /docs`: Interactive API documentation (Swagger UI)
 
 ## Troubleshooting
