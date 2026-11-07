@@ -157,6 +157,18 @@ def ensure_directory_exists(path: str) -> bool:
         return False
 
 
+def is_single_line_condition(condition: Optional[str]) -> bool:
+    """True if a Data Viewer ``if`` condition has no line breaks.
+
+    The condition is pasted into ``keep if ...``; a line break would let it
+    run a second Stata command. Rejects \\n, \\r and every other boundary
+    str.splitlines() recognises.
+    """
+    if not condition:
+        return True
+    return condition.splitlines() == [condition]
+
+
 # ---------------------------------------------------------------------------
 # Do-file text transforms (cls filtering and graph auto-naming)
 # ---------------------------------------------------------------------------

@@ -35,6 +35,7 @@ from utils import (
     auto_name_graph_lines,
     comment_out_cls_lines,
     get_windows_path_help_message,
+    is_single_line_condition,
     normalize_path_for_platform,
 )
 from smcl_parser import smcl_to_html
@@ -4616,6 +4617,16 @@ async def view_data_endpoint(if_condition: str = None, session_id: str = None, m
         max_rows: Maximum number of rows to return (default 10000). User can configure via extension settings.
     """
     global stata_available, stata, multi_session_enabled, session_manager
+
+    if not is_single_line_condition(if_condition):
+        return Response(
+            content=json.dumps({
+                "status": "error",
+                "message": "Filter condition must be a single line"
+            }),
+            media_type="application/json",
+            status_code=400
+        )
 
     max_rows = normalize_data_viewer_max_rows(max_rows)
 

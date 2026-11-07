@@ -43,7 +43,7 @@ _script_dir = os.path.dirname(os.path.abspath(__file__))
 if _script_dir not in sys.path:
     sys.path.insert(0, _script_dir)
 
-from utils import comment_out_cls_lines
+from utils import comment_out_cls_lines, is_single_line_condition
 from graph_artifacts import (
     build_graph_record,
     cleanup_graph_batches,
@@ -948,6 +948,12 @@ capture log close {MCP_LOG_NAME}
                                 command_id=cmd_id,
                                 status="error",
                                 error="Stata is not initialized"
+                            )
+                        elif not is_single_line_condition(if_condition):
+                            send_result(
+                                command_id=cmd_id,
+                                status="error",
+                                error="Filter condition must be a single line"
                             )
                         else:
                             import sfi

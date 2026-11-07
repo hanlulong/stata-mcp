@@ -2438,19 +2438,31 @@ function getEmptyDataViewerHtml() {
     </html>`;
 }
 
+// JSON for embedding inside an inline <script>: a cell value such as
+// "</script><script>..." must not be able to close the script element.
+function safeJsonForScript(value) {
+    return (JSON.stringify(value) ?? 'null')
+        .replace(/</g, '\\u003c')
+        .replace(/>/g, '\\u003e')
+        .replace(/&/g, '\\u0026')
+        .replace(/\u2028/g, '\\u2028')
+        .replace(/\u2029/g, '\\u2029');
+}
+
 function getStataDataViewerHtml(data, columns, index, dtypes, totalRows, ifCondition = '', totalRowsInData = null, displayedRows = null, maxRows = null) {
     // Escape data for safe JSON embedding
-    const dataJson = JSON.stringify(data);
-    const columnsJson = JSON.stringify(columns);
-    const indexJson = JSON.stringify(index);
-    const dtypesJson = JSON.stringify(dtypes);
-    const ifConditionEscaped = ifCondition.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const dataJson = safeJsonForScript(data);
+    const columnsJson = safeJsonForScript(columns);
+    const indexJson = safeJsonForScript(index);
+    const dtypesJson = safeJsonForScript(dtypes);
+    const ifConditionEscaped = ifCondition.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const nonce = getNonce();
 
     // Determine row info text
     const actualTotalRows = totalRowsInData !== null ? totalRowsInData : totalRows;
     const actualDisplayed = displayedRows !== null ? displayedRows : totalRows;
     const isLimited = actualTotalRows > actualDisplayed;
-    const rowInfoJson = JSON.stringify({
+    const rowInfoJson = safeJsonForScript({
         totalRows: actualTotalRows,
         displayedRows: actualDisplayed,
         maxRows: maxRows,
@@ -2463,6 +2475,7 @@ function getStataDataViewerHtml(data, columns, index, dtypes, totalRows, ifCondi
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
         <title>Data Editor (Browse)</title>
         <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -2643,7 +2656,7 @@ function getStataDataViewerHtml(data, columns, index, dtypes, totalRows, ifCondi
                 </div>
             </div>
         </div>
-        <script>
+        <script nonce="${nonce}">
             const vscode = acquireVsCodeApi();
             const data = ${dataJson};
             const columns = ${columnsJson};
