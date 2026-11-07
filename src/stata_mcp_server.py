@@ -50,6 +50,8 @@ from graph_artifacts import (
 # Import API models
 from api_models import (
     RunSelectionParams,
+    RunSelectionRequest,
+    RunSelectionStreamRequest,
     RunFileParams,
     ToolRequest,
     ToolResponse,
@@ -2368,21 +2370,18 @@ No built-in rate limiting. Stata execution is inherently sequential per session.
     summary="Run Stata code selection",
     description="Execute Stata code and return the output. Supports multi-session mode for parallel execution.",
 )
-async def stata_run_selection_endpoint(
-    selection: str,
-    timeout: int = 600,
-    session_id: str = None,
-    working_dir: str = None
-) -> Response:
+async def stata_run_selection_endpoint(request: RunSelectionRequest) -> Response:
     """Run selected Stata code and return the output (MCP endpoint - applies compact mode filtering)
 
-    Args:
-        selection: Stata code to execute
-        timeout: Timeout in seconds for multi-session execution
-        session_id: Optional session ID for multi-session mode (uses default session if not specified)
-        working_dir: Optional working directory to change to before execution
+    The code is sent in the JSON body (selection, timeout, session_id,
+    working_dir), so large selections are not limited by URL length.
     """
     global multi_session_enabled, session_manager
+
+    selection = request.selection
+    timeout = request.timeout
+    session_id = request.session_id
+    working_dir = request.working_dir
 
     logging.info(f"Running selection: {selection[:100]}...")
     if session_id:
@@ -3052,6 +3051,30 @@ async def stata_run_selection_stream_endpoint(
     Returns:
         StreamingResponse with text/event-stream content type
     """
+    return _selection_stream_response(selection, timeout, working_dir, session_id, execution_id)
+
+
+@app.post(
+    "/run_selection/stream",
+    include_in_schema=False,  # HTTP streaming for the editor extension, not an MCP tool
+)
+async def stata_run_selection_stream_post_endpoint(request: RunSelectionStreamRequest):
+    """Same as GET /run_selection/stream, with the code in a JSON body.
+
+    The extension uses this so large selections (and non-ASCII code, which
+    grows when percent-encoded) are not limited by URL length.
+    """
+    return _selection_stream_response(
+        request.selection,
+        request.timeout,
+        request.working_dir,
+        request.session_id,
+        request.execution_id,
+    )
+
+
+def _selection_stream_response(selection, timeout, working_dir, session_id, execution_id):
+    """Build the SSE response shared by the GET and POST selection stream routes."""
     try:
         timeout = int(timeout)
         if timeout <= 0:

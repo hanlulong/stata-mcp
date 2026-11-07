@@ -1866,15 +1866,7 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
         // Use streaming endpoint for real-time output display (Run Selection only)
         if (toolName === 'run_selection') {
             const executionId = createExecutionId('selection');
-            // Build URL with query parameters for streaming endpoint
-            const params = new URLSearchParams();
-            params.append('selection', code);
-            params.append('timeout', runSelectionTimeout.toString());
-            params.append('execution_id', executionId);
-            appendWorkingDirParam(params, workingDir);
-
-            const streamUrl = `http://${host}:${port}/run_selection/stream?${params.toString()}`;
-            Logger.debug(`Stream URL: ${streamUrl}`);
+            const streamUrl = `http://${host}:${port}/run_selection/stream`;
 
             let fullOutput = '';
             let hasError = false;
@@ -1883,12 +1875,46 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
             // Create AbortController for cancellation
             currentStreamAbortController = new AbortController();
 
-            const response = await axios.get(streamUrl, {
+            const streamOptions = {
                 responseType: 'stream',
                 adapter: 'http',
                 timeout: (runSelectionTimeout * 1000) + 10000,
                 signal: currentStreamAbortController.signal
-            });
+            };
+
+            // Send the code in a JSON body so large selections (and non-ASCII
+            // code, which grows when percent-encoded) are not limited by URL length.
+            const body = {
+                selection: code,
+                timeout: runSelectionTimeout,
+                execution_id: executionId
+            };
+            if (workingDir !== undefined && workingDir !== null) {
+                body.working_dir = workingDir;
+            }
+
+            let response;
+            try {
+                Logger.debug(`Stream URL: ${streamUrl} (POST, ${code.length} chars)`);
+                response = await axios.post(streamUrl, body, {
+                    ...streamOptions,
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            } catch (postError) {
+                const status = postError.response && postError.response.status;
+                if (status !== 404 && status !== 405) {
+                    throw postError;
+                }
+                // An older server (without POST /run_selection/stream) is holding
+                // the port: fall back once to the query-string request.
+                Logger.info(`POST ${streamUrl} returned ${status}; falling back to GET with query parameters`);
+                const params = new URLSearchParams();
+                params.append('selection', code);
+                params.append('timeout', runSelectionTimeout.toString());
+                params.append('execution_id', executionId);
+                appendWorkingDirParam(params, workingDir);
+                response = await axios.get(`${streamUrl}?${params.toString()}`, streamOptions);
+            }
 
             // Process the SSE stream
             await new Promise((resolve, reject) => {

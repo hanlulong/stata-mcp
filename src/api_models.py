@@ -21,6 +21,26 @@ class RunSelectionParams(BaseModel):
     session_id: Optional[str] = Field(None, description="Optional session ID for multi-session mode")
 
 
+class RunSelectionRequest(BaseModel):
+    """JSON body for POST /run_selection.
+
+    The code travels in the request body rather than the query string, so
+    large selections and non-ASCII text are not limited by URL length.
+    """
+    selection: str = Field(..., description="The Stata code to execute")
+    timeout: int = Field(600, description="Timeout in seconds (default: 600 seconds / 10 minutes)")
+    session_id: Optional[str] = Field(
+        None,
+        description="Optional session ID for multi-session mode; a new id starts a separate Stata process",
+    )
+    working_dir: Optional[str] = Field(None, description="Optional working directory to change to before execution")
+
+
+class RunSelectionStreamRequest(RunSelectionRequest):
+    """JSON body for POST /run_selection/stream (used by the editor extension)."""
+    execution_id: Optional[str] = Field(None, description="Optional execution ID used to group graph artifacts")
+
+
 class RunFileParams(BaseModel):
     """Parameters for running a Stata .do file."""
     file_path: str = Field(..., description="The full path to the .do file")
