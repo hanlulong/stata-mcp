@@ -97,6 +97,8 @@ If you encounter issues with the Stata MCP extension, follow these steps to perf
   2. Try changing the `stata-vscode.stataEdition` setting to match your installed version
   3. Restart the extension after changing settings
 
+- If a client gets HTTP 403 and the server log shows `Blocked by local-request guard`, the request came from a web page on another site or used a Host name the server doesn't accept (only `localhost`, `127.0.0.1`, `::1` and the configured server host are accepted). If it comes through a trusted proxy such as code-server, add that host name to `stata-vscode.allowedHosts`.
+
 ## Reporting an Issue
 
 When opening an issue on GitHub, please provide:

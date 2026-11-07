@@ -97,6 +97,8 @@
   2. 尝试将 `stata-vscode.stataEdition` 设置更改为与已安装版本匹配
   3. 更改设置后重启扩展
 
+- 如果客户端收到 HTTP 403，并且服务器日志显示 `Blocked by local-request guard`，说明该请求来自其他网站的网页，或使用了服务器不接受的 Host 名称（只接受 `localhost`、`127.0.0.1`、`::1` 和配置的服务器主机）。如果请求经由 code-server 等受信任的代理转发，请将该主机名添加到 `stata-vscode.allowedHosts`。
+
 ## 提交问题
 
 在 GitHub 上打开问题时，请提供：

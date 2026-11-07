@@ -427,7 +427,29 @@ function activate(context) {
     );
 
     checkActiveEditorIsStata(vscode.window.activeTextEditor);
-    
+
+    // Workspace settings (such as stataPath) decide which code the server
+    // runs, so nothing is set up or started until the folder is trusted.
+    context.subscriptions.push(
+        vscode.workspace.onDidGrantWorkspaceTrust(() => {
+            Logger.info('Workspace trusted. Starting Stata setup.');
+            configCache = null; // workspace values now apply
+            updateStatusBar();
+            setUpAndAutoStartServer();
+        })
+    );
+
+    if (vscode.workspace.isTrusted) {
+        setUpAndAutoStartServer();
+    } else {
+        Logger.info('Restricted Mode: the Stata MCP server will not start until you trust this folder.');
+        updateStatusBar();
+    }
+}
+
+// Set up the Python environment on first run, otherwise auto-start the server
+function setUpAndAutoStartServer() {
+    const config = getConfig();
     // Check Python dependencies
     const pythonPathFile = FileUtils.getExtensionFilePath(FILE_PATHS.PYTHON_PATH);
     if (!FileUtils.checkFileExists(pythonPathFile)) {
@@ -445,6 +467,20 @@ function activate(context) {
             updateStatusBar();
         }
     }
+}
+
+// Run commands need a trusted workspace; offer the trust dialog otherwise
+function requireTrust() {
+    if (vscode.workspace.isTrusted) {
+        return true;
+    }
+    vscode.window.showWarningMessage('Running Stata needs a trusted workspace.', 'Manage Workspace Trust')
+        .then(choice => {
+            if (choice === 'Manage Workspace Trust') {
+                vscode.commands.executeCommand('workbench.trust.manage');
+            }
+        });
+    return false;
 }
 
 function deactivate() {
@@ -481,7 +517,8 @@ function handleConfigurationChange(event) {
             event.affectsConfiguration('stata-vscode.maxOutputTokens') ||
             event.affectsConfiguration('stata-vscode.multiSession') ||
             event.affectsConfiguration('stata-vscode.maxSessions') ||
-            event.affectsConfiguration('stata-vscode.sessionTimeout')) {
+            event.affectsConfiguration('stata-vscode.sessionTimeout') ||
+            event.affectsConfiguration('stata-vscode.allowedHosts')) {
 
             if (mcpServerRunning && mcpServerProcess) {
                 if (isRestarting) {
@@ -502,6 +539,13 @@ function handleConfigurationChange(event) {
 // Update status bar
 function updateStatusBar(state = null) {
     // State can be: null (auto-detect), 'running', 'stopping', 'restarting'
+    if (!vscode.workspace.isTrusted) {
+        statusBarItem.text = "$(shield) Stata: Restricted";
+        statusBarItem.tooltip = "Trust this folder to start the Stata MCP server";
+        statusBarItem.command = 'workbench.trust.manage';
+        statusBarItem.backgroundColor = undefined;
+        return;
+    }
     if (state === 'running' || (state === null && isExecuting)) {
         statusBarItem.text = "$(sync~spin) Stata: Running...";
         statusBarItem.tooltip = `Executing: ${currentExecutionFile || 'command'}\nClick to stop`;
@@ -606,7 +650,28 @@ function installDependencies() {
 // (These would contain the remaining logic from the original file, 
 // but using the new utilities and avoiding redundancy)
 
-async function startMcpServer() {
+// Concurrent callers (activation, a run command, a settings change) share one start
+let mcpServerStartPromise = null;
+
+function startMcpServer() {
+    if (!vscode.workspace.isTrusted) {
+        Logger.info('Not starting the Stata MCP server: this workspace is not trusted.');
+        updateStatusBar();
+        return Promise.resolve();
+    }
+    if (!mcpServerStartPromise) {
+        mcpServerStartPromise = (async () => {
+            try {
+                await startMcpServerOnce();
+            } finally {
+                mcpServerStartPromise = null;
+            }
+        })();
+    }
+    return mcpServerStartPromise;
+}
+
+async function startMcpServerOnce() {
     const config = getConfig();
     const host = config.get('mcpServerHost') || 'localhost';
     const port = config.get('mcpServerPort') || 4000;
@@ -622,6 +687,10 @@ async function startMcpServer() {
     const multiSession = config.get('multiSession') !== false;  // Default to true
     const maxSessions = config.get('maxSessions') || 100;
     const sessionTimeout = config.get('sessionTimeout') || 3600;
+    const allowedHostsSetting = config.get('allowedHosts');
+    const allowedHosts = Array.isArray(allowedHostsSetting)
+        ? allowedHostsSetting.filter(h => typeof h === 'string' && h.trim()).map(h => h.trim())
+        : [];
 
     Logger.info(`Using Stata edition: ${stataEdition}`);
     Logger.info(`Log file location: ${logFileLocation}`);
@@ -827,6 +896,14 @@ async function startMcpServer() {
             if (multiSession) {
                 cmdString += ` --multi-session --max-sessions ${maxSessions} --session-timeout ${sessionTimeout}`;
             }
+            for (const allowedHost of allowedHosts) {
+                // cmd.exe string: only accept plain host names and IP literals
+                if (/^[A-Za-z0-9.\-:\[\]]+$/.test(allowedHost)) {
+                    cmdString += ` --allowed-host ${allowedHost}`;
+                } else {
+                    Logger.info(`Warning: ignoring stata-vscode.allowedHosts entry with unsupported characters: ${JSON.stringify(allowedHost)}`);
+                }
+            }
 
             Logger.info(`Starting server with command: ${cmdString}`);
 
@@ -843,6 +920,9 @@ async function startMcpServer() {
             args.push('--result-display-mode', resultDisplayMode, '--max-output-tokens', maxOutputTokens.toString());
             if (multiSession) {
                 args.push('--multi-session', '--max-sessions', maxSessions.toString(), '--session-timeout', sessionTimeout.toString());
+            }
+            for (const allowedHost of allowedHosts) {
+                args.push('--allowed-host', allowedHost);
             }
             
             cmdString = `${pythonCommand} ${args.join(' ')}`;
@@ -940,6 +1020,7 @@ async function isServerRunning(host, port) {
 }
 
 async function runSelection() {
+    if (!requireTrust()) return;
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
         vscode.window.showErrorMessage('No active editor');
@@ -968,6 +1049,7 @@ async function runSelection() {
 }
 
 async function runFile() {
+    if (!requireTrust()) return;
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
         vscode.window.showErrorMessage('No active editor');
@@ -1030,6 +1112,7 @@ async function stopExecution() {
 }
 
 async function restartStataSession() {
+    if (!requireTrust()) return;
     if (isRestarting) {
         return;
     }
@@ -1096,6 +1179,7 @@ async function restartStataSession() {
 let interactivePanel = null; // Global reference to interactive window
 
 async function runInteractive() {
+    if (!requireTrust()) return;
     console.log('[runInteractive] Command triggered - opening browser');
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
@@ -2274,6 +2358,7 @@ function showStataOutputWebview(content = null) {
 let dataViewerPanel = null;
 
 async function viewStataData() {
+    if (!requireTrust()) return;
     if (isRestarting) {
         vscode.window.showWarningMessage('Stata session is restarting. Please wait for it to finish.');
         return;
@@ -2422,19 +2507,31 @@ function getEmptyDataViewerHtml() {
     </html>`;
 }
 
+// JSON for embedding inside an inline <script>: a cell value such as
+// "</script><script>..." must not be able to close the script element.
+function safeJsonForScript(value) {
+    return (JSON.stringify(value) ?? 'null')
+        .replace(/</g, '\\u003c')
+        .replace(/>/g, '\\u003e')
+        .replace(/&/g, '\\u0026')
+        .replace(/\u2028/g, '\\u2028')
+        .replace(/\u2029/g, '\\u2029');
+}
+
 function getStataDataViewerHtml(data, columns, index, dtypes, totalRows, ifCondition = '', totalRowsInData = null, displayedRows = null, maxRows = null) {
     // Escape data for safe JSON embedding
-    const dataJson = JSON.stringify(data);
-    const columnsJson = JSON.stringify(columns);
-    const indexJson = JSON.stringify(index);
-    const dtypesJson = JSON.stringify(dtypes);
-    const ifConditionEscaped = ifCondition.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const dataJson = safeJsonForScript(data);
+    const columnsJson = safeJsonForScript(columns);
+    const indexJson = safeJsonForScript(index);
+    const dtypesJson = safeJsonForScript(dtypes);
+    const ifConditionEscaped = ifCondition.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const nonce = getNonce();
 
     // Determine row info text
     const actualTotalRows = totalRowsInData !== null ? totalRowsInData : totalRows;
     const actualDisplayed = displayedRows !== null ? displayedRows : totalRows;
     const isLimited = actualTotalRows > actualDisplayed;
-    const rowInfoJson = JSON.stringify({
+    const rowInfoJson = safeJsonForScript({
         totalRows: actualTotalRows,
         displayedRows: actualDisplayed,
         maxRows: maxRows,
@@ -2447,6 +2544,7 @@ function getStataDataViewerHtml(data, columns, index, dtypes, totalRows, ifCondi
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
         <title>Data Editor (Browse)</title>
         <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -2627,7 +2725,7 @@ function getStataDataViewerHtml(data, columns, index, dtypes, totalRows, ifCondi
                 </div>
             </div>
         </div>
-        <script>
+        <script nonce="${nonce}">
             const vscode = acquireVsCodeApi();
             const data = ${dataJson};
             const columns = ${columnsJson};
@@ -2783,6 +2881,7 @@ function getStataDataViewerHtml(data, columns, index, dtypes, totalRows, ifCondi
 }
 
 async function testMcpServer() {
+    if (!requireTrust()) return;
     if (isRestarting) {
         vscode.window.showWarningMessage('Stata session is restarting. Please wait for it to finish.');
         return;
@@ -2838,6 +2937,7 @@ async function testMcpServer() {
 }
 
 async function askAgent() {
+    if (!requireTrust()) return;
     if (!agentWebviewPanel) {
         agentWebviewPanel = vscode.window.createWebviewPanel(
             'stataAgent',

@@ -21,7 +21,7 @@ import socket
 import asyncio
 import hashlib
 from typing import Dict, Any, Optional
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 import warnings
 import re
 
@@ -31,7 +31,13 @@ if _script_dir not in sys.path:
     sys.path.insert(0, _script_dir)
 
 # Import utility functions
-from utils import get_windows_path_help_message, normalize_path_for_platform
+from utils import (
+    auto_name_graph_lines,
+    comment_out_cls_lines,
+    get_windows_path_help_message,
+    is_single_line_condition,
+    normalize_path_for_platform,
+)
 from smcl_parser import smcl_to_html
 from graph_artifacts import (
     create_batch_context,
@@ -915,35 +921,10 @@ def preprocess_do_file_for_graphs(file_path: str) -> str:
         # Start counter from the next available number after existing ones
         graph_counter = max(existing_graph_nums) if existing_graph_nums else 0
 
-        # Process each line to auto-name graphs
-        modified_content = ""
-
-        for line in joined_lines:
-            line = str(line) if line is not None else ""
-
-            # Check if this is a graph creation command that might need a name
-            graph_match = re.match(r'^(\s*)(scatter|histogram|twoway|kdensity|graph\s+(bar|box|dot|pie|matrix|hbar|hbox|combine))\s+(.*)$', line, re.IGNORECASE)
-
-            if graph_match:
-                indent = str(graph_match.group(1) or "")
-                graph_cmd = str(graph_match.group(2) or "")
-                rest_raw = graph_match.group(4) if graph_match.lastindex >= 4 else ""
-                rest = str(rest_raw) if rest_raw else ""
-
-                # Check if it already has name() option
-                if not re.search(r'\bname\s*\(', rest, re.IGNORECASE):
-                    graph_counter += 1
-                    graph_name = f"graph{graph_counter}"
-
-                    if ',' in rest:
-                        rest = re.sub(r',', f', name({graph_name}, replace)', rest, 1)
-                    else:
-                        rest = rest.rstrip() + f', name({graph_name}, replace)'
-
-                    modified_content += f"{indent}{graph_cmd} {rest}\n"
-                    continue
-
-            modified_content += f"{line}\n"
+        # Auto-name graph commands (skips #delimit ; blocks, /* */ comments,
+        # and lines whose quotes or parentheses are unbalanced)
+        named_lines, graph_counter = auto_name_graph_lines(joined_lines, graph_counter)
+        modified_content = "".join(f"{line}\n" for line in named_lines)
 
         auto_named_count = graph_counter - (max(existing_graph_nums) if existing_graph_nums else 0)
         if auto_named_count > 0:
@@ -1064,19 +1045,10 @@ def run_stata_command(
                 f.write(f"capture log close {MCP_LOG_NAME}\n")
                 f.write(f"{mcp_log_using_command(temp_log_stata, 'replace')}\n")
 
-                # Process command line by line to comment out cls commands
-                cls_commands_found = 0
-                processed_command = ""
-                for line in command.splitlines():
-                    # Ensure line is a string (defensive programming)
-                    line = str(line) if line is not None else ""
-
-                    # Check if this is a cls command
-                    if re.match(r'^\s*cls\s*$', line, re.IGNORECASE):
-                        processed_command += f"* COMMENTED OUT BY MCP: {line}\n"
-                        cls_commands_found += 1
-                    else:
-                        processed_command += f"{line}\n"
+                # Comment out cls commands (one line per command, newline-terminated)
+                processed_command, cls_commands_found = comment_out_cls_lines(
+                    "".join(f"{line}\n" for line in command.splitlines())
+                )
 
                 if cls_commands_found > 0:
                     logging.info(f"Found and commented out {cls_commands_found} cls commands in the selection")
@@ -1686,64 +1658,17 @@ def run_stata_file(
             if current_line:
                 joined_lines.append(current_line)
 
-            # Process line by line to keep user code intact, comment out cls commands,
-            # and add graph names where needed. User log commands must coexist with
-            # MCP's named log instead of being commented out.
-            cls_commands_found = 0
-            for line in joined_lines:
-                # Ensure line is a string (defensive programming)
-                line = str(line) if line is not None else ""
+            # Keep user code intact, comment out cls commands, and add graph names
+            # where needed. User log commands must coexist with MCP's named log
+            # instead of being commented out.
+            cls_text, cls_commands_found = comment_out_cls_lines("\n".join(joined_lines))
+            processed_lines = cls_text.split("\n") if joined_lines else []
 
-                # Check if this is a cls command
-                if re.match(r'^\s*cls\s*$', line, re.IGNORECASE):
-                    modified_content += f"* COMMENTED OUT BY MCP: {line}\n"
-                    cls_commands_found += 1
-                    continue
+            # Only auto-name graphs if called from VS Code extension (not from LLM/MCP)
+            if auto_name_graphs:
+                processed_lines, graph_counter = auto_name_graph_lines(processed_lines, graph_counter)
 
-                # Only auto-name graphs if called from VS Code extension (not from LLM/MCP)
-                if auto_name_graphs:
-                    # Check if this is a graph creation command that might need a name
-                    # Match: scatter, histogram, twoway, kdensity, graph bar/box/dot/etc (but not graph export)
-                    graph_match = re.match(r'^(\s*)(scatter|histogram|twoway|kdensity|graph\s+(bar|box|dot|pie|matrix|hbar|hbox|combine))\s+(.*)$', line, re.IGNORECASE)
-
-                    if graph_match:
-                        indent = str(graph_match.group(1) or "")
-                        graph_cmd = str(graph_match.group(2) or "")
-
-                        # Extract and ensure rest is a string
-                        rest_raw = graph_match.group(4) if graph_match.lastindex >= 4 else ""
-                        if rest_raw is None:
-                            rest_raw = ""
-                        # Force conversion to string to handle any edge cases
-                        rest = str(rest_raw)
-
-                        # Double-check rest is a string before any operations
-                        if not isinstance(rest, str):
-                            logging.warning(f"rest is not a string, type: {type(rest)}, value: {rest}, converting to string")
-                            rest = str(rest)
-
-                        # Check if it already has name() option
-                        if not re.search(r'\bname\s*\(', rest, re.IGNORECASE):
-                            # Add automatic unique name
-                            graph_counter += 1
-                            graph_name = f"graph{graph_counter}"
-
-                            # Add name option - if there's a comma, add after it; otherwise add with comma
-                            if ',' in rest:
-                                # Insert name option right after the first comma
-                                # Ensure rest is definitely a string before re.sub
-                                rest = str(rest)
-                                rest = re.sub(r',', f', name({graph_name}, replace)', rest, 1)
-                            else:
-                                # No comma yet, add it
-                                rest = rest.rstrip() + f', name({graph_name}, replace)'
-
-                            modified_content += f"{indent}{graph_cmd} {rest}\n"
-                            logging.debug(f"Auto-named graph: {graph_name}")
-                            continue
-
-                # Keep line as-is (including graph export commands)
-                modified_content += f"{line}\n"
+            modified_content += "".join(f"{line}\n" for line in processed_lines)
 
             if cls_commands_found > 0:
                 logging.info(f"Found and commented out {cls_commands_found} cls commands in the do file")
@@ -2276,6 +2201,221 @@ def find_available_port(start_port, max_attempts=10):
 # Note: API models (RunSelectionParams, RunFileParams, ToolRequest, ToolResponse)
 # are now imported from api_models.py
 
+# ============================================================================
+# Local-request guard
+# ============================================================================
+# The server runs Stata code without authentication, so it must only answer
+# requests that come from this machine's own clients (the extension, MCP
+# clients, a browser tab the extension opened). Two browser attacks would
+# otherwise reach it:
+#   * cross-site requests: any web page can navigate to, or (depending on the
+#     browser) fetch, http://localhost:4000/... and trigger code execution;
+#   * DNS rebinding: a page on attacker.example re-resolves its own name to
+#     127.0.0.1 and then talks to the server "same-origin".
+# The guard checks the Host header (rebinding), the Origin header and, when
+# there is no Origin, the browser's Sec-Fetch-Site header (cross-site).
+# Non-browser clients (the extension's axios calls, Node fetch, curl, MCP
+# clients) send a loopback Host and no Origin or Sec-Fetch-Site, so they pass.
+
+LOOPBACK_HOSTNAMES = frozenset({'localhost', '127.0.0.1', '::1'})
+
+# Filled from --host and --allowed-host in main(); loopback-only defaults.
+GUARD_BIND_HOST = 'localhost'
+GUARD_EXTRA_HOSTS = set()
+
+GUARD_PROXY_HINT = 'add this host to stata-vscode.allowedHosts if it is a trusted proxy'
+
+
+def _normalize_guard_hostname(hostname: str) -> str:
+    """Lowercase a hostname and strip brackets and one trailing dot."""
+    name = (hostname or '').strip().lower()
+    if name.startswith('[') and name.endswith(']'):
+        name = name[1:-1]
+    if name.endswith('.'):
+        name = name[:-1]
+    return name
+
+
+def parse_host_header(value: Optional[str]) -> Optional[str]:
+    """Return the normalized hostname from a Host header value, or None.
+
+    Strips the port, handles bracketed IPv6 literals ("[::1]:4000"),
+    lowercases, and strips one trailing dot. Returns None for an empty or
+    malformed value.
+    """
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.startswith('['):
+        end = text.find(']')
+        if end == -1:
+            return None
+        hostname = text[1:end]
+        rest = text[end + 1:]
+        if rest and not (rest.startswith(':') and rest[1:].isdigit()):
+            return None
+    elif text.count(':') == 1:
+        hostname, port = text.split(':', 1)
+        if port and not port.isdigit():
+            return None
+    else:
+        # No port, or an unbracketed IPv6 literal such as "::1".
+        hostname = text
+    hostname = _normalize_guard_hostname(hostname)
+    return hostname or None
+
+
+def parse_origin_header(value: Optional[str]) -> Optional[str]:
+    """Return the normalized hostname of an http(s) Origin, or None.
+
+    None means the Origin is not acceptable: "null", a non-http(s) scheme,
+    anything with a path, query, fragment or credentials, or a bad port.
+    """
+    if value is None:
+        return None
+    text = value.strip()
+    if not text or text.lower() == 'null':
+        return None
+    try:
+        parts = urlsplit(text)
+        parts.port  # raises ValueError for a malformed port
+    except ValueError:
+        return None
+    if parts.scheme.lower() not in ('http', 'https'):
+        return None
+    if parts.path not in ('', '/') or parts.query or parts.fragment:
+        return None
+    if parts.username is not None or parts.password is not None:
+        return None
+    hostname = _normalize_guard_hostname(parts.hostname or '')
+    return hostname or None
+
+
+def configure_request_guard(bind_host: Optional[str], allowed_hosts=None) -> None:
+    """Set the hosts the guard accepts besides localhost, 127.0.0.1 and ::1."""
+    global GUARD_BIND_HOST, GUARD_EXTRA_HOSTS
+    GUARD_BIND_HOST = _normalize_guard_hostname(bind_host or '')
+    extra = set()
+    for entry in allowed_hosts or []:
+        hostname = parse_host_header(entry)
+        if hostname:
+            extra.add(hostname)
+        else:
+            logging.warning(f"Ignoring invalid --allowed-host value: {entry!r}")
+    GUARD_EXTRA_HOSTS = extra
+
+
+def is_guard_allowed_hostname(hostname: Optional[str]) -> bool:
+    """True if hostname is loopback, the --host value, or an --allowed-host value."""
+    if not hostname:
+        return False
+    if hostname in LOOPBACK_HOSTNAMES or hostname in GUARD_EXTRA_HOSTS:
+        return True
+    return bool(GUARD_BIND_HOST) and hostname == GUARD_BIND_HOST
+
+
+def check_local_request(method: str, path: str, host: Optional[str], origin: Optional[str],
+                        sec_fetch_site: Optional[str], sec_fetch_mode: Optional[str]) -> Optional[str]:
+    """Apply the guard rules to one request.
+
+    Returns None if the request may proceed, or a short reason it was blocked.
+    """
+    # (a) Host: blocks DNS rebinding.
+    host_name = parse_host_header(host)
+    if not is_guard_allowed_hostname(host_name):
+        return 'Host not allowed'
+
+    # (b) Origin: present on cross-origin fetches and on form POSTs.
+    if origin is not None:
+        origin_name = parse_origin_header(origin)
+        if not is_guard_allowed_hostname(origin_name):
+            return 'Origin not allowed'
+        # An allowed Origin (for example MCP Inspector on 127.0.0.1 talking
+        # to localhost) is enough; skip the Sec-Fetch-Site check.
+        return None
+
+    # (c) No Origin: rely on the browser's Sec-Fetch-Site. Never reject on
+    # Sec-Fetch-Mode: Node fetch sends "cors" with no Origin.
+    site = (sec_fetch_site or '').strip().lower()
+    if site == 'same-site' and host_name not in LOOPBACK_HOSTNAMES:
+        # A public page can never be same-site with localhost, but it can be
+        # same-site with a LAN or proxy name, so treat that as cross-site.
+        site = 'cross-site'
+    if site == 'cross-site':
+        mode = (sec_fetch_mode or '').strip().lower()
+        if method in ('GET', 'HEAD') and mode == 'navigate' and path.startswith('/graphs/'):
+            # Opening a graph image in a browser tab is read-only.
+            return None
+        return 'cross-site request'
+    # "same-origin", "none" (typed URL, bookmark, openExternal) or absent.
+    return None
+
+
+def _guard_log_value(value: Optional[str]) -> str:
+    if value is None:
+        return '-'
+    return repr(value[:200])
+
+
+class LocalRequestGuardMiddleware:
+    """Pure ASGI middleware that rejects cross-site and DNS-rebinding requests."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        scope_type = scope.get('type')
+        if scope_type not in ('http', 'websocket'):
+            await self.app(scope, receive, send)
+            return
+
+        headers = {}
+        for raw_name, raw_value in scope.get('headers') or []:
+            headers.setdefault(raw_name.decode('latin-1').lower(), raw_value.decode('latin-1'))
+
+        method = scope.get('method', 'GET') if scope_type == 'http' else 'WEBSOCKET'
+        path = scope.get('path', '')
+        host = headers.get('host')
+        origin = headers.get('origin')
+        sec_fetch_site = headers.get('sec-fetch-site')
+
+        reason = check_local_request(
+            method, path, host, origin, sec_fetch_site, headers.get('sec-fetch-mode')
+        )
+        if reason is None:
+            await self.app(scope, receive, send)
+            return
+
+        # Never log the query string: it can carry Stata code.
+        logging.warning(
+            f"Blocked by local-request guard ({reason}): {method} {path} "
+            f"Host={_guard_log_value(host)} Origin={_guard_log_value(origin)} "
+            f"Sec-Fetch-Site={_guard_log_value(sec_fetch_site)}; {GUARD_PROXY_HINT}"
+        )
+
+        if scope_type == 'websocket':
+            message = await receive()
+            if message.get('type') == 'websocket.connect':
+                await send({'type': 'websocket.close', 'code': 1008})
+            return
+
+        body = (
+            f"Forbidden: request blocked by the stata-mcp local-request guard ({reason}). "
+            f"If you reach this server through a trusted proxy, {GUARD_PROXY_HINT}.\n"
+        ).encode('utf-8')
+        await send({
+            'type': 'http.response.start',
+            'status': 403,
+            'headers': [
+                (b'content-type', b'text/plain; charset=utf-8'),
+                (b'content-length', str(len(body)).encode('ascii')),
+            ],
+        })
+        await send({'type': 'http.response.body', 'body': body})
+
+
 # Define lifespan context manager for startup/shutdown events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -2358,6 +2498,10 @@ No built-in rate limiting. Stata execution is inherently sequential per session.
         "url": "https://opensource.org/licenses/MIT",
     },
 )
+
+# Reject cross-site and DNS-rebinding requests before any route runs
+# (covers /mcp, /mcp-streamable and every REST endpoint).
+app.add_middleware(LocalRequestGuardMiddleware)
 
 # Define regular FastAPI routes for Stata functions
 @app.post(
@@ -4406,10 +4550,12 @@ def _serve_graph_file(graph_path: str):
 @app.get("/graphs/batch/{batch_id}/{filename}", include_in_schema=False)
 async def get_graph_from_batch(batch_id: str, filename: str):
     try:
+        # Starlette has already decoded the path; decoding again would turn
+        # %252F into a "/" that the route itself never matched.
         graph_path = resolve_batch_graph_path(
             get_effective_graphs_root(),
-            unquote(batch_id),
-            unquote(filename)
+            batch_id,
+            filename
         )
         if not graph_path:
             return Response(content="Invalid graph path", status_code=400, media_type="text/plain")
@@ -4471,6 +4617,16 @@ async def view_data_endpoint(if_condition: str = None, session_id: str = None, m
         max_rows: Maximum number of rows to return (default 10000). User can configure via extension settings.
     """
     global stata_available, stata, multi_session_enabled, session_manager
+
+    if not is_single_line_condition(if_condition):
+        return Response(
+            content=json.dumps({
+                "status": "error",
+                "message": "Filter condition must be a single line"
+            }),
+            media_type="application/json",
+            status_code=400
+        )
 
     max_rows = normalize_data_viewer_max_rows(max_rows)
 
@@ -5099,7 +5255,15 @@ async def interactive_window(file: str = None, code: str = None):
         escaped_file = auto_run_file.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
         html_content = html_content.replace('AUTO_RUN_FILE_PLACEHOLDER', escaped_file)
 
-    return Response(content=html_content, media_type="text/html")
+    # The page auto-runs code on load, so it must never be framed by another site.
+    return Response(
+        content=html_content,
+        media_type="text/html",
+        headers={
+            "X-Frame-Options": "DENY",
+            "Content-Security-Policy": "frame-ancestors 'none'",
+        },
+    )
 
 
 def main():
@@ -5110,6 +5274,9 @@ def main():
         parser.add_argument('--stata-path', type=str, help='Path to Stata installation')
         parser.add_argument('--port', type=int, default=4000, help='Port to run MCP server on')
         parser.add_argument('--host', type=str, default='localhost', help='Host to bind the server to')
+        parser.add_argument('--allowed-host', action='append', default=[], metavar='HOST',
+                          help='Extra Host name the server accepts (repeatable), for trusted proxies '
+                               'such as code-server. localhost, 127.0.0.1, ::1 and --host are always accepted.')
         parser.add_argument('--log-level', type=str, choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], 
                           default='INFO', help='Logging level')
         parser.add_argument('--force-port', action='store_true', help='Force the specified port, even if it requires killing processes')
@@ -5280,6 +5447,18 @@ def main():
         multi_session_max_sessions = args.max_sessions
         multi_session_timeout = args.session_timeout
 
+        # Local-request guard: accept loopback, the bind host and --allowed-host values.
+        allowed_hosts = args.allowed_host or []
+        configure_request_guard(args.host, allowed_hosts)
+        if (args.host or '').strip() in ('0.0.0.0', '::', '[::]', '') and not allowed_hosts:
+            logging.warning(
+                f"Server is listening on all interfaces ({args.host!r}), but it only accepts requests "
+                f"addressed to localhost, 127.0.0.1, ::1 or {args.host!r}. LAN, WSL or container "
+                f"clients must be listed in stata-vscode.allowedHosts (--allowed-host)."
+            )
+        elif allowed_hosts:
+            logging.info(f"Local-request guard: extra allowed hosts {sorted(GUARD_EXTRA_HOSTS)}")
+
         # Try to determine extension path from the log file path
         if args.log_file:
             # If log file is in a logs subdirectory, the parent of that is the extension path
@@ -5421,7 +5600,7 @@ def main():
         # Configure HTTP client with ASGI transport and extended timeout for long-running Stata operations
         http_client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
-            base_url="http://apiserver",
+            base_url="http://localhost",  # loopback Host so the local-request guard accepts in-process calls
             timeout=1200.0  # 20 minutes timeout for long Stata operations
         )
 
