@@ -56,20 +56,6 @@ const NO_WORKING_DIR_SENTINEL = '__stata_mcp_no_cd__';
 const MIN_DATA_VIEWER_ROWS = 100;
 const MAX_DATA_VIEWER_ROWS = 500000;
 
-function execCommand(command, options = {}) {
-    return new Promise((resolve, reject) => {
-        childProcess.exec(command, options, (error, stdout, stderr) => {
-            if (error) {
-                error.stdout = stdout;
-                error.stderr = stderr;
-                reject(error);
-                return;
-            }
-            resolve({ stdout, stderr });
-        });
-    });
-}
-
 function execFileCommand(file, args, options = {}) {
     return new Promise((resolve, reject) => {
         childProcess.execFile(file, args, options, (error, stdout, stderr) => {
@@ -113,6 +99,56 @@ async function getWindowsListeningPortPids(port) {
             .map(line => line.trim())
             .filter(line => /^\d+$/.test(line))
     )];
+}
+
+async function getPosixListeningPortPids(port) {
+    const numericPort = normalizePort(port);
+    const args = ['-nP', `-iTCP:${numericPort}`, '-sTCP:LISTEN', '-t'];
+    let stdout = '';
+    for (const lsof of ['lsof', '/usr/sbin/lsof']) {
+        try {
+            ({ stdout } = await execFileCommand(lsof, args));
+            break;
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                continue;
+            }
+            // lsof exits 1 when nothing is listening
+            stdout = error.stdout || '';
+            break;
+        }
+    }
+    return [...new Set(
+        String(stdout)
+            .split(/\r?\n/)
+            .map(line => line.trim())
+            .filter(line => /^\d+$/.test(line) && Number(line) !== process.pid)
+    )];
+}
+
+async function killPosixStataServersOnPort(port) {
+    let killed = 0;
+    for (const pid of await getPosixListeningPortPids(port)) {
+        let command = '';
+        try {
+            ({ stdout: command } = await execFileCommand('ps', ['-ww', '-o', 'command=', '-p', pid]));
+        } catch (error) {
+            command = error.stdout || '';
+        }
+        command = String(command).trim();
+        if (!command.includes('stata_mcp_server')) {
+            Logger.info(`Port ${port} is held by another program (PID ${pid}: ${command}); not stopping it`);
+            continue;
+        }
+        try {
+            process.kill(Number(pid), 'SIGKILL');
+            killed += 1;
+            Logger.info(`Killed stata-mcp server process ${pid} listening on port ${port}`);
+        } catch (error) {
+            Logger.error(`Error killing process ${pid}: ${error.message}`);
+        }
+    }
+    return killed;
 }
 
 function normalizeDataViewerMaxRows(maxRows) {
@@ -333,6 +369,7 @@ const ServerUtils = {
     
     async killProcessOnPort(port) {
         try {
+            let waitForRelease = true;
             if (IS_WINDOWS) {
                 try {
                     const pids = await getWindowsListeningPortPids(port);
@@ -349,15 +386,21 @@ const ServerUtils = {
                     Logger.error(`Error killing existing server: ${error.message}`);
                 }
             } else {
-                try {
-                    await execCommand(`lsof -t -i:${port} | xargs -r kill -9`);
+                // Only the process LISTENING on the port, and only if it is a
+                // stata-mcp server. A plain `lsof -i:port` also lists clients
+                // connected to the port (other editor windows, MCP clients).
+                const killed = await killPosixStataServersOnPort(port);
+                waitForRelease = killed > 0;
+                if (killed > 0) {
                     Logger.info(`Killed existing server process. Waiting for port to be released...`);
-                } catch (error) {
-                    Logger.info(`No existing process found on port ${port}`);
+                } else {
+                    Logger.info(`No existing server found on port ${port}`);
                 }
             }
             // Wait for port to be released
-            await new Promise(resolve => setTimeout(resolve, 5000));
+            if (waitForRelease) {
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            }
         } catch (error) {
             Logger.error(`Error in port cleanup: ${error.message}`);
         }
@@ -810,28 +853,32 @@ async function startMcpServer() {
 
         if (IS_WINDOWS) {
             const scriptDir = path.dirname(mcpServerPath);
-            // On Windows with exec(), trailing backslash in paths escapes the closing quote
-            // e.g., --stata-path "C:\Program Files\StataNow19\" breaks argument parsing
-            // Strip trailing backslashes from all paths to prevent this (Issue #52)
+            // Trailing backslashes broke the old cmd.exe command string (Issue #52):
+            // --stata-path "C:\Program Files\StataNow19\" escaped the closing quote.
+            // With an argument array there is no quoting, but stripping them is harmless.
             const stripTrailingBackslash = (p) => p ? p.replace(/(?<!^[A-Za-z]:)\\+$/, '') : p;
 
-            cmdString = `"${pythonCommand}" -m stata_mcp_server --host ${host} --port ${port}`;
-
-            if (forcePort) cmdString += ' --force-port';
-            if (stataPath) cmdString += ` --stata-path "${stripTrailingBackslash(stataPath)}"`;
-            cmdString += ` --log-file "${stripTrailingBackslash(logFile)}" --stata-edition ${stataEdition} --log-level ${logLevel}`;
-            cmdString += ` --log-file-location ${logFileLocation}`;
-            if (customLogDirectory) cmdString += ` --custom-log-directory "${stripTrailingBackslash(customLogDirectory)}"`;
-            if (workspaceRoot) cmdString += ` --workspace-root "${stripTrailingBackslash(workspaceRoot)}"`;
-            cmdString += ` --result-display-mode ${resultDisplayMode} --max-output-tokens ${maxOutputTokens}`;
+            // Start Python directly with an argument array (no cmd.exe), so
+            // settings values are passed as literal arguments and
+            // mcpServerProcess is the Python process itself.
+            args.push('-m', 'stata_mcp_server', '--host', host, '--port', String(port));
+            if (forcePort) args.push('--force-port');
+            if (stataPath) args.push('--stata-path', stripTrailingBackslash(stataPath));
+            args.push('--log-file', stripTrailingBackslash(logFile), '--stata-edition', stataEdition, '--log-level', logLevel);
+            args.push('--log-file-location', logFileLocation);
+            if (customLogDirectory) args.push('--custom-log-directory', stripTrailingBackslash(customLogDirectory));
+            if (workspaceRoot) args.push('--workspace-root', stripTrailingBackslash(workspaceRoot));
+            args.push('--result-display-mode', resultDisplayMode, '--max-output-tokens', String(maxOutputTokens));
             if (multiSession) {
-                cmdString += ` --multi-session --max-sessions ${maxSessions} --session-timeout ${sessionTimeout}`;
+                args.push('--multi-session', '--max-sessions', String(maxSessions), '--session-timeout', String(sessionTimeout));
             }
 
+            // Display only; the process is started from the array below.
+            cmdString = [pythonCommand, ...args].map(a => (/\s/.test(a) ? `"${a}"` : a)).join(' ');
             Logger.info(`Starting server with command: ${cmdString}`);
 
-            const options = { cwd: scriptDir, windowsHide: true, env: serverEnv };
-            mcpServerProcess = childProcess.exec(cmdString, options);
+            const options = { cwd: scriptDir, windowsHide: true, shell: false, stdio: 'pipe', env: serverEnv };
+            mcpServerProcess = spawn(pythonCommand, args, options);
         } else {
             args.push(mcpServerPath, '--host', host, '--port', port.toString());
             if (forcePort) args.push('--force-port');
@@ -939,8 +986,34 @@ async function isServerRunning(host, port) {
     });
 }
 
-async function runSelection() {
-    const editor = vscode.window.activeTextEditor;
+function isStataDocument(document) {
+    if (!document) {
+        return false;
+    }
+    const fileName = (document.fileName || '').toLowerCase();
+    return document.languageId === 'stata' ||
+        fileName.endsWith('.do') || fileName.endsWith('.ado') || fileName.endsWith('.mata');
+}
+
+// Find the editor a run command applies to. Editor title buttons pass the
+// document's Uri; keybindings and the palette pass nothing. After the first
+// run the Output channel can be the active editor, so it is skipped.
+function resolveStataEditor(uri) {
+    if (uri instanceof vscode.Uri) {
+        const target = uri.toString();
+        return vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === target);
+    }
+    const active = vscode.window.activeTextEditor;
+    if (active && active.document.uri.scheme !== 'output') {
+        return active;
+    }
+    return vscode.window.visibleTextEditors.find(e =>
+        (e.document.uri.scheme === 'file' || e.document.uri.scheme === 'untitled') &&
+        isStataDocument(e.document));
+}
+
+async function runSelection(uri) {
+    const editor = resolveStataEditor(uri);
     if (!editor) {
         vscode.window.showErrorMessage('No active editor');
         return;
@@ -967,14 +1040,18 @@ async function runSelection() {
     await executeStataCode(text, 'run_selection', workingDir);
 }
 
-async function runFile() {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) {
+async function runFile(uri) {
+    const editor = resolveStataEditor(uri);
+    let filePath;
+    if (editor) {
+        filePath = editor.document.uri.fsPath;
+    } else if (uri instanceof vscode.Uri && uri.fsPath.toLowerCase().endsWith('.do')) {
+        // Title button for a .do file that is not in a visible editor
+        filePath = uri.fsPath;
+    } else {
         vscode.window.showErrorMessage('No active editor');
         return;
     }
-
-    const filePath = editor.document.uri.fsPath;
 
     if (!filePath.toLowerCase().endsWith('.do')) {
         vscode.window.showErrorMessage('Not a Stata .do file');
@@ -1866,15 +1943,7 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
         // Use streaming endpoint for real-time output display (Run Selection only)
         if (toolName === 'run_selection') {
             const executionId = createExecutionId('selection');
-            // Build URL with query parameters for streaming endpoint
-            const params = new URLSearchParams();
-            params.append('selection', code);
-            params.append('timeout', runSelectionTimeout.toString());
-            params.append('execution_id', executionId);
-            appendWorkingDirParam(params, workingDir);
-
-            const streamUrl = `http://${host}:${port}/run_selection/stream?${params.toString()}`;
-            Logger.debug(`Stream URL: ${streamUrl}`);
+            const streamUrl = `http://${host}:${port}/run_selection/stream`;
 
             let fullOutput = '';
             let hasError = false;
@@ -1883,12 +1952,46 @@ async function executeStataCode(code, toolName = 'run_command', workingDir = nul
             // Create AbortController for cancellation
             currentStreamAbortController = new AbortController();
 
-            const response = await axios.get(streamUrl, {
+            const streamOptions = {
                 responseType: 'stream',
                 adapter: 'http',
                 timeout: (runSelectionTimeout * 1000) + 10000,
                 signal: currentStreamAbortController.signal
-            });
+            };
+
+            // Send the code in a JSON body so large selections (and non-ASCII
+            // code, which grows when percent-encoded) are not limited by URL length.
+            const body = {
+                selection: code,
+                timeout: runSelectionTimeout,
+                execution_id: executionId
+            };
+            if (workingDir !== undefined && workingDir !== null) {
+                body.working_dir = workingDir;
+            }
+
+            let response;
+            try {
+                Logger.debug(`Stream URL: ${streamUrl} (POST, ${code.length} chars)`);
+                response = await axios.post(streamUrl, body, {
+                    ...streamOptions,
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            } catch (postError) {
+                const status = postError.response && postError.response.status;
+                if (status !== 404 && status !== 405) {
+                    throw postError;
+                }
+                // An older server (without POST /run_selection/stream) is holding
+                // the port: fall back once to the query-string request.
+                Logger.info(`POST ${streamUrl} returned ${status}; falling back to GET with query parameters`);
+                const params = new URLSearchParams();
+                params.append('selection', code);
+                params.append('timeout', runSelectionTimeout.toString());
+                params.append('execution_id', executionId);
+                appendWorkingDirParam(params, workingDir);
+                response = await axios.get(`${streamUrl}?${params.toString()}`, streamOptions);
+            }
 
             // Process the SSE stream
             await new Promise((resolve, reject) => {
@@ -2992,6 +3095,75 @@ function getAgentWebviewContent() {
 </html>`;
 }
 
+/**
+ * Merge the stata-mcp entry into the text of ~/.cursor/mcp.json.
+ * Pure function: returns { changed, text } and never drops other servers.
+ * - missing file (existingText null): create a /mcp-streamable entry
+ * - unparsable JSON: { changed: false, parseError } so the caller never writes
+ * - no stata-mcp entry: add the /mcp-streamable entry
+ * - entry with `command` or without `url`: leave it alone
+ * - entry whose url host and port already match: leave it alone, whatever
+ *   its path or transport
+ * - otherwise: replace only protocol://host:port, keeping path and other keys
+ */
+function mergeCursorMcpConfig(existingText, host, port) {
+    let urlHost = (host || '').trim();
+    if (!urlHost || urlHost === '0.0.0.0' || urlHost === '::') {
+        urlHost = 'localhost';
+    }
+    if (urlHost.includes(':') && !urlHost.startsWith('[')) {
+        urlHost = `[${urlHost}]`;
+    }
+    const origin = `http://${urlHost}:${port}`;
+    const newEntry = { url: `${origin}/mcp-streamable` };
+
+    if (existingText === null || existingText === undefined) {
+        return {
+            changed: true,
+            text: JSON.stringify({ mcpServers: { 'stata-mcp': newEntry } }, null, 2)
+        };
+    }
+
+    let mcpConfig;
+    try {
+        mcpConfig = JSON.parse(existingText);
+    } catch (error) {
+        return { changed: false, text: existingText, parseError: error.message };
+    }
+    const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+    if (!isObject(mcpConfig) || (mcpConfig.mcpServers !== undefined && !isObject(mcpConfig.mcpServers))) {
+        return { changed: false, text: existingText, parseError: 'expected an object with an "mcpServers" object' };
+    }
+
+    mcpConfig.mcpServers = mcpConfig.mcpServers || {};
+    const entry = mcpConfig.mcpServers['stata-mcp'];
+
+    if (entry === undefined) {
+        mcpConfig.mcpServers['stata-mcp'] = newEntry;
+        return { changed: true, text: JSON.stringify(mcpConfig, null, 2) };
+    }
+
+    if (!isObject(entry) || entry.command !== undefined || typeof entry.url !== 'string') {
+        return { changed: false, text: existingText };
+    }
+
+    let parsedUrl;
+    try {
+        parsedUrl = new URL(entry.url);
+    } catch (error) {
+        return { changed: false, text: existingText };
+    }
+    const defaultPort = parsedUrl.protocol === 'https:' ? '443' : '80';
+    const entryPort = parsedUrl.port || defaultPort;
+    if (parsedUrl.hostname.toLowerCase() === urlHost.toLowerCase() && entryPort === String(port)) {
+        return { changed: false, text: existingText };
+    }
+
+    const match = entry.url.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/?#]*(.*)$/);
+    entry.url = `${origin}${match ? match[1] : ''}`;
+    return { changed: true, text: JSON.stringify(mcpConfig, null, 2) };
+}
+
 function autoUpdateGlobalMcpConfig() {
     // Only auto-update MCP config for Cursor IDE
     // VS Code users should configure MCP via workspace settings or GitHub Copilot
@@ -3014,58 +3186,34 @@ function autoUpdateGlobalMcpConfig() {
 
         Logger.info(`Checking MCP configuration at ${mcpConfigPath}`);
 
-        // Only create .cursor directory if it already exists (user has Cursor installed)
-        // or if we're definitely running in Cursor
+        let existingText = null;
+        if (FileUtils.checkFileExists(mcpConfigPath)) {
+            existingText = FileUtils.readFileContent(mcpConfigPath);
+            if (existingText === null) {
+                Logger.info(`Warning: could not read ${mcpConfigPath}; leaving it unchanged`);
+                return false;
+            }
+        }
+
+        const result = mergeCursorMcpConfig(existingText, host, port);
+        if (result.parseError) {
+            Logger.info(`Warning: ${mcpConfigPath} is not valid JSON (${result.parseError}). ` +
+                'Leaving it unchanged; fix the file to let Stata MCP add its entry.');
+            return false;
+        }
+        if (!result.changed) {
+            Logger.info(`stata-mcp configuration is already correct`);
+            return true;
+        }
+
+        // Only create .cursor directory when we are about to write into it
         if (!FileUtils.checkFileExists(mcpConfigDir)) {
             fs.mkdirSync(mcpConfigDir, { recursive: true });
             Logger.info(`Created directory: ${mcpConfigDir}`);
         }
-        
-        let mcpConfig = { mcpServers: {} };
-        let configChanged = false;
-        
-        if (FileUtils.checkFileExists(mcpConfigPath)) {
-            try {
-                const configContent = FileUtils.readFileContent(mcpConfigPath);
-                mcpConfig = JSON.parse(configContent);
-                mcpConfig.mcpServers = mcpConfig.mcpServers || {};
-                
-                const currentConfig = mcpConfig.mcpServers["stata-mcp"];
-                const correctUrl = `http://${host}:${port}/mcp`;
-                
-                if (!currentConfig || currentConfig.url !== correctUrl || currentConfig.transport !== "sse") {
-                    Logger.info(`Updating stata-mcp configuration to ${correctUrl}`);
-                    mcpConfig.mcpServers["stata-mcp"] = {
-                        url: correctUrl,
-                        transport: "sse"
-                    };
-                    configChanged = true;
-                } else {
-                    Logger.info(`stata-mcp configuration is already correct`);
-                }
-            } catch (error) {
-                Logger.info(`Error reading MCP config: ${error.message}`);
-                mcpConfig = { mcpServers: {} };
-                mcpConfig.mcpServers["stata-mcp"] = {
-                    url: `http://${host}:${port}/mcp`,
-                    transport: "sse"
-                };
-                configChanged = true;
-            }
-        } else {
-            Logger.info(`Creating new MCP configuration`);
-            mcpConfig.mcpServers["stata-mcp"] = {
-                url: `http://${host}:${port}/mcp`,
-                transport: "sse"
-            };
-            configChanged = true;
-        }
-        
-        if (configChanged) {
-            FileUtils.writeFileContent(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
-            Logger.info(`Updated MCP configuration at ${mcpConfigPath}`);
-        }
-        
+        FileUtils.writeFileContent(mcpConfigPath, result.text);
+        Logger.info(`Updated MCP configuration at ${mcpConfigPath}`);
+
         return true;
     } catch (error) {
         Logger.info(`Error updating MCP config: ${error.message}`);

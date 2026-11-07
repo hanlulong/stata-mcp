@@ -14,6 +14,7 @@ import uuid
 import argparse
 import logging
 import platform
+import shutil
 import signal
 import subprocess
 import traceback
@@ -50,6 +51,8 @@ from graph_artifacts import (
 # Import API models
 from api_models import (
     RunSelectionParams,
+    RunSelectionRequest,
+    RunSelectionStreamRequest,
     RunFileParams,
     ToolRequest,
     ToolResponse,
@@ -287,6 +290,35 @@ def windows_listening_port_pids_from_netstat(output: str, port: int) -> list[str
                 pids.append(pid)
 
     return pids
+
+
+def posix_server_pids_to_kill(
+    lsof_output: str, cmdlines: dict, self_pid: int
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Split `lsof -t` listener PIDs into stata-mcp servers and other programs.
+
+    Returns (kill, skipped): kill holds the PIDs whose command line contains
+    "stata_mcp_server"; skipped holds (pid, command) for every other program,
+    which is left running. The current process is never returned.
+    """
+    kill: list[str] = []
+    skipped: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    for raw_line in (lsof_output or "").splitlines():
+        pid = raw_line.strip()
+        if not pid.isdigit() or pid in seen:
+            continue
+        seen.add(pid)
+        if int(pid) == int(self_pid):
+            continue
+        cmd = (cmdlines.get(pid) or "").strip()
+        if "stata_mcp_server" in cmd:
+            kill.append(pid)
+        else:
+            skipped.append((pid, cmd))
+
+    return kill, skipped
 
 
 def strip_log_file_footer(output: str) -> str:
@@ -2209,35 +2241,48 @@ def kill_process_on_port(port):
                 # netstat/taskkill failed or no process could be killed.
                 logging.info(f"No process found using port {port}")
         else:
-            # macOS/Linux command to find and kill process on port
-            try:
-                # Find the process IDs using the port
-                find_cmd = f"lsof -i :{port} -t"
-                result = subprocess.check_output(find_cmd, shell=True).decode().strip()
-                
-                if result:
-                    # Handle multiple PIDs (one per line)
-                    pids = result.split('\n')
+            # macOS/Linux: only the process LISTENING on the port, and only if
+            # it is a stata-mcp server. Without -sTCP:LISTEN, lsof also lists
+            # every client connected to the port (other editor windows, MCP
+            # clients), and killing those took down unrelated processes.
+            lsof = shutil.which("lsof") or "/usr/sbin/lsof"
+            if not os.path.exists(lsof):
+                logging.info(f"lsof not found; not checking port {port} for an existing server")
+            else:
+                result = subprocess.run(
+                    [lsof, "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+                    capture_output=True,
+                    text=True,
+                )
+                cmdlines = {}
+                for line in (result.stdout or "").splitlines():
+                    pid = line.strip()
+                    if pid.isdigit() and pid not in cmdlines:
+                        ps = subprocess.run(
+                            ["ps", "-ww", "-o", "command=", "-p", pid],
+                            capture_output=True,
+                            text=True,
+                        )
+                        cmdlines[pid] = (ps.stdout or "").strip()
+
+                pids, skipped = posix_server_pids_to_kill(result.stdout, cmdlines, os.getpid())
+                for pid, cmd in skipped:
+                    logging.warning(f"Port {port} is held by another program (PID {pid}: {cmd}); not stopping it")
+
+                if pids:
                     for pid in pids:
-                        pid = pid.strip()
-                        if pid:
-                            logging.info(f"Found process with PID {pid} using port {port}")
-                            
-                            # Kill the process
-                            try:
-                                os.kill(int(pid), signal.SIGKILL)  # Use SIGKILL for more forceful termination
-                                logging.info(f"Killed process with PID {pid}")
-                            except Exception as kill_error:
-                                logging.warning(f"Error killing process with PID {pid}: {str(kill_error)}")
-                    
+                        logging.info(f"Found stata-mcp server with PID {pid} listening on port {port}")
+                        try:
+                            os.kill(int(pid), signal.SIGKILL)  # Use SIGKILL for more forceful termination
+                            logging.info(f"Killed process with PID {pid}")
+                        except Exception as kill_error:
+                            logging.warning(f"Error killing process with PID {pid}: {str(kill_error)}")
+
                     # Wait a moment to ensure the port is released
                     time.sleep(1)
-                else:
+                elif not skipped:
                     logging.info(f"No process found using port {port}")
-            except subprocess.CalledProcessError:
-                # No process found using the port
-                logging.info(f"No process found using port {port}")
-                
+
     except Exception as e:
         logging.warning(f"Error killing process on port {port}: {str(e)}")
     
@@ -2368,21 +2413,18 @@ No built-in rate limiting. Stata execution is inherently sequential per session.
     summary="Run Stata code selection",
     description="Execute Stata code and return the output. Supports multi-session mode for parallel execution.",
 )
-async def stata_run_selection_endpoint(
-    selection: str,
-    timeout: int = 600,
-    session_id: str = None,
-    working_dir: str = None
-) -> Response:
+async def stata_run_selection_endpoint(request: RunSelectionRequest) -> Response:
     """Run selected Stata code and return the output (MCP endpoint - applies compact mode filtering)
 
-    Args:
-        selection: Stata code to execute
-        timeout: Timeout in seconds for multi-session execution
-        session_id: Optional session ID for multi-session mode (uses default session if not specified)
-        working_dir: Optional working directory to change to before execution
+    The code is sent in the JSON body (selection, timeout, session_id,
+    working_dir), so large selections are not limited by URL length.
     """
     global multi_session_enabled, session_manager
+
+    selection = request.selection
+    timeout = request.timeout
+    session_id = request.session_id
+    working_dir = request.working_dir
 
     logging.info(f"Running selection: {selection[:100]}...")
     if session_id:
@@ -3052,6 +3094,30 @@ async def stata_run_selection_stream_endpoint(
     Returns:
         StreamingResponse with text/event-stream content type
     """
+    return _selection_stream_response(selection, timeout, working_dir, session_id, execution_id)
+
+
+@app.post(
+    "/run_selection/stream",
+    include_in_schema=False,  # HTTP streaming for the editor extension, not an MCP tool
+)
+async def stata_run_selection_stream_post_endpoint(request: RunSelectionStreamRequest):
+    """Same as GET /run_selection/stream, with the code in a JSON body.
+
+    The extension uses this so large selections (and non-ASCII code, which
+    grows when percent-encoded) are not limited by URL length.
+    """
+    return _selection_stream_response(
+        request.selection,
+        request.timeout,
+        request.working_dir,
+        request.session_id,
+        request.execution_id,
+    )
+
+
+def _selection_stream_response(selection, timeout, working_dir, session_id, execution_id):
+    """Build the SSE response shared by the GET and POST selection stream routes."""
     try:
         timeout = int(timeout)
         if timeout <= 0:
