@@ -188,6 +188,7 @@ class SessionManager:
         self._lock = threading.RLock()
         self._cleanup_thread: Optional[threading.Thread] = None
         self._shutdown = False
+        self._shutdown_event = threading.Event()  # Wakes the cleanup thread on stop()
 
         # Set spawn method for clean process isolation (required for PyStata)
         # Must be called before any Process creation
@@ -227,6 +228,7 @@ class SessionManager:
 
         # Start cleanup thread
         self._shutdown = False
+        self._shutdown_event.clear()
         self._cleanup_thread = threading.Thread(
             target=self._cleanup_loop,
             daemon=True,
@@ -241,6 +243,7 @@ class SessionManager:
         """Stop the session manager and destroy all sessions"""
         self._logger.info("Stopping session manager...")
         self._shutdown = True
+        self._shutdown_event.set()
 
         # Stop cleanup thread
         if self._cleanup_thread and self._cleanup_thread.is_alive():
@@ -1091,7 +1094,8 @@ class SessionManager:
         while not self._shutdown:
             try:
                 self._check_sessions()
-                time.sleep(60)  # Check every minute
+                # Check every minute; stop() sets the event so shutdown is not delayed
+                self._shutdown_event.wait(60)
             except Exception as e:
                 self._logger.error(f"Cleanup loop error: {e}")
 
