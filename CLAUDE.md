@@ -36,7 +36,7 @@ When building the VSIX package:
    - `!src/api_models.py`
    - `!src/output_filter.py`
    - `!src/utils.py`
-2. Run `npm run compile` to build TypeScript
+2. Run `npm run compile` to bundle the extension with webpack
 3. Run `vsce package` to create the VSIX
 4. Verify contents with `unzip -l stata-mcp-*.vsix | grep src/`
 

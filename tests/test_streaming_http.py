@@ -38,8 +38,10 @@ def _require_running_server(base_url: str) -> dict:
     return payload
 
 
-def test_streaming_http():
+def test_streaming_http(skip_stata_tests):
     """Verify that the SSE endpoint emits real streamed output."""
+    if skip_stata_tests:
+        pytest.skip("SKIP_STATA_TESTS=true")
     if not TEST_FILE.exists():
         pytest.skip(f"Test fixture not found: {TEST_FILE}")
 

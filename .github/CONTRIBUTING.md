@@ -32,8 +32,9 @@ Thank you for your interest in contributing to the Stata MCP Extension for VS Co
 1. Make your changes to the codebase
 2. Run tests to ensure everything is working:
    ```
-   npm run test
+   npm test
    ```
+   This runs the pytest suite (`python -m pytest tests`), so run it from a Python environment with `pip install -r src/requirements.txt pytest pytest-asyncio`. On a machine without Stata, run `SKIP_STATA_TESTS=true python -m pytest tests` instead; the tests that need Stata or a live server are then skipped.
 3. Package the extension for testing:
    ```
    npm run package
@@ -41,12 +42,6 @@ Thank you for your interest in contributing to the Stata MCP Extension for VS Co
 4. Install the extension in VS Code by using the "Install from VSIX" option
 
 ## Testing the MCP Server
-
-You can test the MCP server independently:
-
-```
-npm run test:mcp-server
-```
 
 To start the server manually:
 
@@ -58,8 +53,10 @@ npm run start-mcp-server
 
 - `extension.js` - The main VS Code extension code
 - `stata_mcp_server.py` - The FastAPI-based MCP server
+- `graph_artifacts.py` - Execution-scoped graph storage and manifests
+- `smcl_parser.py` - SMCL-to-HTML rendering for `help` output
+- `graph-store.js` - Graph batch tracking for the extension's graph viewer
 - `src/devtools/` - Helper scripts for packaging and development maintenance
-- `.github/workflows/` - CI/CD workflow definitions
 
 ## Pull Request Process
 
@@ -77,7 +74,7 @@ npm run start-mcp-server
 
 4. Open a pull request against the `main` branch
 
-5. Ensure all CI checks pass
+5. Ensure the test suite passes locally
 
 ## Code Style
 
@@ -91,7 +88,6 @@ Releases are managed by the project maintainer. When a new release is ready:
 
 1. Update the version in `package.json`
 2. Create a new release on GitHub
-3. The CI will automatically build and attach the VSIX package to the release
 
 ## License
 
