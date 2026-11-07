@@ -5,7 +5,7 @@
  * This is a cross-platform alternative to using bash scripts.
  */
 
-const { spawn, exec, execFileSync } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -280,36 +280,37 @@ async function startServer() {
                 // Extract the directory containing the script
                 const scriptDir = path.dirname(serverScriptPath);
                 
-                // Build command using Python module execution
-                let cmdString = `"${pythonPath}" -m stata_mcp_server`;
-                
-                // Add arguments
-                cmdString += ` --port ${port} --host ${host}`;
-                
+                // Start Python directly with an argument array (no cmd.exe), so
+                // option values are passed as literal arguments and serverProcess
+                // is the Python process itself.
+                const args = ['-m', 'stata_mcp_server', '--port', port.toString(), '--host', host];
+
                 // Add Stata path if provided
                 if (options.stataPath) {
-                    cmdString += ` --stata-path "${stripTrailingBackslash(options.stataPath)}"`;
+                    args.push('--stata-path', stripTrailingBackslash(options.stataPath));
                 }
-                
+
                 // Add log file if specified
                 if (options.logFile) {
-                    cmdString += ` --log-file "${stripTrailingBackslash(options.logFile)}"`;
+                    args.push('--log-file', stripTrailingBackslash(options.logFile));
                 }
 
                 // Add do-file log location settings
-                cmdString += ` --log-file-location ${options.logFileLocation}`;
+                args.push('--log-file-location', options.logFileLocation);
                 if (options.customLogDirectory) {
-                    cmdString += ` --custom-log-directory "${stripTrailingBackslash(options.customLogDirectory)}"`;
+                    args.push('--custom-log-directory', stripTrailingBackslash(options.customLogDirectory));
                 }
-                
+
                 // Always add Stata edition parameter
-                cmdString += ` --stata-edition ${options.stataEdition}`;
-                
-                console.log(`Windows command string: ${cmdString}`);
-                
-                // Use exec with the correct working directory
-                serverProcess = exec(cmdString, {
+                args.push('--stata-edition', options.stataEdition);
+
+                // Display only; the process is started from the array below.
+                console.log(`Windows command: ${[pythonPath, ...args].map(a => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}`);
+
+                serverProcess = spawn(pythonPath, args, {
                     stdio: 'inherit',
+                    shell: false,
+                    windowsHide: true,
                     cwd: scriptDir  // Set working directory to script location for module import
                 });
             } else {

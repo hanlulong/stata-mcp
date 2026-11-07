@@ -853,28 +853,32 @@ async function startMcpServer() {
 
         if (IS_WINDOWS) {
             const scriptDir = path.dirname(mcpServerPath);
-            // On Windows with exec(), trailing backslash in paths escapes the closing quote
-            // e.g., --stata-path "C:\Program Files\StataNow19\" breaks argument parsing
-            // Strip trailing backslashes from all paths to prevent this (Issue #52)
+            // Trailing backslashes broke the old cmd.exe command string (Issue #52):
+            // --stata-path "C:\Program Files\StataNow19\" escaped the closing quote.
+            // With an argument array there is no quoting, but stripping them is harmless.
             const stripTrailingBackslash = (p) => p ? p.replace(/(?<!^[A-Za-z]:)\\+$/, '') : p;
 
-            cmdString = `"${pythonCommand}" -m stata_mcp_server --host ${host} --port ${port}`;
-
-            if (forcePort) cmdString += ' --force-port';
-            if (stataPath) cmdString += ` --stata-path "${stripTrailingBackslash(stataPath)}"`;
-            cmdString += ` --log-file "${stripTrailingBackslash(logFile)}" --stata-edition ${stataEdition} --log-level ${logLevel}`;
-            cmdString += ` --log-file-location ${logFileLocation}`;
-            if (customLogDirectory) cmdString += ` --custom-log-directory "${stripTrailingBackslash(customLogDirectory)}"`;
-            if (workspaceRoot) cmdString += ` --workspace-root "${stripTrailingBackslash(workspaceRoot)}"`;
-            cmdString += ` --result-display-mode ${resultDisplayMode} --max-output-tokens ${maxOutputTokens}`;
+            // Start Python directly with an argument array (no cmd.exe), so
+            // settings values are passed as literal arguments and
+            // mcpServerProcess is the Python process itself.
+            args.push('-m', 'stata_mcp_server', '--host', host, '--port', String(port));
+            if (forcePort) args.push('--force-port');
+            if (stataPath) args.push('--stata-path', stripTrailingBackslash(stataPath));
+            args.push('--log-file', stripTrailingBackslash(logFile), '--stata-edition', stataEdition, '--log-level', logLevel);
+            args.push('--log-file-location', logFileLocation);
+            if (customLogDirectory) args.push('--custom-log-directory', stripTrailingBackslash(customLogDirectory));
+            if (workspaceRoot) args.push('--workspace-root', stripTrailingBackslash(workspaceRoot));
+            args.push('--result-display-mode', resultDisplayMode, '--max-output-tokens', String(maxOutputTokens));
             if (multiSession) {
-                cmdString += ` --multi-session --max-sessions ${maxSessions} --session-timeout ${sessionTimeout}`;
+                args.push('--multi-session', '--max-sessions', String(maxSessions), '--session-timeout', String(sessionTimeout));
             }
 
+            // Display only; the process is started from the array below.
+            cmdString = [pythonCommand, ...args].map(a => (/\s/.test(a) ? `"${a}"` : a)).join(' ');
             Logger.info(`Starting server with command: ${cmdString}`);
 
-            const options = { cwd: scriptDir, windowsHide: true, env: serverEnv };
-            mcpServerProcess = childProcess.exec(cmdString, options);
+            const options = { cwd: scriptDir, windowsHide: true, shell: false, stdio: 'pipe', env: serverEnv };
+            mcpServerProcess = spawn(pythonCommand, args, options);
         } else {
             args.push(mcpServerPath, '--host', host, '--port', port.toString());
             if (forcePort) args.push('--force-port');

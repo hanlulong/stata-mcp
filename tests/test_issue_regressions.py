@@ -215,13 +215,24 @@ def test_start_server_forwards_custom_log_location_options():
     with open(start_server_path, "r", encoding="utf-8") as f:
         source = f.read()
 
-    assert "--log-file-location ${options.logFileLocation}" in source
-    assert "--custom-log-directory \"${stripTrailingBackslash(options.customLogDirectory)}\"" in source
+    assert "args.push('--log-file-location', options.logFileLocation)" in source
+    assert "args.push('--custom-log-directory', stripTrailingBackslash(options.customLogDirectory))" in source
     assert "args.push('--log-file-location')" in source
     assert "args.push('--custom-log-directory')" in source
     assert "function stripTrailingBackslash" in source
     assert "].join(' | ')" in source
     assert "replace(/(?<!^[A-Za-z]:)\\\\+$/, '')" in source
+
+
+def test_windows_server_launch_uses_argument_array_not_cmd_exe():
+    src_dir = os.path.join(os.path.dirname(__file__), "..", "src")
+    for name in ("extension.js", "start-server.js"):
+        with open(os.path.join(src_dir, name), "r", encoding="utf-8") as f:
+            source = f.read()
+        # No cmd.exe command string: settings values must not reach a shell.
+        assert "exec(cmdString" not in source, name
+        assert "'-m', 'stata_mcp_server'" in source, name
+        assert "shell: false" in source, name
 
 
 def test_extension_uses_pipeline_port_lookup_and_raw_data_viewer_value():
