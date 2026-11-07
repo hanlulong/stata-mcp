@@ -16,3 +16,5 @@ The `tests/` directory intentionally keeps a minimal set of diagnostics and fixt
 - General regression harnesses: `test_stata.do`, `test_stata2.do`, `test_understanding.do`
 
 > All tests assume the MCP server is available at `http://localhost:4000`. Adjust the scripts if your environment differs.
+>
+> On a machine without Stata, run `SKIP_STATA_TESTS=true python -m pytest tests`: the unit tests still run, and the tests that need Stata or a live server are skipped, even if a server is listening on port 4000.

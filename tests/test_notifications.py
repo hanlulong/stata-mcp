@@ -100,8 +100,10 @@ async def _run_notification_probe(
 
 
 @pytest.mark.asyncio
-async def test_notifications():
+async def test_notifications(skip_stata_tests):
     """Verify MCP logging and progress notifications when a local server is available."""
+    if skip_stata_tests:
+        pytest.skip("SKIP_STATA_TESTS=true")
     if not DEFAULT_TEST_FILE.exists():
         pytest.skip(f"Test fixture not found: {DEFAULT_TEST_FILE}")
 
