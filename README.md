@@ -367,24 +367,13 @@ If Claude Code is not recognizing the Stata MCP server:
 <details>
 <summary><strong>Claude Desktop</strong></summary>
 
-[Claude Desktop](https://claude.ai/download) connects to remote MCP servers like the one this extension exposes. Make sure the Stata MCP extension is installed and its status bar shows **"Stata"** before configuring Claude Desktop.
+[Claude Desktop](https://claude.ai/download) can use the extension's local MCP server through `claude_desktop_config.json`. Make sure the Stata MCP extension is installed and its status bar shows **"Stata"** before configuring Claude Desktop.
 
-**Option A (recommended): add as a Custom Connector**
+Claude Desktop's JSON config doesn't accept remote URLs directly, so you need a local stdio wrapper. The easiest is [`mcp-remote`](https://www.npmjs.com/package/mcp-remote), which runs through `npx` if you have [Node.js](https://nodejs.org/):
 
-1. Open Claude Desktop → **Settings** → **Connectors** → **Add custom connector**
-2. Name: `Stata MCP`
-3. URL: `http://localhost:4000/mcp-streamable`
-4. Save and restart Claude Desktop
-
-No wrapper, no config file editing, no Python/Node install required. This is Anthropic's current recommended way to add remote MCP servers to Claude Desktop.
-
-**Option B: JSON config with a stdio wrapper** (if you prefer editing `claude_desktop_config.json`)
-
-Anthropic's JSON config doesn't yet accept remote URLs directly — you still need a local stdio wrapper. The easiest is [`mcp-remote`](https://www.npmjs.com/package/mcp-remote), which is zero-install if you have Node:
-
-1. Open the config file:
-   - **macOS**: `~/Library/Application Support/Claude Desktop/claude_desktop_config.json`
-   - **Windows**: `%APPDATA%\Claude Desktop\claude_desktop_config.json`
+1. Open the config file from Claude Desktop → **Settings** → **Developer** → **Edit Config**, or open it directly:
+   - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
 2. Add this block (merge with any existing `mcpServers` object):
    ```json
@@ -398,7 +387,11 @@ Anthropic's JSON config doesn't yet accept remote URLs directly — you still ne
    }
    ```
 
-3. Restart Claude Desktop. The Stata tools will appear in the available-tools list.
+3. Fully quit and restart Claude Desktop. The Stata tools will appear in the available-tools list.
+
+> **Note:** don't add this server with **Settings** → **Connectors** → **Add custom connector**. Custom connectors only accept `https://` URLs of internet-hosted servers, so they can't reach the local `http://localhost:4000` server.
+
+If the tools don't show up, check that `curl -s http://localhost:4000/health` responds, then look at Claude Desktop's MCP logs (`~/Library/Logs/Claude/mcp-server-stata-mcp.log` on macOS, `%APPDATA%\Claude\logs\mcp-server-stata-mcp.log` on Windows).
 
 <br>
 

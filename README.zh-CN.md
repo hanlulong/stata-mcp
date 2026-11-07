@@ -367,24 +367,13 @@ Set up the Stata MCP server for me. Endpoint: http://localhost:4000/mcp-streamab
 <details>
 <summary><strong>Claude Desktop</strong></summary>
 
-[Claude Desktop](https://claude.ai/download) 可以连接到本扩展暴露的远程 MCP 服务。配置之前请确认 Stata MCP 扩展已安装，状态栏显示 **"Stata"**。
+[Claude Desktop](https://claude.ai/download) 可以通过 `claude_desktop_config.json` 使用本扩展在本机提供的 MCP 服务。配置之前请确认 Stata MCP 扩展已安装，状态栏显示 **"Stata"**。
 
-**选项 A（推荐）：作为自定义连接器添加**
+Claude Desktop 的 JSON 配置不直接接受远程 URL，需要本地 stdio 包装器。最简单的是 [`mcp-remote`](https://www.npmjs.com/package/mcp-remote)，只要装有 [Node.js](https://nodejs.org/) 就能通过 `npx` 运行：
 
-1. 打开 Claude Desktop → **Settings** → **Connectors** → **Add custom connector**
-2. 名称：`Stata MCP`
-3. URL：`http://localhost:4000/mcp-streamable`
-4. 保存并重启 Claude Desktop
-
-不需要包装器，不需要编辑配置文件，也不需要装 Python 或 Node。这是 Anthropic 目前官方推荐的添加远程 MCP 服务器的方法。
-
-**选项 B：JSON 配置 + stdio 包装器**（如果您更喜欢改 `claude_desktop_config.json`）
-
-Anthropic 的 JSON 配置目前还不接受远程 URL，需要本地 stdio 包装器。最简单的是 [`mcp-remote`](https://www.npmjs.com/package/mcp-remote)，只要有 Node 就能零安装运行：
-
-1. 打开配置文件：
-   - **macOS**：`~/Library/Application Support/Claude Desktop/claude_desktop_config.json`
-   - **Windows**：`%APPDATA%\Claude Desktop\claude_desktop_config.json`
+1. 在 Claude Desktop 中进入 **Settings** → **Developer** → **Edit Config** 打开配置文件，或直接打开：
+   - **macOS**：`~/Library/Application Support/Claude/claude_desktop_config.json`
+   - **Windows**：`%APPDATA%\Claude\claude_desktop_config.json`
 
 2. 追加下面这段（如已有 `mcpServers` 对象，合并进去）：
    ```json
@@ -398,7 +387,11 @@ Anthropic 的 JSON 配置目前还不接受远程 URL，需要本地 stdio 包�
    }
    ```
 
-3. 重启 Claude Desktop，Stata 工具会出现在可用工具列表中。
+3. 完全退出并重启 Claude Desktop，Stata 工具会出现在可用工具列表中。
+
+> **注意：** 不要通过 **Settings** → **Connectors** → **Add custom connector**（自定义连接器）添加本服务。自定义连接器只接受互联网上可访问的 `https://` 地址，无法连接本机的 `http://localhost:4000` 服务。
+
+如果工具没有出现，请先确认 `curl -s http://localhost:4000/health` 有响应，再查看 Claude Desktop 的 MCP 日志（macOS：`~/Library/Logs/Claude/mcp-server-stata-mcp.log`；Windows：`%APPDATA%\Claude\logs\mcp-server-stata-mcp.log`）。
 
 <br>
 
