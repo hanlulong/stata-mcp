@@ -191,6 +191,91 @@ function isUvInstalled() {
     }
 }
 
+// Fallback: download the uv binary from the latest GitHub release into
+// ~/.local/bin. Runs in a fresh temporary directory that is always removed.
+async function installUvFromRelease() {
+    let tempDir;
+    try {
+        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uv-installer-'));
+        const userBinDir = path.join(os.homedir(), '.local', 'bin');
+
+        if (process.platform === 'win32') {
+            // Alternative Windows installation using direct download
+            const downloadCommand = 'powershell -Command "& {Invoke-WebRequest -Uri https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip -OutFile uv.zip}"';
+            await execPromise(`cd "${tempDir}" && ${downloadCommand}`);
+
+            await execPromise(`cd "${tempDir}" && powershell -Command "& {Expand-Archive -Path uv.zip -DestinationPath .}"`);
+
+            fs.mkdirSync(userBinDir, { recursive: true });
+
+            // The Windows zip holds uv.exe at its root
+            fs.copyFileSync(path.join(tempDir, 'uv.exe'), path.join(userBinDir, 'uv.exe'));
+            console.log(`Copied UV to ${path.join(userBinDir, 'uv.exe')}`);
+
+            // Check installation again
+            return isUvInstalled();
+        }
+
+        // Alternative macOS/Linux installation - download binary directly
+        let platform = 'unknown';
+        let arch = process.arch;
+
+        if (process.platform === 'darwin') {
+            platform = 'apple-darwin';
+            // Handle ARM vs Intel Mac
+            arch = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
+        } else if (process.platform === 'linux') {
+            platform = 'unknown-linux-gnu';
+            // Handle ARM vs x86
+            arch = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
+        }
+
+        if (platform === 'unknown') {
+            console.error(`Unsupported platform: ${process.platform}`);
+            promptUvInstallation();
+            return { installed: false, path: null };
+        }
+
+        const binaryName = `uv-${arch}-${platform}`;
+        const downloadUrl = `https://github.com/astral-sh/uv/releases/latest/download/${binaryName}.tar.gz`;
+
+        // -f: fail on HTTP errors instead of saving an error page as the tarball
+        await execPromise(`cd "${tempDir}" && curl -fL "${downloadUrl}" -o uv.tar.gz`);
+        await execPromise(`cd "${tempDir}" && tar xzf uv.tar.gz`);
+
+        fs.mkdirSync(userBinDir, { recursive: true });
+
+        // The tarball holds uv-<target>/uv; older layouts had uv at the root
+        let extractedUv = path.join(tempDir, binaryName, 'uv');
+        if (!fs.existsSync(extractedUv) && fs.existsSync(path.join(tempDir, 'uv'))) {
+            extractedUv = path.join(tempDir, 'uv');
+        }
+
+        fs.copyFileSync(extractedUv, path.join(userBinDir, 'uv'));
+        fs.chmodSync(path.join(userBinDir, 'uv'), '755'); // Make executable
+        console.log(`Copied UV to ${path.join(userBinDir, 'uv')}`);
+
+        // Update PATH for the current process
+        process.env.PATH = `${userBinDir}:${process.env.PATH}`;
+
+        // Check installation again
+        return isUvInstalled();
+    } catch (altError) {
+        console.error(`Alternative installation failed: ${altError.message}`);
+        console.error('Please install UV manually.');
+        promptUvInstallation();
+        return { installed: false, path: null };
+    } finally {
+        if (tempDir) {
+            try {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            } catch (cleanupError) {
+                console.log(`Note: Could not remove ${tempDir}: ${cleanupError.message}`);
+            }
+        }
+    }
+}
+
 // Install UV
 async function installUv() {
     console.log('\n========== INSTALLING UV ==========');
@@ -228,90 +313,7 @@ async function installUv() {
             } else {
                 // Try alternative installation if the first method failed
                 console.log('First installation method failed, trying alternative...');
-                
-                if (process.platform === 'win32') {
-                    // Alternative Windows installation using direct download
-                    const tempDir = path.join(os.tmpdir(), 'uv-installer');
-                    try {
-                        if (!fs.existsSync(tempDir)) {
-                            fs.mkdirSync(tempDir, { recursive: true });
-                        }
-                        
-                        const downloadCommand = 'powershell -Command "& {Invoke-WebRequest -Uri https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip -OutFile uv.zip}"';
-                        await execPromise(`cd "${tempDir}" && ${downloadCommand}`);
-                        
-                        await execPromise(`cd "${tempDir}" && powershell -Command "& {Expand-Archive -Path uv.zip -DestinationPath .}""`);
-                        
-                        const userBinDir = path.join(os.homedir(), '.local', 'bin');
-                        if (!fs.existsSync(userBinDir)) {
-                            fs.mkdirSync(userBinDir, { recursive: true });
-                        }
-                        
-                        fs.copyFileSync(path.join(tempDir, 'uv.exe'), path.join(userBinDir, 'uv.exe'));
-                        console.log(`Copied UV to ${path.join(userBinDir, 'uv.exe')}`);
-                        
-                        // Check installation again
-                        return isUvInstalled();
-                    } catch (altError) {
-                        console.error(`Alternative installation failed: ${altError.message}`);
-                        console.error('Please install UV manually.');
-                        promptUvInstallation();
-                        return { installed: false, path: null };
-                    }
-                } else {
-                    // Alternative macOS/Linux installation - download binary directly
-                    let platform = 'unknown';
-                    let arch = process.arch;
-                    
-                    if (process.platform === 'darwin') {
-                        platform = 'apple-darwin';
-                        // Handle ARM vs Intel Mac
-                        arch = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
-                    } else if (process.platform === 'linux') {
-                        platform = 'unknown-linux-gnu';
-                        // Handle ARM vs x86
-                        arch = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
-                    }
-                    
-                    if (platform !== 'unknown') {
-                        const binaryName = `uv-${arch}-${platform}`;
-                        const downloadUrl = `https://github.com/astral-sh/uv/releases/latest/download/${binaryName}.tar.gz`;
-                        
-                        const tempDir = path.join(os.tmpdir(), 'uv-installer');
-                        try {
-                            if (!fs.existsSync(tempDir)) {
-                                fs.mkdirSync(tempDir, { recursive: true });
-                            }
-                            
-                            await execPromise(`cd "${tempDir}" && curl -L ${downloadUrl} -o uv.tar.gz`);
-                            await execPromise(`cd "${tempDir}" && tar xzf uv.tar.gz`);
-                            
-                            const userBinDir = path.join(os.homedir(), '.local', 'bin');
-                            if (!fs.existsSync(userBinDir)) {
-                                fs.mkdirSync(userBinDir, { recursive: true });
-                            }
-                            
-                            fs.copyFileSync(path.join(tempDir, 'uv'), path.join(userBinDir, 'uv'));
-                            fs.chmodSync(path.join(userBinDir, 'uv'), '755'); // Make executable
-                            console.log(`Copied UV to ${path.join(userBinDir, 'uv')}`);
-                            
-                            // Update PATH for the current process
-                            process.env.PATH = `${userBinDir}:${process.env.PATH}`;
-                            
-                            // Check installation again
-                            return isUvInstalled();
-                        } catch (altError) {
-                            console.error(`Alternative installation failed: ${altError.message}`);
-                            console.error('Please install UV manually.');
-                            promptUvInstallation();
-                            return { installed: false, path: null };
-                        }
-                    } else {
-                        console.error(`Unsupported platform: ${process.platform}`);
-                        promptUvInstallation();
-                        return { installed: false, path: null };
-                    }
-                }
+                return await installUvFromRelease();
             }
         } catch (installError) {
             console.error(`Installation script failed: ${installError.message}`);
