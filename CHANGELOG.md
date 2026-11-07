@@ -2,6 +2,20 @@
 
 All notable changes to the Stata MCP extension will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **Large selections and CJK code in Run Selection**: The extension sent the selected code in the URL query string of `/run_selection/stream`, which the server rejects once the request line gets too large (CJK text triples in size when percent-encoded). The code now travels in a JSON body (`POST /run_selection/stream`); if an older server is still holding the port, the extension falls back once to the old GET request.
+- **Port reclaim no longer kills other programs on macOS/Linux**: Starting the server ran `lsof -i :PORT` and SIGKILLed every PID it printed, including clients connected to the port such as another editor window's extension host or an MCP client. The server, the extension and `start-server.js` now look only at the process listening on the port and stop it only if it is a stata-mcp server; any other program is logged and left running. Windows already filtered to listeners and is unchanged.
+- **Windows server launch without cmd.exe**: The extension and `start-server.js` now start Python directly with an argument array instead of a `cmd.exe` command string, so setting values are passed literally and `deactivate()` stops the Python process itself rather than only `cmd.exe`.
+- **uv fallback installer**: The fallback download copied `uv` from the wrong place in the release tarball (`uv-<target>/uv`), so it always failed. It now uses a fresh temporary directory that is removed afterwards, `curl -f`, and the right path; a stray quote in the Windows `Expand-Archive` command is removed.
+- **Cursor `~/.cursor/mcp.json` is no longer rewritten**: The auto-update replaced any `stata-mcp` entry that was not the legacy `/mcp` SSE URL (including the README's `/mcp-streamable` entry) and replaced the whole file, deleting other servers, when it could not parse it. It now adds a `/mcp-streamable` entry only when none exists, updates only the host and port of an existing URL entry, leaves `command` entries alone, and never writes a file it cannot parse.
+- **Run File / Run Selection title buttons on the second click**: The commands used the active editor, which can be the Output channel after the first run. They now use the document the title button belongs to.
+- **Minimap loop headers** (Issue #56): The brace folding marker now matches the whole line, so VS Code's minimap shows only `// #region` names, not `foreach`/`if` lines. Folding is unchanged.
+
+### Changed
+- `POST /run_selection` now takes `selection`, `timeout`, `session_id` and `working_dir` as a JSON body instead of query parameters. The MCP `stata_run_selection` tool arguments are unchanged.
+
 ## [0.5.3] - 2026-07-05
 
 ### Fixed
