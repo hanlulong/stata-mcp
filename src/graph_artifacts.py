@@ -5,6 +5,7 @@
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -15,6 +16,26 @@ from typing import Any, Dict, Iterable, List, Optional
 DEFAULT_GRAPH_BATCH_KEEP_COUNT = 2
 DEFAULT_GRAPH_STORAGE_ENV = "STATA_MCP_GRAPHS_DIR"
 MANIFEST_FILENAME = "manifest.json"
+
+# Execution and batch ids become directory names under the graphs root, so
+# they are limited to a conservative character set.
+SAFE_ID = re.compile(r'^[A-Za-z0-9_-]{1,128}$')
+
+
+def is_safe_id(value: Any) -> bool:
+    return isinstance(value, str) and SAFE_ID.fullmatch(value) is not None
+
+
+def _is_strictly_inside(parent: str, child: str) -> bool:
+    """True if child is a path below parent (both already realpath'd)."""
+    try:
+        common_path = os.path.commonpath([parent, child])
+    except ValueError:
+        return False
+    return (
+        os.path.normcase(common_path) == os.path.normcase(parent)
+        and os.path.normcase(child) != os.path.normcase(parent)
+    )
 
 
 def normalize_graph_path(file_path: str) -> str:
@@ -45,9 +66,16 @@ def create_batch_context(
     source: str = "execution"
 ) -> Dict[str, Any]:
     resolved_root = ensure_graphs_root(graphs_root)
+    if execution_id and not is_safe_id(execution_id):
+        logging.warning(
+            f"Ignoring unsafe graph execution id {str(execution_id)[:64]!r}; using a generated one"
+        )
+        execution_id = None
     execution_id = execution_id or generate_execution_id()
     batch_id = execution_id
     batch_dir = os.path.join(resolved_root, batch_id)
+    if not _is_strictly_inside(os.path.realpath(resolved_root), os.path.realpath(batch_dir)):
+        raise ValueError(f"Graph batch directory escapes the graphs root: {batch_id[:64]!r}")
     os.makedirs(batch_dir, exist_ok=True)
     return {
         "execution_id": execution_id,
@@ -144,19 +172,14 @@ def cleanup_graph_batches(
 
 
 def resolve_batch_graph_path(graphs_root: str, batch_id: str, filename: str) -> Optional[str]:
-    if not batch_id or not filename:
+    if not batch_id or not filename or not is_safe_id(batch_id):
         return None
-    batch_dir = os.path.join(graphs_root, batch_id)
-    file_path = os.path.realpath(os.path.join(batch_dir, filename))
-    real_batch_dir = os.path.realpath(batch_dir)
-    try:
-        common_path = os.path.commonpath([real_batch_dir, file_path])
-    except ValueError:
+    real_root = os.path.realpath(graphs_root)
+    real_batch_dir = os.path.realpath(os.path.join(real_root, batch_id))
+    if not _is_strictly_inside(real_root, real_batch_dir):
         return None
-
-    if os.path.normcase(common_path) != os.path.normcase(real_batch_dir):
-        return None
-    if os.path.normcase(file_path) == os.path.normcase(real_batch_dir):
+    file_path = os.path.realpath(os.path.join(real_batch_dir, filename))
+    if not _is_strictly_inside(real_batch_dir, file_path):
         return None
     return file_path
 

@@ -4549,10 +4549,12 @@ def _serve_graph_file(graph_path: str):
 @app.get("/graphs/batch/{batch_id}/{filename}", include_in_schema=False)
 async def get_graph_from_batch(batch_id: str, filename: str):
     try:
+        # Starlette has already decoded the path; decoding again would turn
+        # %252F into a "/" that the route itself never matched.
         graph_path = resolve_batch_graph_path(
             get_effective_graphs_root(),
-            unquote(batch_id),
-            unquote(filename)
+            batch_id,
+            filename
         )
         if not graph_path:
             return Response(content="Invalid graph path", status_code=400, media_type="text/plain")

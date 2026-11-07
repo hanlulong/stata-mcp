@@ -2,15 +2,20 @@
 # -*- coding: utf-8 -*-
 """Unit tests for temporary graph artifact helpers."""
 
+import asyncio
 import os
 import time
+
+import pytest
 
 from graph_artifacts import (
     build_graph_record,
     cleanup_graph_batches,
     create_batch_context,
     find_latest_graph_by_name,
+    generate_execution_id,
     get_graphs_root,
+    is_safe_id,
     load_batch_manifest,
     normalize_graph_path,
     resolve_batch_graph_path,
@@ -101,3 +106,116 @@ def test_resolve_batch_graph_path_rejects_traversal_and_directory_target(tmp_pat
     assert valid_path == os.path.realpath(graph_file)
     assert traversal_path is None
     assert directory_target is None
+
+
+def _plant_secret(tmp_path):
+    graphs_root = tmp_path / "graphs-root"
+    graphs_root.mkdir()
+    secret_dir = tmp_path / "secretdir"
+    secret_dir.mkdir()
+    (secret_dir / "secret.txt").write_text("TOP-SECRET-CONTENT")
+    return str(graphs_root), str(secret_dir)
+
+
+@pytest.mark.parametrize(
+    "batch_id",
+    [
+        "/abs/secretdir",
+        "../secretdir",
+        "..%2Fsecretdir",  # what the route sees after Starlette's single decode
+        "C:\\x",
+        "",
+        "a" * 129,
+        "exec-1\n",
+    ],
+)
+def test_resolve_batch_graph_path_rejects_unsafe_batch_ids(tmp_path, batch_id):
+    graphs_root, secret_dir = _plant_secret(tmp_path)
+    if batch_id == "/abs/secretdir":
+        batch_id = secret_dir
+    assert resolve_batch_graph_path(graphs_root, batch_id, "secret.txt") is None
+
+
+def test_resolve_batch_graph_path_accepts_valid_batch_id(tmp_path):
+    graphs_root, _ = _plant_secret(tmp_path)
+    batch_id = "selection-1730000000000-ab12cd34"
+    os.makedirs(os.path.join(graphs_root, batch_id))
+    graph_file = os.path.join(graphs_root, batch_id, "graph1.png")
+    with open(graph_file, "wb") as handle:
+        handle.write(b"png")
+    assert resolve_batch_graph_path(graphs_root, batch_id, "graph1.png") == os.path.realpath(graph_file)
+    assert is_safe_id("a" * 128)
+
+
+def test_resolve_batch_graph_path_rejects_symlinked_batch_dir(tmp_path):
+    graphs_root, secret_dir = _plant_secret(tmp_path)
+    link = os.path.join(graphs_root, "exec-link")
+    try:
+        os.symlink(secret_dir, link)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not available")
+    assert resolve_batch_graph_path(graphs_root, "exec-link", "secret.txt") is None
+
+
+def test_create_batch_context_replaces_unsafe_execution_id(tmp_path):
+    graphs_root = str(tmp_path / "graphs-root")
+    batch = create_batch_context(graphs_root, execution_id="../x", source="test")
+    assert batch["batch_id"] != "../x"
+    assert is_safe_id(batch["batch_id"])
+    assert batch["execution_id"] == batch["batch_id"]
+    assert not os.path.exists(str(tmp_path / "x"))
+    assert os.path.dirname(batch["batch_dir"]) == os.path.abspath(graphs_root)
+
+
+def test_create_batch_context_keeps_generated_ids():
+    assert is_safe_id(generate_execution_id("selection-stream"))
+    # Same shape as the extension's createExecutionId().
+    assert is_safe_id("interactive-selection-1730000000000-k3j9x0ab")
+
+
+def _raw_asgi_get(app, path, raw_path):
+    """Call the app with an exact ASGI scope (TestClient normalizes %25 escapes)."""
+    status = {}
+    body = bytearray()
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": path,
+        "raw_path": raw_path,
+        "root_path": "",
+        "query_string": b"",
+        "headers": [(b"host", b"localhost:4000")],
+        "client": ("127.0.0.1", 50000),
+        "server": ("localhost", 4000),
+    }
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            status["code"] = message["status"]
+        elif message["type"] == "http.response.body":
+            body.extend(message.get("body", b""))
+
+    asyncio.run(app(scope, receive, send))
+    return status.get("code"), bytes(body)
+
+
+def test_graph_route_does_not_serve_files_outside_graphs_root(tmp_path, monkeypatch):
+    import stata_mcp_server as server
+
+    graphs_root, _ = _plant_secret(tmp_path)
+    monkeypatch.setattr(server, "get_effective_graphs_root", lambda: graphs_root)
+    # The request line /graphs/batch/..%252Fsecretdir/secret.txt, as uvicorn
+    # hands it to the app (path decoded once).
+    status, body = _raw_asgi_get(
+        server.app,
+        "/graphs/batch/..%2Fsecretdir/secret.txt",
+        b"/graphs/batch/..%252Fsecretdir/secret.txt",
+    )
+    assert b"TOP-SECRET-CONTENT" not in body
+    assert status == 400
