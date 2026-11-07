@@ -169,6 +169,7 @@ Customize the extension behavior through VS Code settings. Access these settings
 | `stata-vscode.mcpServerHost` | Host for MCP server | `localhost` |
 | `stata-vscode.mcpServerPort` | Port for the MCP server | `4000` |
 | `stata-vscode.forcePort` | Force the specified port even if it's already in use | `false` |
+| `stata-vscode.allowedHosts` | Extra Host names the local server accepts, for trusted proxies such as code-server (`localhost`, `127.0.0.1`, `::1` and the server host are always accepted) | `[]` |
 
 ### Graph Settings
 
@@ -579,6 +580,8 @@ This extension uses [uv](https://github.com/astral-sh/uv), a fast Python package
 ## Troubleshooting
 
 Running into trouble? The full troubleshooting guide — clean reinstall steps for Windows / macOS / Linux, common Python and UV issues, Stata-edition mismatches, and what to include when opening a GitHub issue — lives in [docs/troubleshooting.md](docs/troubleshooting.md).
+
+If a client gets HTTP 403 and the **Stata** output channel shows `Blocked by local-request guard`, the request came from a web page on another site or used a Host name the server doesn't accept. If it comes through a trusted proxy (for example code-server), add that host name to `stata-vscode.allowedHosts`.
 
 ## Star History
 

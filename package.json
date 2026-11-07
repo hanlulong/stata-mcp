@@ -173,6 +173,14 @@
 					"default": 4000,
 					"description": "Port for the MCP server"
 				},
+				"stata-vscode.allowedHosts": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": [],
+					"description": "Extra Host names the local server accepts, for trusted proxies such as code-server"
+				},
 				"stata-vscode.autoStartServer": {
 					"type": "boolean",
 					"default": true,
@@ -378,7 +386,10 @@
 	"capabilities": {
 		"untrustedWorkspaces": {
 			"supported": "limited",
-			"description": "MCP services require a trusted workspace."
+			"description": "MCP services require a trusted workspace.",
+			"restrictedConfigurations": [
+				"stata-vscode.allowedHosts"
+			]
 		}
 	}
 }

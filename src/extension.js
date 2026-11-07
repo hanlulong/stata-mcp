@@ -481,7 +481,8 @@ function handleConfigurationChange(event) {
             event.affectsConfiguration('stata-vscode.maxOutputTokens') ||
             event.affectsConfiguration('stata-vscode.multiSession') ||
             event.affectsConfiguration('stata-vscode.maxSessions') ||
-            event.affectsConfiguration('stata-vscode.sessionTimeout')) {
+            event.affectsConfiguration('stata-vscode.sessionTimeout') ||
+            event.affectsConfiguration('stata-vscode.allowedHosts')) {
 
             if (mcpServerRunning && mcpServerProcess) {
                 if (isRestarting) {
@@ -622,6 +623,10 @@ async function startMcpServer() {
     const multiSession = config.get('multiSession') !== false;  // Default to true
     const maxSessions = config.get('maxSessions') || 100;
     const sessionTimeout = config.get('sessionTimeout') || 3600;
+    const allowedHostsSetting = config.get('allowedHosts');
+    const allowedHosts = Array.isArray(allowedHostsSetting)
+        ? allowedHostsSetting.filter(h => typeof h === 'string' && h.trim()).map(h => h.trim())
+        : [];
 
     Logger.info(`Using Stata edition: ${stataEdition}`);
     Logger.info(`Log file location: ${logFileLocation}`);
@@ -827,6 +832,14 @@ async function startMcpServer() {
             if (multiSession) {
                 cmdString += ` --multi-session --max-sessions ${maxSessions} --session-timeout ${sessionTimeout}`;
             }
+            for (const allowedHost of allowedHosts) {
+                // cmd.exe string: only accept plain host names and IP literals
+                if (/^[A-Za-z0-9.\-:\[\]]+$/.test(allowedHost)) {
+                    cmdString += ` --allowed-host ${allowedHost}`;
+                } else {
+                    Logger.info(`Warning: ignoring stata-vscode.allowedHosts entry with unsupported characters: ${JSON.stringify(allowedHost)}`);
+                }
+            }
 
             Logger.info(`Starting server with command: ${cmdString}`);
 
@@ -843,6 +856,9 @@ async function startMcpServer() {
             args.push('--result-display-mode', resultDisplayMode, '--max-output-tokens', maxOutputTokens.toString());
             if (multiSession) {
                 args.push('--multi-session', '--max-sessions', maxSessions.toString(), '--session-timeout', sessionTimeout.toString());
+            }
+            for (const allowedHost of allowedHosts) {
+                args.push('--allowed-host', allowedHost);
             }
             
             cmdString = `${pythonCommand} ${args.join(' ')}`;

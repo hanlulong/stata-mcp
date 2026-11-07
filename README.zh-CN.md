@@ -169,6 +169,7 @@ Set up the Stata MCP server for me. Endpoint: http://localhost:4000/mcp-streamab
 | `stata-vscode.mcpServerHost` | MCP 服务器的主机 | `localhost` |
 | `stata-vscode.mcpServerPort` | MCP 服务器的端口 | `4000` |
 | `stata-vscode.forcePort` | 即使端口已被使用也强制使用指定端口 | `false` |
+| `stata-vscode.allowedHosts` | 本地服务器额外接受的 Host 名称，用于 code-server 等受信任的代理（`localhost`、`127.0.0.1`、`::1` 和服务器主机始终被接受） | `[]` |
 
 ### 图形设置
 
@@ -579,6 +580,8 @@ Cursor 的用户级 MCP 配置位置：
 ## 故障排除
 
 遇到问题？完整的故障排除指南 —— Windows / macOS / Linux 的干净重装步骤、常见的 Python 和 UV 问题、Stata 版本不匹配、以及提交 GitHub issue 时需要附上的信息 —— 请见 [docs/troubleshooting.zh-CN.md](docs/troubleshooting.zh-CN.md)。
+
+如果客户端收到 HTTP 403，并且 **Stata** 输出频道显示 `Blocked by local-request guard`，说明该请求来自其他网站的网页，或使用了服务器不接受的 Host 名称。如果请求经由受信任的代理（例如 code-server）转发，请将该主机名添加到 `stata-vscode.allowedHosts`。
 
 ## Star 历史
 
