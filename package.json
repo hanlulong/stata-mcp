@@ -344,16 +344,9 @@
 		"watch": "webpack --watch",
 		"package": "npm run webpack && vsce package --allow-star-activation",
 		"compile": "npm run webpack",
-		"test:platform": "node ./src/test-platform.js",
-		"test:extension": "node ./src/test-extension.js",
-		"test:mcp-server": "node ./src/test-mcp-server.js",
-		"test:python": "node ./src/test-python-detection.js",
-		"test:python:simple": "node ./src/test-python-detection-simple.js",
 		"test:install:uv": "node ./src/check-python.js",
 		"test:uv": "uv --version",
-		"test": "npm run test:platform && npm run test:extension && npm run test:mcp-server",
-		"clear-port": "node ./src/clear-port.js",
-		"start-server": "npm run clear-port && npm run start-mcp-server"
+		"test": "python -m pytest tests"
 	},
 	"dependencies": {
 		"adm-zip": "^0.5.16",
