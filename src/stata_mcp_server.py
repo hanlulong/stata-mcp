@@ -2290,10 +2290,18 @@ async def lifespan(app: FastAPI):
 
     yield  # Application runs
 
-    # Shutdown: Stop HTTP session manager if it exists
-    if hasattr(app.state, '_http_session_manager_stopper'):
-        logging.debug("Calling HTTP session manager shutdown handler")
-        await app.state._http_session_manager_stopper()
+    try:
+        # Shutdown: Stop HTTP session manager if it exists
+        if hasattr(app.state, '_http_session_manager_stopper'):
+            logging.debug("Calling HTTP session manager shutdown handler")
+            await app.state._http_session_manager_stopper()
+    finally:
+        # Stop multi-session Stata workers so they don't outlive the server (Issue #69)
+        if session_manager is not None:
+            try:
+                await asyncio.to_thread(session_manager.stop)
+            except Exception as e:
+                logging.warning(f"Error stopping Stata worker sessions: {e}")
 
     # Cleanup if needed
     logging.info("FastAPI application shutting down")

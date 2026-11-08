@@ -35,6 +35,7 @@ import traceback
 import threading
 import tempfile
 import shutil
+import multiprocessing
 from typing import Optional, Dict, Any, Tuple
 from enum import Enum
 
@@ -112,6 +113,24 @@ def safe_file_token(value: Optional[str]) -> str:
         safe_value = "session"
     digest = hashlib.sha1(raw_value.encode("utf-8", errors="replace")).hexdigest()[:10]
     return f"{safe_value[:64]}_{digest}"
+
+
+def parent_process_alive() -> bool:
+    """Return False once the server process that spawned this worker has exited.
+
+    Workers are started with the multiprocessing "spawn" method, so
+    multiprocessing.parent_process() exposes a sentinel that becomes ready when
+    the parent exits (a pipe on POSIX, a process handle on Windows). This also
+    works when the server was killed with SIGKILL and never ran its shutdown code.
+    Returns True when there is no multiprocessing parent to watch, e.g. when
+    worker_process() is called directly in-process.
+    """
+    try:
+        parent = multiprocessing.parent_process()
+        return parent is None or parent.is_alive()
+    except Exception:
+        # Never let the liveness probe itself take the worker down.
+        return True
 
 
 def normalize_data_viewer_max_rows(max_rows: int) -> int:
@@ -407,6 +426,7 @@ def worker_process(
     stlib = None
     cancelled = False
     worker_temp_dir = None  # Track temp directory for cleanup
+    parent_gone = False  # Set when the server process that owns this worker has exited
 
     # Set default graphs directory if not provided
     if graphs_dir is None:
@@ -829,6 +849,15 @@ capture log close {MCP_LOG_NAME}
                 try:
                     cmd_dict = command_queue.get(timeout=1.0)
                 except queue.Empty:
+                    # If the server is gone, nothing can send commands or read
+                    # results any more. Exit instead of being re-parented to
+                    # init/launchd and living forever (Issue #69).
+                    if not parent_process_alive():
+                        worker_logger.warning(
+                            f"Worker {worker_id}: parent server process exited, shutting down"
+                        )
+                        parent_gone = True
+                        break
                     continue
 
                 # Parse command
@@ -1117,6 +1146,16 @@ capture log close {MCP_LOG_NAME}
                 shutil.rmtree(worker_temp_dir, ignore_errors=True)
             except Exception:
                 pass  # Best effort cleanup
+
+        if parent_gone:
+            # Nobody is left to read result_queue or to terminate us, so do not
+            # risk blocking on queue feeder threads or interpreter shutdown
+            # hooks: flush the worker log and exit hard.
+            try:
+                logging.shutdown()
+            except Exception:
+                pass
+            os._exit(0)
 
 
 # =============================================================================
